@@ -1,0 +1,38 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts"],
+  "out": "docs/markdown",
+  "plugin": ["typedoc-plugin-markdown"],
+  "categorizeByGroup": true,
+  "categoryOrder": [
+    "Authentication",
+    "Feeds",
+    "Posts",
+    "Users",
+    "Playlists",
+    "Search",
+    "Notifications",
+    "Chat",
+    "Badges",
+    "Settings",
+    "Uploads",
+    "Analytics",
+    "Delegation",
+    "Cache",
+    "Query",
+    "*"
+  ],
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "excludeInternal": true,
+  "includeVersion": true,
+  "readme": "README.md",
+  "name": "CC Platform SDK",
+  "sort": ["source-order"],
+  "visibilityFilters": {
+    "protected": false,
+    "private": false,
+    "inherited": true,
+    "external": false
+  }
+}
