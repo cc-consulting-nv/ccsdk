@@ -1,6 +1,6 @@
 {
   "name": "@closedcircuitlogin/cc-platform-sdk",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Cache-aware CC API SDK using Dexie and TanStack Query core.",
   "type": "module",
   "main": "dist/index.js",
