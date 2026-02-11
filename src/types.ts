@@ -1772,6 +1772,20 @@ export interface WsomEventListResponse {
   events: WsomEvent[];
 }
 
+/** Entry eligibility status for a WSOM event or contest */
+export interface WsomEntryStatus {
+  canEnter: boolean;
+  needsBirthday?: boolean;
+  dailyEntriesUsed: number;
+  dailyEntriesMax: number;
+  totalEntries: number;
+  totalEntriesMax: number;
+  nextResetAt: string | null;
+  secondsUntilReset: number | null;
+  eventId?: number;
+  eventStatus?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Passkey (WebAuthn) Types
 // ---------------------------------------------------------------------------
