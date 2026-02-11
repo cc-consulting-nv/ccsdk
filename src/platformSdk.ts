@@ -2673,6 +2673,30 @@ export class CcPlatformSdk {
     });
   }
 
+  /**
+   * Delete notifications by their IDs.
+   *
+   * @param notificationIds - Array of notification ULIDs to delete
+   *
+   * @category Notifications
+   */
+  async deleteNotifications(notificationIds: string[]): Promise<void> {
+    await this.client.delete("/v1/users/me/notifications/delete", {
+      body: { notificationIds },
+    });
+  }
+
+  /**
+   * Delete a single notification by ID.
+   *
+   * @param notificationId - The notification ULID to delete
+   *
+   * @category Notifications
+   */
+  async deleteNotification(notificationId: string): Promise<void> {
+    await this.deleteNotifications([notificationId]);
+  }
+
   // ---------------------------------------------------------------------------
   // Comments
   // ---------------------------------------------------------------------------
