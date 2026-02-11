@@ -1707,6 +1707,71 @@ export interface WsomUpdateContestRequest {
   status?: "upcoming" | "active" | "completed" | "cancelled";
 }
 
+// WSOM v3 Types (Event-based contest system)
+// ---------------------------------------------------------------------------
+
+/** Classification type for WSOM entries */
+export type WsomClassificationType = "AI" | "Human" | "Hybrid" | "CouldNotDetermine";
+
+/** Response from listening time tracking */
+export interface WsomListeningResponse {
+  secondsListened: number;
+  ratingEnabled: boolean;
+  secondsRemaining: number;
+}
+
+/** Classification data returned from API */
+export interface WsomClassificationData {
+  id: number;
+  classification: WsomClassificationType;
+  editWindowExpiresAt: string | null;
+}
+
+/** Response from classification submit/update */
+export interface WsomClassificationResponse {
+  classification: WsomClassificationData;
+}
+
+/** Single leaderboard user entry */
+export interface WsomLeaderboardUser {
+  userId: number;
+  accuracy: number;
+}
+
+/** Leaderboard data grouped by classification type */
+export interface WsomLeaderboards {
+  human: WsomLeaderboardUser[];
+  ai: WsomLeaderboardUser[];
+  hybrid: WsomLeaderboardUser[];
+}
+
+/** Response from leaderboards endpoint */
+export interface WsomLeaderboardResponse {
+  leaderboards: WsomLeaderboards;
+}
+
+/** WSOM event (v3 equivalent of contest) */
+export interface WsomEvent {
+  id: number;
+  genre: string;
+  status: "upcoming" | "entry_window" | "active" | "ended";
+  entryWindowOpensAt: string;
+  votingStartsAt: string;
+  endsAt: string;
+  resultsRevealed: boolean;
+  resultsRevealedAt: string | null;
+  maxEntries: number;
+  entryCount: number;
+  isFull: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Response from events list endpoint */
+export interface WsomEventListResponse {
+  events: WsomEvent[];
+}
+
 // ---------------------------------------------------------------------------
 // Passkey (WebAuthn) Types
 // ---------------------------------------------------------------------------
