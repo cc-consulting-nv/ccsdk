@@ -59,6 +59,14 @@ import {
   type WsomRateEntryResponse,
   type WsomCreateContestRequest,
   type WsomUpdateContestRequest,
+  // WSOM v3 types
+  type WsomClassificationType,
+  type WsomListeningResponse,
+  type WsomClassificationData,
+  type WsomClassificationResponse,
+  type WsomLeaderboardResponse,
+  type WsomEvent,
+  type WsomEventListResponse,
   // Passkey types
   type Passkey,
   type PasskeyRegisterOptionsResponse,
@@ -5364,7 +5372,8 @@ export class CcPlatformSdk {
    * @param payload.songArt - Array of cover image URLs (optional)
    * @param payload.lyrics - Song lyrics (optional)
    * @param payload.genreId - Genre ID from app settings (optional)
-   * @param payload.enterWsom - Whether to enter WSOM contest (optional)
+   * @param payload.enterWsom - Whether to enter WSOM contest (deprecated, use enterWsomEvent)
+   * @param payload.enterWsomEvent - WSOM event ID to enter the song into (optional)
    */
   async createSong(payload: {
     groupName: string;
@@ -5374,6 +5383,7 @@ export class CcPlatformSdk {
     lyrics?: string;
     genreId?: number;
     enterWsom?: boolean;
+    enterWsomEvent?: number;
   }): Promise<Post> {
     const response = await this.client.put<ApiEnvelope<Post>>("/v1/songs/add", {
       body: payload,
@@ -5997,6 +6007,89 @@ export class CcPlatformSdk {
   async wsomHasActiveContest(): Promise<boolean> {
     const contest = await this.wsomGetActiveContest();
     return contest !== null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // WSOM v3 Methods (Event-based contest system)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Track listening time for a WSOM entry (v3)
+   * @param entryUlid - The entry ULID
+   * @param seconds - Number of seconds listened
+   */
+  async wsomTrackListening(
+    entryUlid: string,
+    seconds: number,
+  ): Promise<WsomListeningResponse> {
+    const response = await this.client.post<WsomListeningResponse>(
+      `/v3/wsom/entries/${entryUlid}/listening`,
+      { body: { seconds } },
+    );
+    return snakeToCamelObject(this.unwrap(response));
+  }
+
+  /**
+   * Submit a classification for a WSOM entry (v3)
+   * @param entryUlid - The entry ULID
+   * @param classification - AI, Human, Hybrid, or CouldNotDetermine
+   */
+  async wsomSubmitClassification(
+    entryUlid: string,
+    classification: WsomClassificationType,
+  ): Promise<WsomClassificationResponse> {
+    const response = await this.client.post<WsomClassificationResponse>(
+      `/v3/wsom/entries/${entryUlid}/classifications`,
+      { body: { classification } },
+    );
+    return snakeToCamelObject(this.unwrap(response));
+  }
+
+  /**
+   * Update an existing classification within the edit window (v3)
+   * @param classificationId - The classification ID
+   * @param classification - Updated classification type
+   */
+  async wsomUpdateClassification(
+    classificationId: number,
+    classification: WsomClassificationType,
+  ): Promise<WsomClassificationResponse> {
+    const response = await this.client.patch<WsomClassificationResponse>(
+      `/v3/wsom/classifications/${classificationId}`,
+      { body: { classification } },
+    );
+    return snakeToCamelObject(this.unwrap(response));
+  }
+
+  /**
+   * Get detector accuracy leaderboards (v3)
+   */
+  async wsomGetLeaderboards(): Promise<WsomLeaderboardResponse> {
+    const response = await this.client.get<WsomLeaderboardResponse>(
+      "/v3/wsom/leaderboards",
+    );
+    return snakeToCamelObject(this.unwrap(response));
+  }
+
+  /**
+   * List upcoming WSOM events (v3, public - no auth required)
+   */
+  async wsomListEvents(): Promise<WsomEventListResponse> {
+    const response = await this.client.get<WsomEventListResponse>(
+      "/v3/wsom/events",
+    );
+    return snakeToCamelObject(this.unwrap(response));
+  }
+
+  /**
+   * Get a specific WSOM event (v3, public - no auth required)
+   * @param eventId - The event ID
+   */
+  async wsomGetEvent(eventId: number): Promise<WsomEvent> {
+    const response = await this.client.get<WsomEvent>(
+      `/v3/wsom/events/${eventId}`,
+    );
+    return snakeToCamelObject(this.unwrap(response));
   }
 
   // ---------------------------------------------------------------------------

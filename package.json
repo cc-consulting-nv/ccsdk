@@ -16,6 +16,7 @@
   ],
   "scripts": {
     "build": "tsc -b",
+    "dev": "tsc -b --watch",
     "clean": "rimraf dist",
     "prepublishOnly": "npm run clean && npm run build",
     "lint": "echo \"lint not configured for sdk\"",
