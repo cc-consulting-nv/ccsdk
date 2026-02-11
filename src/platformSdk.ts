@@ -67,6 +67,7 @@ import {
   type WsomLeaderboardResponse,
   type WsomEvent,
   type WsomEventListResponse,
+  type WsomEntryStatus,
   // Passkey types
   type Passkey,
   type PasskeyRegisterOptionsResponse,
@@ -6133,6 +6134,27 @@ export class CcPlatformSdk {
   async wsomGetEvent(eventId: number): Promise<WsomEvent> {
     const response = await this.client.get<WsomEvent>(
       `/v3/wsom/events/${eventId}`,
+    );
+    return snakeToCamelObject(this.unwrap(response));
+  }
+
+  /**
+   * Get entry eligibility status for a WSOM event or contest.
+   * @param options - Optional event ID or contest ULID to check status for
+   */
+  async wsomGetEntryStatus(options?: {
+    eventId?: number;
+    contestUlid?: string;
+  }): Promise<WsomEntryStatus> {
+    const params: Record<string, string> = {};
+    if (options?.eventId) {
+      params.event = String(options.eventId);
+    } else if (options?.contestUlid) {
+      params.contest = options.contestUlid;
+    }
+    const response = await this.client.get<WsomEntryStatus>(
+      "/v1/wsom/entry-status",
+      { query: params },
     );
     return snakeToCamelObject(this.unwrap(response));
   }
