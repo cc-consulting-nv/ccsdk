@@ -3986,6 +3986,9 @@ export class CcPlatformSdk {
    */
   async followUser(username: string): Promise<void> {
     await this.client.put(`/v1/profile/${encodeURIComponent(username)}/follow`);
+
+    // Invalidate cached profile so next fetch gets updated ProfileEngagement
+    await this.invalidateUserCacheByUsername(username);
   }
 
   /**
@@ -3997,6 +4000,24 @@ export class CcPlatformSdk {
    */
   async unfollowUser(username: string): Promise<void> {
     await this.client.delete(`/v1/profile/${encodeURIComponent(username)}/follow`);
+
+    // Invalidate cached profile so next fetch gets updated ProfileEngagement
+    await this.invalidateUserCacheByUsername(username);
+  }
+
+  /**
+   * Invalidate a user's cache entry by username.
+   * Used after follow/unfollow to ensure fresh ProfileEngagement data.
+   *
+   * @param username - Username of the user to invalidate
+   * @internal
+   */
+  private async invalidateUserCacheByUsername(username: string): Promise<void> {
+    const cache = await this.cachePromise;
+    const cachedUser = await cache.getUserByUsername(username);
+    if (cachedUser?.ulid) {
+      await cache.deleteUser(cachedUser.ulid);
+    }
   }
 
   /**
