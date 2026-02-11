@@ -1082,6 +1082,10 @@ export interface AppSettings {
   adApprovalStatuses?: string[];
   /** User notification types */
   userNotificationTypes?: NotificationType[];
+  /** Feature flags for tenant-level features */
+  features?: {
+    messaging?: boolean;
+  };
 }
 
 /** User genre preference with enabled status */
