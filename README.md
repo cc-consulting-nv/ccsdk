@@ -194,6 +194,87 @@ git push --follow-tags
 # Then create a GitHub release from the tag
 ```
 
+## Local Development with `pnpm link`
+
+When developing the SDK alongside a consumer project (e.g. `~/social`), use `pnpm link` to test changes locally before publishing.
+
+### Setup
+
+```bash
+# 1. Build the SDK
+cd ~/ccsdk
+pnpm build
+
+# 2. Link into the consumer project
+cd ~/social
+pnpm link ~/ccsdk
+```
+
+This creates a symlink at `node_modules/@cc-consulting-nv/ccsdk` pointing to `~/ccsdk`. All workspace packages in the monorepo will resolve to the local SDK.
+
+### Development Loop
+
+```bash
+# Make changes in ~/ccsdk/src/...
+# Then rebuild:
+cd ~/ccsdk && pnpm build
+
+# The consumer project picks up changes immediately.
+# If the Vite dev server is running, it will hot-reload.
+```
+
+**Always run `pnpm build` after SDK changes** — the link points to `dist/`, not the TypeScript source.
+
+### Watch Mode (Optional)
+
+For faster iteration, use the SDK's watch mode in a separate terminal:
+
+```bash
+cd ~/ccsdk
+pnpm dev   # runs tsc -b --watch
+```
+
+### Teardown
+
+When done testing, restore the published version:
+
+```bash
+cd ~/social
+
+# Remove the symlink and reinstall
+rm node_modules/@cc-consulting-nv/ccsdk
+pnpm install
+
+# Clear Vite's dependency cache (if dev server was running)
+find apps/ui/node_modules/.vite -type f -delete 2>/dev/null
+```
+
+Verify the published version is restored:
+
+```bash
+ls -la node_modules/@cc-consulting-nv/ccsdk
+# Should point to .pnpm/... not ~/ccsdk
+```
+
+### Publish Workflow
+
+1. **Develop** — Edit SDK source, `pnpm build`, test via link
+2. **Finalize** — Push SDK branch, merge PR, create GitHub release (triggers auto-publish)
+3. **Consume** — In the consumer project: remove link, bump version in all `package.json` files, `pnpm install`
+
+### Files to Update When Bumping ccsdk Version
+
+In `~/social`, update the version in all of these:
+
+- `package.json` (root)
+- `pnpm-workspace.yaml` (overrides)
+- `apps/ui/package.json`
+- `apps/shared/package.json`
+- `apps/music-catalog/package.json`
+- `apps/sdk-playground/package.json`
+
+Then run `pnpm install` to update the lockfile.
+
 ## Design Notes
 - Songs are treated as posts with `type = "SONG"`; `/v1/songs/feed/all` returns ULIDs, `/v1/posts` returns full post bodies.
 - Persistence stays in IndexedDB (Dexie) to match existing behavior; TanStack Query handles request lifecycle and memory cache.
