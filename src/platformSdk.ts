@@ -6140,6 +6140,41 @@ export class CcPlatformSdk {
   }
 
   /**
+   * Get the feed of entries for a specific WSOM event (v3).
+   * Used by the voting view to show event-scoped entries.
+   * @param eventId - The event ID
+   * @param cursor - Optional cursor for pagination
+   */
+  async wsomGetEventFeed(
+    eventId: number,
+    cursor?: string,
+  ): Promise<WsomFeedResponse> {
+    const params: Record<string, string> = {};
+    if (cursor) params.cursor = cursor;
+
+    const response = await this.client.get<{
+      entries: WsomEntry[];
+      nextCursor?: string;
+      prevCursor?: string;
+      perPage?: number;
+      unratedCount?: number;
+      event?: WsomEvent;
+    }>(`/v3/wsom/events/${eventId}/feed`, { query: params });
+
+    const data = snakeToCamelObject(this.unwrap(response));
+    return {
+      data: data.entries ?? [],
+      meta: {
+        nextCursor: data.nextCursor ?? null,
+        prevCursor: data.prevCursor ?? null,
+        perPage: data.perPage ?? 50,
+        contest: {} as WsomContest, // Not applicable for event feed
+        unratedCount: data.unratedCount ?? 0,
+      },
+    };
+  }
+
+  /**
    * Get entry eligibility status for a WSOM event or contest.
    * @param options - Optional event ID or contest ULID to check status for
    */
