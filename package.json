@@ -1,6 +1,6 @@
 {
   "name": "@cc-consulting-nv/ccsdk",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "Cache-aware CC API SDK using Dexie and TanStack Query core.",
   "type": "module",
   "main": "dist/index.js",
