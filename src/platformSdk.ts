@@ -2,6 +2,7 @@ import { CacheDB, createCache } from "./cache/cacheDB";
 import { HttpClient, type HttpClientOptions } from "./httpClient";
 import { HybridTokenProvider, RefreshCoordinator, type TokenProvider } from "./auth";
 import { MultipartUpload, type MultipartUploadOptions, type UploadResult } from "./multipartUpload";
+import { PusherManager, type PusherConfig, type PostEventCallback, type PostDeletedCallback } from "./pusher";
 import {
   type ApiEnvelope,
   type AuthTokens,
@@ -281,6 +282,12 @@ export interface CcPlatformSdkOptions {
    * Defaults to false (JSON responses).
    */
   useMsgpack?: boolean;
+  /**
+   * Pusher configuration for real-time PostResource updates.
+   * When provided, the SDK can subscribe to Pusher channels and automatically
+   * cache incoming PostResource events.
+   */
+  pusher?: PusherConfig;
 }
 
 /**
@@ -371,6 +378,9 @@ export class CcPlatformSdk {
   // Logging state - check option first, then environment variable
   private readonly enableLogging: boolean;
 
+  // Pusher real-time integration
+  private pusherManager: PusherManager | null = null;
+
   constructor(private readonly options: CcPlatformSdkOptions) {
     // Determine logging state: explicit option > environment variable > false
     this.enableLogging = options.enableLogging !== undefined 
@@ -400,6 +410,11 @@ export class CcPlatformSdk {
     };
 
     this.client = new HttpClient(clientOptions);
+
+    // Initialize Pusher if configured
+    if (options.pusher) {
+      this.initPusher(options.pusher);
+    }
   }
 
   /**
@@ -6551,6 +6566,164 @@ export class CcPlatformSdk {
   async brandingGet(): Promise<Branding> {
     const response = await this.client.get<Branding>("/branding.json");
     return this.unwrap(response);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Pusher real-time integration
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Initialize Pusher and wire it to automatically cache incoming PostResource events.
+   *
+   * @param config - Pusher configuration
+   * @internal
+   */
+  private initPusher(config: PusherConfig): void {
+    this.pusherManager = new PusherManager(config, {
+      enableLogging: this.enableLogging,
+    });
+
+    // Provide auth tokens for private channel subscriptions
+    this.pusherManager.setAuthTokenProvider(() => {
+      const tokens = this.tokens.getTokens();
+      return tokens?.accessToken ?? null;
+    });
+
+    // When a PostResource is received, normalize it and write it to the cache
+    this.pusherManager.onPostReceived(async (post) => {
+      try {
+        await this.cachePost(post);
+        this.log("[SDK/Pusher] Cached post from Pusher event:", post.ulid ?? post.id);
+      } catch (e) {
+        this.log("[SDK/Pusher] Failed to cache post from Pusher event:", e);
+      }
+    });
+
+    // When a post deletion event is received, remove it from the cache
+    this.pusherManager.onPostDeleted(async (postUlid) => {
+      try {
+        const cache = await this.cachePromise;
+        await cache.deletePost(postUlid);
+        this.log("[SDK/Pusher] Deleted post from cache via Pusher event:", postUlid);
+      } catch (e) {
+        this.log("[SDK/Pusher] Failed to delete post from cache:", e);
+      }
+    });
+  }
+
+  /**
+   * Get the Pusher manager for subscribing to channels and registering event callbacks.
+   *
+   * Returns null if Pusher was not configured in the SDK options.
+   *
+   * @example
+   * ```typescript
+   * const pusher = sdk.getPusherManager();
+   * if (pusher) {
+   *   // Subscribe to the global posts channel
+   *   pusher.subscribe('posts');
+   *
+   *   // Listen for new/updated posts
+   *   pusher.onPostReceived((post) => {
+   *     console.log('Real-time post:', post.ulid, post.title);
+   *   });
+   * }
+   * ```
+   *
+   * @category Real-time
+   */
+  getPusherManager(): PusherManager | null {
+    return this.pusherManager;
+  }
+
+  /**
+   * Subscribe to a Pusher channel for real-time PostResource events.
+   * Shorthand for `sdk.getPusherManager()?.subscribe(channelName)`.
+   *
+   * Incoming PostResource events are automatically normalized and cached.
+   *
+   * @param channelName - The Pusher channel to subscribe to
+   * @param postEvents - Optional custom event names for post create/update
+   * @param deleteEvents - Optional custom event names for post deletion
+   *
+   * @example
+   * ```typescript
+   * // Subscribe to the public posts channel
+   * sdk.subscribeToPusherChannel('posts');
+   *
+   * // Subscribe to a private user channel
+   * sdk.subscribeToPusherChannel('private-user.01kb5t0tqw8mjpedbke7dvynwk');
+   * ```
+   *
+   * @category Real-time
+   */
+  subscribeToPusherChannel(
+    channelName: string,
+    postEvents?: string[],
+    deleteEvents?: string[],
+  ): void {
+    if (!this.pusherManager) {
+      this.log("[SDK/Pusher] Cannot subscribe - Pusher not configured. Pass `pusher` option to CcPlatformSdk.");
+      return;
+    }
+    this.pusherManager.subscribe(channelName, postEvents, deleteEvents);
+  }
+
+  /**
+   * Unsubscribe from a Pusher channel.
+   *
+   * @param channelName - The Pusher channel to unsubscribe from
+   * @category Real-time
+   */
+  unsubscribeFromPusherChannel(channelName: string): void {
+    this.pusherManager?.unsubscribe(channelName);
+  }
+
+  /**
+   * Register a callback for when a PostResource is received via Pusher.
+   * The post will already be cached by the time this callback fires.
+   *
+   * @param callback - Called with the normalized Post data
+   * @returns Unsubscribe function, or a no-op if Pusher is not configured
+   *
+   * @example
+   * ```typescript
+   * const unsub = sdk.onPusherPostReceived((post) => {
+   *   // Post is already cached, update your UI
+   *   console.log('New post:', post.title);
+   * });
+   *
+   * // Later: stop listening
+   * unsub();
+   * ```
+   *
+   * @category Real-time
+   */
+  onPusherPostReceived(callback: PostEventCallback): () => void {
+    if (!this.pusherManager) return () => {};
+    return this.pusherManager.onPostReceived(callback);
+  }
+
+  /**
+   * Register a callback for when a post deletion event is received via Pusher.
+   * The post will already be removed from cache by the time this callback fires.
+   *
+   * @param callback - Called with the deleted post's ULID
+   * @returns Unsubscribe function, or a no-op if Pusher is not configured
+   * @category Real-time
+   */
+  onPusherPostDeleted(callback: PostDeletedCallback): () => void {
+    if (!this.pusherManager) return () => {};
+    return this.pusherManager.onPostDeleted(callback);
+  }
+
+  /**
+   * Disconnect Pusher and clean up all subscriptions.
+   * @category Real-time
+   */
+  disconnectPusher(): void {
+    this.pusherManager?.disconnect();
+    this.pusherManager = null;
   }
 
   // ---------------------------------------------------------------------------

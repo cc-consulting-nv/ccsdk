@@ -50,7 +50,8 @@
   "dependencies": {
     "@msgpack/msgpack": "^3.1.3",
     "@tanstack/query-core": "^5.90.11",
-    "dexie": "^4.2.1"
+    "dexie": "^4.2.1",
+    "pusher-js": "^8.4.0"
   },
   "devDependencies": {
     "rimraf": "^5.0.5",
