@@ -2134,6 +2134,26 @@ export class CcPlatformSdk {
     );
     const post = this.unwrap<Post>(response);
 
+    // Optimistically update cache: increment repostCount and set hasReposted
+    const cache = await this.cachePromise;
+    const cached = await cache.getPost(postUlid);
+    if (cached) {
+      const currentCount = cached.postEngagement?.repostCount ?? 0;
+      const updated: Post = {
+        ...cached,
+        postEngagement: {
+          ...cached.postEngagement,
+          repostCount: currentCount + 1,
+        },
+        userEngagement: {
+          ...(cached.userEngagement as Record<string, unknown> | undefined),
+          hasReposted: true,
+        },
+      };
+      updated._engagementHash = hashObject(extractEngagementData(updated as Record<string, unknown>));
+      await cache.setPost(postUlid, updated);
+    }
+
     // Read-after-write: fetch full repost data to ensure we have complete data with all relationships
     if (post.ulid) {
       const fullPost = await this.getPostByUlid(post.ulid, true);
@@ -2154,7 +2174,29 @@ export class CcPlatformSdk {
    */
   async unrepost(postUlid: Ulid): Promise<void> {
     await this.client.delete(`/v1/posts/${encodeURIComponent(postUlid)}/reposts`);
-    // Refresh engagement in IndexedDB cache (repost count changed)
+
+    // Optimistically update cache: decrement repostCount and clear hasReposted
+    const cache = await this.cachePromise;
+    const cached = await cache.getPost(postUlid);
+    if (cached) {
+      const currentCount = cached.postEngagement?.repostCount ?? 0;
+      const updated: Post = {
+        ...cached,
+        postEngagement: {
+          ...cached.postEngagement,
+          repostCount: Math.max(0, currentCount - 1),
+        },
+        userEngagement: {
+          ...(cached.userEngagement as Record<string, unknown> | undefined),
+          hasReposted: false,
+          hasRepostedWithComment: false,
+        },
+      };
+      updated._engagementHash = hashObject(extractEngagementData(updated as Record<string, unknown>));
+      await cache.setPost(postUlid, updated);
+    }
+
+    // Also refresh from server to reconcile
     await this.refreshPostEngagement(postUlid);
   }
 
