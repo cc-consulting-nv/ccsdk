@@ -4931,6 +4931,20 @@ export class CcPlatformSdk {
   }
 
   /**
+   * Remove a badge from a user (admin operation).
+   *
+   * @param userId - The ULID of the user to remove the badge from
+   * @param badgeId - The ID of the badge to remove
+   *
+   * @category Badges
+   */
+  async removeBadge(userId: Ulid, badgeId: string): Promise<void> {
+    await this.client.delete(
+      `/v1/users/${encodeURIComponent(userId)}/badges/${encodeURIComponent(badgeId)}`,
+    );
+  }
+
+  /**
    * Set a badge as the current user's featured badge.
    *
    * The featured badge is displayed on posts and comments.
@@ -7646,6 +7660,56 @@ export class CcPlatformSdk {
         destination_type: params.destinationType,
         destination_id: params.destinationId,
         landing_path: params.landingPath,
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Feedback & Bug Reports
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Submit general feedback.
+   *
+   * @param message - The feedback message (max 500 characters)
+   *
+   * @category Feedback
+   */
+  async submitFeedback(message: string): Promise<void> {
+    await this.client.post("/v1/feedback", {
+      body: { message },
+    });
+  }
+
+  /**
+   * Submit a bug report with optional video and screenshot attachments.
+   *
+   * @param params - Bug report details
+   *
+   * @category Feedback
+   */
+  async submitBugReport(params: {
+    title: string;
+    description: string;
+    category: "bug" | "feature" | "feedback" | "other";
+    severity?: "low" | "medium" | "high" | "critical";
+    systemInfo?: Record<string, unknown>;
+    consoleErrors?: string[];
+    videoKey?: string;
+    screenshotKey?: string;
+    apiCalls?: Record<string, unknown>[];
+  }): Promise<unknown> {
+    return this.client.post("/v1/feedback/bug-reports", {
+      body: {
+        title: params.title,
+        description: params.description,
+        category: params.category,
+        severity: params.severity,
+        system_info: params.systemInfo,
+        console_errors: params.consoleErrors,
+        video_key: params.videoKey,
+        screenshot_key: params.screenshotKey,
+        api_calls: params.apiCalls,
       },
     });
   }
