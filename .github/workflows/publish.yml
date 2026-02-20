@@ -46,6 +46,12 @@ jobs:
       - name: Bump patch version
         run: npm version patch --no-git-tag-version
 
+      - name: Commit version bump
+        run: |
+          git add package.json
+          git commit -m "chore: bump version to $(node -p "require('./package.json').version")"
+          git push origin main
+
       - name: Publish to GitHub Packages
         run: npm publish
         env:
@@ -54,5 +60,5 @@ jobs:
       - name: Tag release
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          git tag "v${VERSION}"
-          git push origin --tags
+          git tag "v${VERSION}" || echo "Tag v${VERSION} already exists"
+          git push origin "v${VERSION}" || echo "Tag v${VERSION} already pushed"
