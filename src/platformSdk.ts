@@ -100,7 +100,150 @@ import {
   type UpdateGroupRequest,
   // Image types
   type ImageVariants,
+  type AppViolation,
 } from "./types";
+
+// ============================================================================
+// Moderation Feed Types (025-moderation-feed)
+// ============================================================================
+
+export type ModerationFeedContentType = 'post' | 'comment' | 'profile' | 'playlist';
+export type ModerationFeedItemStatus = 'pending' | 'resolved' | 'dismissed' | 'appeal' | 'appeal_denied';
+export type ModerationFeedPriority = 'high' | 'normal';
+export type ModerationFeedSource = 'user' | 'ai' | 'all';
+
+export interface ModerationFeedUserSummary {
+  ulid: string;
+  username: string;
+  name: string;
+  avatar_url?: string | null;
+  is_banned?: boolean;
+  violation_points?: number;
+}
+
+export interface ModerationFeedReportDetail {
+  reporter: ModerationFeedUserSummary;
+  violation_type: string | null;
+  reason: string | null;
+  created_at: string;
+}
+
+export interface ModerationFeedAIFlag {
+  detection_type: 'nsfw' | 'bloody' | 'violence' | 'hate' | 'spam';
+  confidence_score: number;
+  flagged_at: string | null;
+  hive_group_id: string | null;
+}
+
+export interface ModerationFeedItem {
+  id: string;
+  content_type: ModerationFeedContentType;
+  content_ulid: string | null;
+  content_preview: string;
+  content_deleted: boolean;
+  creator: ModerationFeedUserSummary | null;
+  report_count: number;
+  reports: ModerationFeedReportDetail[];
+  ai_flags: ModerationFeedAIFlag[];
+  status: ModerationFeedItemStatus;
+  priority: ModerationFeedPriority;
+  created_at: string;
+  resolved_at: string | null;
+  resolved_by: ModerationFeedUserSummary | null;
+  resolution_action: string | null;
+}
+
+export interface ModerationFeedPaginationMeta {
+  cursor: string | null;
+  has_more: boolean;
+  total?: number;
+}
+
+export interface ModerationFeedResponse {
+  data: ModerationFeedItem[];
+  meta: ModerationFeedPaginationMeta;
+}
+
+export interface ModerationFeedItemResponse {
+  data: ModerationFeedItem;
+}
+
+export interface ModerationFeedFilters {
+  content_type?: ModerationFeedContentType;
+  violation_type?: string;
+  status?: ModerationFeedItemStatus;
+  source?: ModerationFeedSource;
+  date_from?: string;
+  date_to?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface ModerationFeedActionRequest {
+  action: string;
+  reason?: string;
+  violation_type?: string;
+  notify_creator?: boolean;
+}
+
+export interface ModerationFeedUserStatus {
+  violation_points: number;
+  is_banned: boolean;
+  ban_expires_at: string | null;
+}
+
+export interface ModerationFeedActionResponse {
+  success: boolean;
+  item: ModerationFeedItem | null;
+  user_status?: ModerationFeedUserStatus;
+}
+
+export interface ModerationFeedHistoryAction {
+  action: string;
+  action_label: string;
+  moderator: ModerationFeedUserSummary;
+  reason: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface ModerationFeedContentHistoryResponse {
+  content_type: ModerationFeedContentType;
+  content_ulid: string;
+  actions: ModerationFeedHistoryAction[];
+}
+
+export interface ModerationFeedUserViolation {
+  violation_type: string;
+  violation_label: string;
+  points: number;
+  content_type: ModerationFeedContentType | null;
+  content_ulid: string | null;
+  moderator: ModerationFeedUserSummary;
+  created_at: string;
+}
+
+export type ModerationFeedUserHistoryStatus = 'good_standing' | 'warned' | 'timeout' | 'banned';
+
+export interface ModerationFeedUserHistoryResponse {
+  user: ModerationFeedUserSummary;
+  total_points: number;
+  status: ModerationFeedUserHistoryStatus;
+  violations: ModerationFeedUserViolation[];
+}
+
+export interface ModerationFeedStatsResponse {
+  pending_count: number;
+  pending_by_type: {
+    post: number;
+    comment: number;
+    profile: number;
+    playlist: number;
+  };
+  resolved_today: number;
+  high_priority_count: number;
+  appeal_count: number;
+}
 
 /**
  * Convert a snake_case string to camelCase.
@@ -5706,6 +5849,118 @@ export class CcPlatformSdk {
     await cache.deletePost(postUlid);
 
     return result;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Content Moderation Feed (025-moderation-feed)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Get the moderation feed with optional filters.
+   * GET /v1/moderation/feed
+   *
+   * @param filters - Optional filters for the feed
+   * @returns Paginated moderation feed items
+   */
+  async getModerationFeed(
+    filters: ModerationFeedFilters = {}
+  ): Promise<ModerationFeedResponse> {
+    const query: Record<string, string> = {};
+    if (filters.content_type) query.content_type = filters.content_type;
+    if (filters.violation_type) query.violation_type = filters.violation_type;
+    if (filters.status) query.status = filters.status;
+    if (filters.source) query.source = filters.source;
+    if (filters.date_from) query.date_from = filters.date_from;
+    if (filters.date_to) query.date_to = filters.date_to;
+    if (filters.cursor) query.cursor = filters.cursor;
+    if (filters.limit) query.limit = String(filters.limit);
+
+    // API returns { data: [...], meta: {...} } directly (no ApiEnvelope wrapper)
+    const response = await this.client.get<ModerationFeedResponse>(
+      "/v1/moderation/feed",
+      { query: Object.keys(query).length > 0 ? query : undefined }
+    );
+    return response;
+  }
+
+  /**
+   * Get a single moderation feed item by ID.
+   * GET /v1/moderation/feed/{itemId}
+   *
+   * @param itemId - The moderation item ID
+   * @returns The moderation feed item
+   */
+  async getModerationItem(itemId: string): Promise<ModerationFeedItemResponse> {
+    const response = await this.client.get<ApiEnvelope<ModerationFeedItemResponse>>(
+      `/v1/moderation/feed/${encodeURIComponent(itemId)}`
+    );
+    return this.unwrap<ModerationFeedItemResponse>(response);
+  }
+
+  /**
+   * Take a moderation action on a feed item.
+   * POST /v1/moderation/feed/{itemId}/action
+   *
+   * @param itemId - The moderation item ID
+   * @param action - The action to take
+   * @returns Action result with updated item and user status
+   */
+  async takeModerationAction(
+    itemId: string,
+    action: ModerationFeedActionRequest
+  ): Promise<ModerationFeedActionResponse> {
+    const response = await this.client.post<ApiEnvelope<ModerationFeedActionResponse>>(
+      `/v1/moderation/feed/${encodeURIComponent(itemId)}/action`,
+      { body: action }
+    );
+    return this.unwrap<ModerationFeedActionResponse>(response);
+  }
+
+  /**
+   * Get moderation history for a specific piece of content.
+   * GET /v1/moderation/history/content/{type}/{ulid}
+   *
+   * @param contentType - The content type (post, comment, playlist)
+   * @param contentUlid - The content ULID
+   * @returns Content moderation history
+   */
+  async getContentModerationHistory(
+    contentType: 'post' | 'comment' | 'playlist',
+    contentUlid: string
+  ): Promise<ModerationFeedContentHistoryResponse> {
+    const response = await this.client.get<ApiEnvelope<ModerationFeedContentHistoryResponse>>(
+      `/v1/moderation/history/content/${encodeURIComponent(contentType)}/${encodeURIComponent(contentUlid)}`
+    );
+    return this.unwrap<ModerationFeedContentHistoryResponse>(response);
+  }
+
+  /**
+   * Get violation history for a specific user.
+   * GET /v1/moderation/history/user/{ulid}
+   *
+   * @param userUlid - The user ULID
+   * @returns User violation history
+   */
+  async getUserViolationHistory(
+    userUlid: string
+  ): Promise<ModerationFeedUserHistoryResponse> {
+    const response = await this.client.get<ApiEnvelope<ModerationFeedUserHistoryResponse>>(
+      `/v1/moderation/history/user/${encodeURIComponent(userUlid)}`
+    );
+    return this.unwrap<ModerationFeedUserHistoryResponse>(response);
+  }
+
+  /**
+   * Get moderation statistics.
+   * GET /v1/moderation/stats
+   *
+   * @returns Moderation statistics
+   */
+  async getModerationStats(): Promise<ModerationFeedStatsResponse> {
+    const response = await this.client.get<ApiEnvelope<ModerationFeedStatsResponse>>(
+      "/v1/moderation/stats"
+    );
+    return this.unwrap<ModerationFeedStatsResponse>(response);
   }
 
   // ---------------------------------------------------------------------------
