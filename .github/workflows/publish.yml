@@ -43,14 +43,24 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Bump patch version
-        run: npm version patch --no-git-tag-version
-
-      - name: Commit version bump
+      - name: Determine next version
+        id: version
         run: |
-          git add package.json
-          git commit -m "chore: bump version to $(node -p "require('./package.json').version")"
-          git push origin main
+          # Get latest git tag version, fallback to package.json
+          LATEST_TAG=$(git tag --sort=-v:refname | grep '^v' | head -1 | sed 's/^v//')
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG=$(node -p "require('./package.json').version")
+          fi
+          # Increment patch
+          MAJOR=$(echo "$LATEST_TAG" | cut -d. -f1)
+          MINOR=$(echo "$LATEST_TAG" | cut -d. -f2)
+          PATCH=$(echo "$LATEST_TAG" | cut -d. -f3)
+          NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          echo "version=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEXT_VERSION"
+
+      - name: Set package version
+        run: npm version ${{ steps.version.outputs.version }} --no-git-tag-version
 
       - name: Publish to GitHub Packages
         run: npm publish
@@ -59,6 +69,6 @@ jobs:
 
       - name: Tag release
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          git tag "v${VERSION}" || echo "Tag v${VERSION} already exists"
-          git push origin "v${VERSION}" || echo "Tag v${VERSION} already pushed"
+          VERSION=${{ steps.version.outputs.version }}
+          git tag "v${VERSION}"
+          git push origin "v${VERSION}"
