@@ -2000,11 +2000,16 @@ export class CcPlatformSdk {
   async createTmpVideo(
     videoUrl: string,
     videoType: "video" | "burst" = "video",
+    options?: { body?: string; title?: string },
   ): Promise<{ id: string; video: { url: string } }> {
     const response = await this.client.post<
       ApiEnvelope<{ id: string; video: { url: string } }>
     >(`/v1/${videoType}/upload`, {
-      body: { videoUrl },
+      body: {
+        videoUrl,
+        ...(options?.body !== undefined && { body: options.body }),
+        ...(options?.title !== undefined && { title: options.title }),
+      },
     });
     return this.unwrap(response);
   }
@@ -2033,7 +2038,8 @@ export class CcPlatformSdk {
    * @category Videos
    */
   async createVideoPost(payload: {
-    videoId: string;
+    videoId?: string;
+    videoUrl?: string;
     title?: string;
     body?: string;
     groupName?: string;
