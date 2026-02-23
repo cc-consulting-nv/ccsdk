@@ -1979,59 +1979,20 @@ export class CcPlatformSdk {
   }
 
   /**
-   * Register an uploaded video URL as a temporary video.
-   * This is the first step in creating a video post.
-   *
-   * @param videoUrl - The S3 URL of the uploaded video
-   * @param videoType - Type of video: 'video' or 'burst'
-   * @returns The temporary video record with its ULID
-   *
-   * @example
-   * ```typescript
-   * const tmpVideo = await sdk.createTmpVideo(
-   *   'https://s3.../video.mp4',
-   *   'video'
-   * );
-   * // Use tmpVideo.id as videoId when creating the video post
-   * ```
-   *
-   * @category Videos
-   */
-  async createTmpVideo(
-    videoUrl: string,
-    videoType: "video" | "burst" = "video",
-    options?: { body?: string; title?: string },
-  ): Promise<{ id: string; video: { url: string } }> {
-    const response = await this.client.post<
-      ApiEnvelope<{ id: string; video: { url: string } }>
-    >(`/v1/${videoType}/upload`, {
-      body: {
-        videoUrl,
-        ...(options?.body !== undefined && { body: options.body }),
-        ...(options?.title !== undefined && { title: options.title }),
-      },
-    });
-    return this.unwrap(response);
-  }
-
-  /**
    * Create a video post.
-   * Use this instead of createPost() when posting a video.
+   * Pass videoUrl directly — the API handles video processing in one call.
    *
-   * @param payload - Video post data including videoId from createTmpVideo()
+   * @param payload - Video post data with videoUrl for the uploaded video
    * @returns The created video post
    *
    * @example
    * ```typescript
-   * // First, upload video and register it
-   * const tmpVideo = await sdk.createTmpVideo(videoUrl, 'video');
-   *
-   * // Then create the video post
    * const post = await sdk.createVideoPost({
-   *   videoId: tmpVideo.id,
+   *   videoUrl: 'https://s3.../video.mp4',
    *   title: 'My Video',
    *   body: 'Description',
-   *   groupName: 'default'
+   *   groupName: 'default',
+   *   type: 'VIDEO',
    * });
    * ```
    *
