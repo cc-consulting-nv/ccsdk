@@ -112,6 +112,19 @@ export interface Poll {
 }
 
 /**
+ * Video processing state returned while uploaded media is being finalized.
+ * @category Posts
+ */
+export interface VideoProcessing {
+  /** Processing status code from API (e.g. 1 while processing/available fallback) */
+  status?: number | null;
+  /** Fallback playable video URL that may exist before canonical videoUrls are ready */
+  video?: string | null;
+  /** Processing thumbnail URL if available */
+  thumbnail?: string | null;
+}
+
+/**
  * A content post in the platform.
  *
  * Posts can be text, songs, videos, or other media types. Songs are represented
@@ -165,6 +178,10 @@ export interface Post {
     /** Thumbnail image URL */
     thumbnail?: string;
   };
+  /** Raw video processing payload from API while media is being finalized */
+  videoProcessing?: VideoProcessing | null;
+  /** Whether the post/media is currently processing */
+  isProcessing?: boolean;
   /** Duration in seconds (for audio/video) */
   duration?: number;
   /** Engagement metrics and user interaction state */
