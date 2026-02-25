@@ -30,3 +30,6 @@ tsconfig.tsbuildinfo
 
 # Test coverage
 coverage/
+.leann/
+
+logs/*
