@@ -7837,11 +7837,14 @@ export class CcPlatformSdk {
    * PATCH /v1/group/edit
    *
    * @param request - The update request with group ID and fields to update
+   * @returns The updated group (read-after-write)
    */
-  async updateGroup(request: UpdateGroupRequest): Promise<void> {
+  async updateGroup(request: UpdateGroupRequest): Promise<Group> {
     await this.client.patch("/v1/group/edit", {
       body: request,
     });
+    // Read-after-write: fetch and return the updated group
+    return this.getGroup(request.groupId);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
