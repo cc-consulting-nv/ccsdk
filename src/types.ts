@@ -435,6 +435,8 @@ export interface UserProfile {
 export interface CurrentUser extends UserProfile {
   /** User's badges as string array */
   badges: string[];
+  /** User's roles (crm_user, crm_admin, etc.) - for role-based UI gating */
+  roles?: string[];
 }
 
 /**
@@ -465,6 +467,27 @@ export function userHasBadge(
   const badges = (user as CurrentUser).badges || (user as Record<string, unknown>).badges;
   if (!Array.isArray(badges)) return false;
   return badges.some((b) => String(b).toLowerCase() === badgeName.toLowerCase());
+}
+
+/**
+ * Check if a user has a specific role or any role matching a prefix.
+ * Use for gating features like CRM (e.g., userHasRole(user, 'crm') matches crm_user, crm_admin).
+ *
+ * @param user - User profile with roles array (from /v1/users/me)
+ * @param roleOrPrefix - Exact role name (e.g., "crm_admin") or prefix (e.g., "crm" matches crm_user, crm_admin)
+ * @returns true if user has the role or a role starting with the prefix
+ * @category Users
+ */
+export function userHasRole(
+  user: { roles?: readonly string[] | string[] } | null | undefined,
+  roleOrPrefix: string
+): boolean {
+  if (!user) return false;
+  const roles = user.roles;
+  if (!roles || !Array.isArray(roles)) return false;
+  return roles.some(
+    (r) => typeof r === "string" && r.startsWith(roleOrPrefix)
+  );
 }
 
 /**
