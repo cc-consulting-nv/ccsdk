@@ -198,6 +198,156 @@ export interface ModerationFeedActionResponse {
   user_status?: ModerationFeedUserStatus;
 }
 
+// ============================================================================
+// CRM Module Types
+// ============================================================================
+
+export interface CrmContact {
+  ulid: string;
+  first_name: string;
+  last_name: string;
+  full_name: string;
+  title?: string;
+  department?: string;
+  birthday?: string;
+  lead_source?: string;
+  account?: { ulid: string; name: string };
+  owner?: { ulid: string; name: string };
+  emails?: { email: string; label?: string; is_primary: boolean }[];
+  phones?: { phone: string; label?: string; is_primary: boolean }[];
+  tags?: { id: number; name: string; color?: string }[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CrmAccount {
+  ulid: string;
+  name: string;
+  website?: string;
+  industry?: string;
+  employee_count?: number;
+  annual_revenue?: number;
+  type?: string;
+  ownership?: string;
+  owner?: { ulid: string; name: string };
+  addresses?: {
+    label?: string;
+    street?: string;
+    city?: string;
+    state?: string;
+    postal_code?: string;
+    country?: string;
+    is_primary: boolean;
+  }[];
+  contacts_count?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CrmLead {
+  ulid: string;
+  first_name: string;
+  last_name: string;
+  full_name: string;
+  email: string;
+  company?: string;
+  status: string;
+  lead_source?: string;
+  score: number;
+  score_tier?: string;
+  owner?: { ulid: string; name: string };
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CrmOpportunity {
+  ulid: string;
+  name: string;
+  amount: number;
+  currency: string;
+  expected_close_date?: string;
+  stage: string;
+  probability: number;
+  type?: string;
+  account?: { ulid: string; name: string };
+  primary_contact?: { ulid: string; full_name: string };
+  owner?: { ulid: string; name: string };
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CrmPaginatedResponse<T> {
+  data: T[];
+  links?: { first: string; last: string; prev?: string; next?: string };
+  meta?: {
+    current_page: number;
+    from?: number;
+    last_page: number;
+    per_page: number;
+    to?: number;
+    total: number;
+  };
+}
+
+export interface CrmConvertLeadResponse {
+  contact: CrmContact;
+  account: CrmAccount | null;
+  opportunity: CrmOpportunity | null;
+}
+
+export interface CrmForecastResponse {
+  total_pipeline: number;
+  weighted_pipeline: number;
+  open_count: number;
+  by_stage: Array<{
+    stage: string;
+    count: number;
+    total_amount: number;
+    weighted_amount: number;
+  }>;
+  this_month: {
+    won_amount: number;
+    won_count: number;
+    lost_count: number;
+  };
+}
+
+export interface CrmPipelineStage {
+  stage: string;
+  opportunities: Array<{
+    ulid: string;
+    name: string;
+    amount: number;
+    currency: string;
+    probability: number;
+    expected_close_date?: string;
+    account?: { ulid: string; name: string };
+    owner?: { ulid: string; name: string };
+  }>;
+  count: number;
+  total_amount: number;
+}
+
+export interface CrmCustomFieldDefinition {
+  id: number;
+  entity_type: string;
+  name: string;
+  api_name: string;
+  type: string;
+  options?: unknown;
+  sort_order: number;
+}
+
+export interface CrmActivity {
+  id: number;
+  type: string;
+  subject?: string;
+  body?: string;
+  occurred_at: string;
+  source?: string;
+  owner?: { ulid: string; name: string };
+}
+
 export interface ModerationFeedHistoryAction {
   action: string;
   action_label: string;
@@ -660,8 +810,9 @@ export class CcPlatformSdk {
       if (!profile) return null;
 
       // CRITICAL: Use JSON serialization to ensure we have a plain object without any methods
-      // This prevents any methods from being accidentally attached to the profile
-      const plainProfile = JSON.parse(JSON.stringify(profile)) as UserProfile;
+      const raw = JSON.parse(JSON.stringify(profile)) as Record<string, unknown>;
+      // Normalize field names (username, followersCount, etc.) for consistent SDK interface
+      const plainProfile = this.normalizeUserProfile(raw) as UserProfile & Record<string, unknown>;
 
       // Extract badges array from profile (API may return strings or objects with 'name')
       const rawBadges = (plainProfile as Record<string, unknown>).badges;
@@ -676,11 +827,17 @@ export class CcPlatformSdk {
         }
       }
 
-      // Create enhanced user with badges array (no methods - use utility functions instead)
-      // This ensures the object can be safely stored in IndexedDB
+      // Extract roles from API (for role-based UI gating)
+      const rawRoles = (plainProfile as Record<string, unknown>).roles;
+      const roles: string[] = Array.isArray(rawRoles)
+        ? rawRoles.filter((r): r is string => typeof r === "string")
+        : [];
+
+      // Create enhanced user with badges and roles (no methods - use utility functions instead)
       const currentUser: CurrentUser = {
         ...plainProfile,
         badges,
+        roles,
       };
 
       return currentUser;
@@ -4989,6 +5146,28 @@ export class CcPlatformSdk {
   }
 
   /**
+   * Check if user has a role or any role matching a prefix.
+   * Use with roles from auth state (e.g., from /v1/users/me).
+   *
+   * @param roles - Array of role strings (from user.roles)
+   * @param roleOrPrefix - Exact role (e.g., "crm_admin") or prefix (e.g., "crm" matches crm_user, crm_admin)
+   * @returns true if a matching role is found
+   *
+   * @example
+   * ```typescript
+   * const hasCrm = sdk.hasRoleInList(user?.roles, 'crm');
+   * ```
+   *
+   * @category Users
+   */
+  hasRoleInList(roles: unknown, roleOrPrefix: string): boolean {
+    if (!roles || !Array.isArray(roles)) return false;
+    return (roles as string[]).some(
+      (r) => typeof r === 'string' && r.startsWith(roleOrPrefix)
+    );
+  }
+
+  /**
    * @deprecated Use hasBadgeInList() with badges from auth state instead.
    * This method no longer makes API calls and always returns false.
    * Check badges synchronously from auth store user data.
@@ -5928,6 +6107,381 @@ export class CcPlatformSdk {
       "/v1/moderation/stats"
     );
     return this.unwrap<ModerationFeedStatsResponse>(response);
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM Module (contacts, accounts, leads, opportunities)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Get contacts list with optional filters.
+   * GET /v1/crm/contacts
+   */
+  async getCrmContacts(params?: {
+    search?: string;
+    account_id?: number;
+    per_page?: number;
+    page?: number;
+  }): Promise<CrmPaginatedResponse<CrmContact>> {
+    const query: Record<string, string> = {};
+    if (params?.search) query.search = params.search;
+    if (params?.account_id != null) query.account_id = String(params.account_id);
+    if (params?.per_page != null) query.per_page = String(params.per_page);
+    if (params?.page != null) query.page = String(params.page);
+    return this.client.get<CrmPaginatedResponse<CrmContact>>("/v1/crm/contacts", {
+      query: Object.keys(query).length > 0 ? query : undefined,
+    });
+  }
+
+  /**
+   * Get a single contact by ULID.
+   * GET /v1/crm/contacts/{ulid}
+   */
+  async getCrmContact(ulid: string): Promise<CrmContact> {
+    return this.client.get<CrmContact>(`/v1/crm/contacts/${encodeURIComponent(ulid)}`);
+  }
+
+  /**
+   * Create a new contact.
+   * POST /v1/crm/contacts
+   */
+  async createCrmContact(
+    payload: Partial<CrmContact> & { first_name: string; last_name: string }
+  ): Promise<CrmContact> {
+    return this.client.post<CrmContact>("/v1/crm/contacts", { body: payload });
+  }
+
+  /**
+   * Update a contact.
+   * PUT /v1/crm/contacts/{ulid}
+   */
+  async updateCrmContact(ulid: string, payload: Partial<CrmContact>): Promise<CrmContact> {
+    return this.client.put<CrmContact>(`/v1/crm/contacts/${encodeURIComponent(ulid)}`, {
+      body: payload,
+    });
+  }
+
+  /**
+   * Delete a contact.
+   * DELETE /v1/crm/contacts/{ulid}
+   */
+  async deleteCrmContact(ulid: string): Promise<void> {
+    await this.client.delete(`/v1/crm/contacts/${encodeURIComponent(ulid)}`);
+  }
+
+  /**
+   * Get accounts list with optional filters.
+   * GET /v1/crm/accounts
+   */
+  async getCrmAccounts(params?: {
+    search?: string;
+    per_page?: number;
+    page?: number;
+  }): Promise<CrmPaginatedResponse<CrmAccount>> {
+    const query: Record<string, string> = {};
+    if (params?.search) query.search = params.search;
+    if (params?.per_page != null) query.per_page = String(params.per_page);
+    if (params?.page != null) query.page = String(params.page);
+    return this.client.get<CrmPaginatedResponse<CrmAccount>>("/v1/crm/accounts", {
+      query: Object.keys(query).length > 0 ? query : undefined,
+    });
+  }
+
+  /**
+   * Get a single account by ULID.
+   * GET /v1/crm/accounts/{ulid}
+   */
+  async getCrmAccount(ulid: string): Promise<CrmAccount> {
+    return this.client.get<CrmAccount>(`/v1/crm/accounts/${encodeURIComponent(ulid)}`);
+  }
+
+  /**
+   * Create a new account.
+   * POST /v1/crm/accounts
+   */
+  async createCrmAccount(
+    payload: Partial<CrmAccount> & { name: string }
+  ): Promise<CrmAccount> {
+    return this.client.post<CrmAccount>("/v1/crm/accounts", { body: payload });
+  }
+
+  /**
+   * Update an account.
+   * PUT /v1/crm/accounts/{ulid}
+   */
+  async updateCrmAccount(ulid: string, payload: Partial<CrmAccount>): Promise<CrmAccount> {
+    return this.client.put<CrmAccount>(`/v1/crm/accounts/${encodeURIComponent(ulid)}`, {
+      body: payload,
+    });
+  }
+
+  /**
+   * Delete an account.
+   * DELETE /v1/crm/accounts/{ulid}
+   */
+  async deleteCrmAccount(ulid: string): Promise<void> {
+    await this.client.delete(`/v1/crm/accounts/${encodeURIComponent(ulid)}`);
+  }
+
+  /**
+   * Get leads list with optional filters.
+   * GET /v1/crm/leads
+   */
+  async getCrmLeads(params?: {
+    search?: string;
+    status?: string;
+    per_page?: number;
+    page?: number;
+  }): Promise<CrmPaginatedResponse<CrmLead>> {
+    const query: Record<string, string> = {};
+    if (params?.search) query.search = params.search;
+    if (params?.status) query.status = params.status;
+    if (params?.per_page != null) query.per_page = String(params.per_page);
+    if (params?.page != null) query.page = String(params.page);
+    return this.client.get<CrmPaginatedResponse<CrmLead>>("/v1/crm/leads", {
+      query: Object.keys(query).length > 0 ? query : undefined,
+    });
+  }
+
+  /**
+   * Get a single lead by ULID.
+   * GET /v1/crm/leads/{ulid}
+   */
+  async getCrmLead(ulid: string): Promise<CrmLead> {
+    return this.client.get<CrmLead>(`/v1/crm/leads/${encodeURIComponent(ulid)}`);
+  }
+
+  /**
+   * Create a new lead.
+   * POST /v1/crm/leads
+   */
+  async createCrmLead(
+    payload: Partial<CrmLead> & {
+      first_name: string;
+      last_name: string;
+      email: string;
+    }
+  ): Promise<CrmLead> {
+    return this.client.post<CrmLead>("/v1/crm/leads", { body: payload });
+  }
+
+  /**
+   * Update a lead.
+   * PUT /v1/crm/leads/{ulid}
+   */
+  async updateCrmLead(ulid: string, payload: Partial<CrmLead>): Promise<CrmLead> {
+    return this.client.put<CrmLead>(`/v1/crm/leads/${encodeURIComponent(ulid)}`, {
+      body: payload,
+    });
+  }
+
+  /**
+   * Delete a lead.
+   * DELETE /v1/crm/leads/{ulid}
+   */
+  async deleteCrmLead(ulid: string): Promise<void> {
+    await this.client.delete(`/v1/crm/leads/${encodeURIComponent(ulid)}`);
+  }
+
+  /**
+   * Convert a lead to contact/account/opportunity.
+   * POST /v1/crm/leads/{ulid}/convert
+   */
+  async convertCrmLead(
+    ulid: string,
+    options?: {
+      create_opportunity?: boolean;
+      opportunity_name?: string;
+      opportunity_amount?: number;
+    }
+  ): Promise<CrmConvertLeadResponse> {
+    return this.client.post<CrmConvertLeadResponse>(
+      `/v1/crm/leads/${encodeURIComponent(ulid)}/convert`,
+      { body: options ?? {} }
+    );
+  }
+
+  /**
+   * Get opportunities list with optional filters.
+   * GET /v1/crm/opportunities
+   */
+  async getCrmOpportunities(params?: {
+    search?: string;
+    stage?: string;
+    per_page?: number;
+    page?: number;
+  }): Promise<CrmPaginatedResponse<CrmOpportunity>> {
+    const query: Record<string, string> = {};
+    if (params?.search) query.search = params.search;
+    if (params?.stage) query.stage = params.stage;
+    if (params?.per_page != null) query.per_page = String(params.per_page);
+    if (params?.page != null) query.page = String(params.page);
+    return this.client.get<CrmPaginatedResponse<CrmOpportunity>>("/v1/crm/opportunities", {
+      query: Object.keys(query).length > 0 ? query : undefined,
+    });
+  }
+
+  /**
+   * Get a single opportunity by ULID.
+   * GET /v1/crm/opportunities/{ulid}
+   */
+  async getCrmOpportunity(ulid: string): Promise<CrmOpportunity> {
+    return this.client.get<CrmOpportunity>(
+      `/v1/crm/opportunities/${encodeURIComponent(ulid)}`
+    );
+  }
+
+  /**
+   * Create a new opportunity.
+   * POST /v1/crm/opportunities
+   */
+  async createCrmOpportunity(
+    payload: Partial<CrmOpportunity> & {
+      name: string;
+      account_ulid: string;
+      primary_contact_ulid?: string;
+      amount?: number;
+      stage?: string;
+      expected_close_date?: string;
+    }
+  ): Promise<CrmOpportunity> {
+    return this.client.post<CrmOpportunity>("/v1/crm/opportunities", { body: payload });
+  }
+
+  /**
+   * Update an opportunity.
+   * PUT /v1/crm/opportunities/{ulid}
+   */
+  async updateCrmOpportunity(
+    ulid: string,
+    payload: Partial<CrmOpportunity>
+  ): Promise<CrmOpportunity> {
+    return this.client.put<CrmOpportunity>(
+      `/v1/crm/opportunities/${encodeURIComponent(ulid)}`,
+      { body: payload }
+    );
+  }
+
+  /**
+   * Delete an opportunity.
+   * DELETE /v1/crm/opportunities/{ulid}
+   */
+  async deleteCrmOpportunity(ulid: string): Promise<void> {
+    await this.client.delete(`/v1/crm/opportunities/${encodeURIComponent(ulid)}`);
+  }
+
+  /**
+   * Change opportunity stage.
+   * PUT /v1/crm/opportunities/{ulid}/stage
+   */
+  async changeCrmOpportunityStage(
+    ulid: string,
+    stage: string,
+    wonLostReason?: string
+  ): Promise<CrmOpportunity> {
+    return this.client.put<CrmOpportunity>(
+      `/v1/crm/opportunities/${encodeURIComponent(ulid)}/stage`,
+      { body: { stage, won_lost_reason: wonLostReason } }
+    );
+  }
+
+  /**
+   * Get opportunities forecast.
+   * GET /v1/crm/opportunities/forecast
+   */
+  async getCrmForecast(): Promise<CrmForecastResponse> {
+    return this.client.get<CrmForecastResponse>("/v1/crm/opportunities/forecast");
+  }
+
+  /**
+   * Get opportunities pipeline by stage.
+   * GET /v1/crm/opportunities/pipeline
+   */
+  async getCrmPipeline(): Promise<CrmPipelineStage[]> {
+    return this.client.get<CrmPipelineStage[]>("/v1/crm/opportunities/pipeline");
+  }
+
+  /**
+   * Get activities for an entity.
+   * GET /v1/crm/{entity}/{ulid}/activities
+   */
+  async getCrmActivities(
+    entity: "contacts" | "accounts" | "leads" | "opportunities",
+    ulid: string
+  ): Promise<CrmActivity[]> {
+    const response = await this.client.get<CrmActivity[]>(
+      `/v1/crm/${encodeURIComponent(entity)}/${encodeURIComponent(ulid)}/activities`
+    );
+    return Array.isArray(response) ? response : [];
+  }
+
+  /**
+   * Create an activity.
+   * POST /v1/crm/activities
+   */
+  async createCrmActivity(payload: {
+    entity_type: "contact" | "account" | "lead" | "opportunity";
+    entity_ulid: string;
+    type: "note" | "task" | "call";
+    subject?: string;
+    body?: string;
+    occurred_at?: string;
+  }): Promise<CrmActivity> {
+    return this.client.post<CrmActivity>("/v1/crm/activities", { body: payload });
+  }
+
+  /**
+   * Get custom field definitions.
+   * GET /v1/crm/custom-fields
+   */
+  async getCrmCustomFields(entityType?: string): Promise<CrmCustomFieldDefinition[]> {
+    const query = entityType ? { entity_type: entityType } : undefined;
+    const response = await this.client.get<CrmCustomFieldDefinition[]>(
+      "/v1/crm/custom-fields",
+      { query }
+    );
+    return Array.isArray(response) ? response : [];
+  }
+
+  /**
+   * Create a custom field definition.
+   * POST /v1/crm/custom-fields
+   */
+  async createCrmCustomField(payload: {
+    entity_type: string;
+    name: string;
+    api_name: string;
+    type: string;
+    options?: unknown;
+    sort_order?: number;
+  }): Promise<CrmCustomFieldDefinition> {
+    return this.client.post<CrmCustomFieldDefinition>("/v1/crm/custom-fields", {
+      body: payload,
+    });
+  }
+
+  /**
+   * Update a custom field definition.
+   * PUT /v1/crm/custom-fields/{id}
+   */
+  async updateCrmCustomField(
+    id: number,
+    payload: Partial<
+      Pick<CrmCustomFieldDefinition, "name" | "api_name" | "type" | "options" | "sort_order">
+    >
+  ): Promise<CrmCustomFieldDefinition> {
+    return this.client.put<CrmCustomFieldDefinition>(
+      `/v1/crm/custom-fields/${encodeURIComponent(String(id))}`,
+      { body: payload }
+    );
+  }
+
+  /**
+   * Delete a custom field definition.
+   * DELETE /v1/crm/custom-fields/{id}
+   */
+  async deleteCrmCustomField(id: number): Promise<void> {
+    await this.client.delete(`/v1/crm/custom-fields/${encodeURIComponent(String(id))}`);
   }
 
   // ---------------------------------------------------------------------------
