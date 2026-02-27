@@ -4,46 +4,11 @@ on:
   pull_request:
     branches: ['**']
   push:
-    branches: [main]
-
-permissions:
-  contents: read
-  security-events: write
-
-env:
-  SANDTRACE_VERSION: '0.2.5'
+    branches: [main, master, develop]
 
 jobs:
-  security-scan:
-    name: Security Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install sandtrace
-        run: |
-          curl -sSfL "https://github.com/sandtrace/sandtrace/releases/download/v${SANDTRACE_VERSION}/sandtrace-v${SANDTRACE_VERSION}-x86_64-unknown-linux-gnu.tar.gz" -o sandtrace.tar.gz
-          tar xzf sandtrace.tar.gz
-          sudo mv sandtrace-v${SANDTRACE_VERSION}-x86_64-unknown-linux-gnu/sandtrace /usr/local/bin/
-          rm -rf sandtrace.tar.gz sandtrace-v${SANDTRACE_VERSION}-x86_64-unknown-linux-gnu
-
-      - name: Initialize sandtrace
-        run: sandtrace init
-
-      - name: Run audit
-        run: sandtrace audit . --severity medium
-
-      - name: Run obfuscation scan
-        run: sandtrace scan . --verbose
-
-      - name: Generate SARIF report
-        if: always()
-        run: sandtrace audit . --format sarif --severity medium > sandtrace.sarif || true
-
-      - name: Upload SARIF to GitHub Security
-        if: always() && github.event_name == 'push'
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: sandtrace.sarif
-          category: sandtrace
+  sandtrace:
+    uses: cc-consulting-nv/.github/.github/workflows/sandtrace-scan.yml@main
+    permissions:
+      contents: read
+      security-events: write
