@@ -199,154 +199,52 @@ export interface ModerationFeedActionResponse {
 }
 
 // ============================================================================
-// CRM Module Types
+// CRM Module Types (re-exported from ./types/crm)
 // ============================================================================
 
-export interface CrmContact {
-  ulid: string;
-  first_name: string;
-  last_name: string;
-  full_name: string;
-  title?: string;
-  department?: string;
-  birthday?: string;
-  lead_source?: string;
-  account?: { ulid: string; name: string };
-  owner?: { ulid: string; name: string };
-  emails?: { email: string; label?: string; is_primary: boolean }[];
-  phones?: { phone: string; label?: string; is_primary: boolean }[];
-  tags?: { id: number; name: string; color?: string }[];
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface CrmAccount {
-  ulid: string;
-  name: string;
-  website?: string;
-  industry?: string;
-  employee_count?: number;
-  annual_revenue?: number;
-  type?: string;
-  ownership?: string;
-  owner?: { ulid: string; name: string };
-  addresses?: {
-    label?: string;
-    street?: string;
-    city?: string;
-    state?: string;
-    postal_code?: string;
-    country?: string;
-    is_primary: boolean;
-  }[];
-  contacts_count?: number;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface CrmLead {
-  ulid: string;
-  first_name: string;
-  last_name: string;
-  full_name: string;
-  email: string;
-  company?: string;
-  status: string;
-  lead_source?: string;
-  score: number;
-  score_tier?: string;
-  owner?: { ulid: string; name: string };
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface CrmOpportunity {
-  ulid: string;
-  name: string;
-  amount: number;
-  currency: string;
-  expected_close_date?: string;
-  stage: string;
-  probability: number;
-  type?: string;
-  account?: { ulid: string; name: string };
-  primary_contact?: { ulid: string; full_name: string };
-  owner?: { ulid: string; name: string };
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface CrmPaginatedResponse<T> {
-  data: T[];
-  links?: { first: string; last: string; prev?: string; next?: string };
-  meta?: {
-    current_page: number;
-    from?: number;
-    last_page: number;
-    per_page: number;
-    to?: number;
-    total: number;
-  };
-}
-
-export interface CrmConvertLeadResponse {
-  contact: CrmContact;
-  account: CrmAccount | null;
-  opportunity: CrmOpportunity | null;
-}
-
-export interface CrmForecastResponse {
-  total_pipeline: number;
-  weighted_pipeline: number;
-  open_count: number;
-  by_stage: Array<{
-    stage: string;
-    count: number;
-    total_amount: number;
-    weighted_amount: number;
-  }>;
-  this_month: {
-    won_amount: number;
-    won_count: number;
-    lost_count: number;
-  };
-}
-
-export interface CrmPipelineStage {
-  stage: string;
-  opportunities: Array<{
-    ulid: string;
-    name: string;
-    amount: number;
-    currency: string;
-    probability: number;
-    expected_close_date?: string;
-    account?: { ulid: string; name: string };
-    owner?: { ulid: string; name: string };
-  }>;
-  count: number;
-  total_amount: number;
-}
-
-export interface CrmCustomFieldDefinition {
-  id: number;
-  entity_type: string;
-  name: string;
-  api_name: string;
-  type: string;
-  options?: unknown;
-  sort_order: number;
-}
-
-export interface CrmActivity {
-  id: number;
-  type: string;
-  subject?: string;
-  body?: string;
-  occurred_at: string;
-  source?: string;
-  owner?: { ulid: string; name: string };
-}
+import type {
+  CrmContact,
+  CrmAccount,
+  CrmLead,
+  CrmOpportunity,
+  CrmOpportunityProduct,
+  CrmPaginatedResponse,
+  CrmConvertLeadResponse,
+  CrmForecastResponse,
+  CrmPipelineStage,
+  CrmPipelineConfig,
+  CrmVelocityResponse,
+  CrmDashboardResponse,
+  CrmCustomFieldDefinition,
+  CrmActivity,
+  CrmActivityComment,
+  CrmTasksResponse,
+  CrmReminder,
+  CrmReportResponse,
+  CrmSearchResult,
+  CrmAutomationRule,
+  CrmAutomationCondition,
+  CrmAutomationAction,
+  CrmAutomationLog,
+  CrmAutomationMeta,
+  CrmLeadScoringRule,
+  CrmLeadScoreLog,
+  CrmScoringMeta,
+  CrmEmailTemplate,
+  CrmEmailSend,
+  CrmEmailTemplateMeta,
+  CrmTimelineEntry,
+  CrmAttachment,
+  CrmDuplicateCheckResult,
+  CrmSavedView,
+  CrmSavedViewFilter,
+  CrmAuditLogResponse,
+  ContactImportResult,
+  DripCampaign,
+  DripCampaignEnrollment,
+  DripPaginatedResponse,
+  DripCampaignStats,
+} from "./types/crm";
 
 export interface ModerationFeedHistoryAction {
   action: string;
@@ -6120,12 +6018,18 @@ export class CcPlatformSdk {
   async getCrmContacts(params?: {
     search?: string;
     account_id?: number;
+    owner_id?: number;
+    lead_source?: string;
+    tag?: string;
     per_page?: number;
     page?: number;
   }): Promise<CrmPaginatedResponse<CrmContact>> {
     const query: Record<string, string> = {};
     if (params?.search) query.search = params.search;
     if (params?.account_id != null) query.account_id = String(params.account_id);
+    if (params?.owner_id != null) query.owner_id = String(params.owner_id);
+    if (params?.lead_source) query.lead_source = params.lead_source;
+    if (params?.tag) query.tag = params.tag;
     if (params?.per_page != null) query.per_page = String(params.per_page);
     if (params?.page != null) query.page = String(params.page);
     return this.client.get<CrmPaginatedResponse<CrmContact>>("/v1/crm/contacts", {
@@ -6175,11 +6079,17 @@ export class CcPlatformSdk {
    */
   async getCrmAccounts(params?: {
     search?: string;
+    industry?: string;
+    type?: string;
+    owner_id?: number;
     per_page?: number;
     page?: number;
   }): Promise<CrmPaginatedResponse<CrmAccount>> {
     const query: Record<string, string> = {};
     if (params?.search) query.search = params.search;
+    if (params?.industry) query.industry = params.industry;
+    if (params?.type) query.type = params.type;
+    if (params?.owner_id != null) query.owner_id = String(params.owner_id);
     if (params?.per_page != null) query.per_page = String(params.per_page);
     if (params?.page != null) query.page = String(params.page);
     return this.client.get<CrmPaginatedResponse<CrmAccount>>("/v1/crm/accounts", {
@@ -6230,12 +6140,18 @@ export class CcPlatformSdk {
   async getCrmLeads(params?: {
     search?: string;
     status?: string;
+    score_tier?: string;
+    lead_source?: string;
+    owner_id?: number;
     per_page?: number;
     page?: number;
   }): Promise<CrmPaginatedResponse<CrmLead>> {
     const query: Record<string, string> = {};
     if (params?.search) query.search = params.search;
     if (params?.status) query.status = params.status;
+    if (params?.score_tier) query.score_tier = params.score_tier;
+    if (params?.lead_source) query.lead_source = params.lead_source;
+    if (params?.owner_id != null) query.owner_id = String(params.owner_id);
     if (params?.per_page != null) query.per_page = String(params.per_page);
     if (params?.page != null) query.page = String(params.page);
     return this.client.get<CrmPaginatedResponse<CrmLead>>("/v1/crm/leads", {
@@ -6308,12 +6224,16 @@ export class CcPlatformSdk {
   async getCrmOpportunities(params?: {
     search?: string;
     stage?: string;
+    owner_id?: number;
+    contact_ulid?: string;
     per_page?: number;
     page?: number;
   }): Promise<CrmPaginatedResponse<CrmOpportunity>> {
     const query: Record<string, string> = {};
     if (params?.search) query.search = params.search;
     if (params?.stage) query.stage = params.stage;
+    if (params?.owner_id != null) query.owner_id = String(params.owner_id);
+    if (params?.contact_ulid) query.contact_ulid = params.contact_ulid;
     if (params?.per_page != null) query.per_page = String(params.per_page);
     if (params?.page != null) query.page = String(params.page);
     return this.client.get<CrmPaginatedResponse<CrmOpportunity>>("/v1/crm/opportunities", {
@@ -6422,10 +6342,16 @@ export class CcPlatformSdk {
   async createCrmActivity(payload: {
     entity_type: "contact" | "account" | "lead" | "opportunity";
     entity_ulid: string;
-    type: "note" | "task" | "call";
+    type: "note" | "task" | "call" | "email";
     subject?: string;
     body?: string;
+    body_json?: string;
     occurred_at?: string;
+    due_at?: string;
+    priority?: "low" | "medium" | "high";
+    assigned_to_id?: number;
+    remind_at?: string | null;
+    recurrence?: "daily" | "weekly" | "monthly";
   }): Promise<CrmActivity> {
     return this.client.post<CrmActivity>("/v1/crm/activities", { body: payload });
   }
@@ -6482,6 +6408,884 @@ export class CcPlatformSdk {
    */
   async deleteCrmCustomField(id: number): Promise<void> {
     await this.client.delete(`/v1/crm/custom-fields/${encodeURIComponent(String(id))}`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Update / Delete Activity
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Update an activity.
+   * PATCH /v1/crm/activities/{id}
+   */
+  async updateCrmActivity(
+    id: number,
+    payload: {
+      subject?: string;
+      body?: string;
+      body_json?: string;
+      due_at?: string | null;
+      remind_at?: string | null;
+      priority?: "low" | "medium" | "high" | null;
+      assigned_to_id?: number | null;
+      recurrence?: "daily" | "weekly" | "monthly" | null;
+    },
+  ): Promise<CrmActivity> {
+    return this.client.patch<CrmActivity>(`/v1/crm/activities/${id}`, { body: payload });
+  }
+
+  /**
+   * Delete an activity.
+   * DELETE /v1/crm/activities/{id}
+   */
+  async deleteCrmActivity(id: number): Promise<void> {
+    await this.client.delete(`/v1/crm/activities/${id}`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Import / Merge / Bulk
+  // ---------------------------------------------------------------------------
+
+  /** Import contacts from CSV. POST /v1/crm/contacts/import/csv */
+  async importCrmContactsCsv(file: File): Promise<ContactImportResult> {
+    const formData = new FormData();
+    formData.append("file", file);
+    return this.client.post<ContactImportResult>("/v1/crm/contacts/import/csv", {
+      body: formData,
+      });
+  }
+
+  /** Import contacts from Google Sheets. POST /v1/crm/contacts/import/google-sheets */
+  async importCrmContactsGoogleSheets(url: string): Promise<ContactImportResult> {
+    return this.client.post<ContactImportResult>("/v1/crm/contacts/import/google-sheets", {
+      body: { url },
+    });
+  }
+
+  /** Merge two contacts. POST /v1/crm/contacts/merge */
+  async mergeCrmContacts(sourceUlid: string, targetUlid: string): Promise<CrmContact> {
+    return this.client.post<CrmContact>("/v1/crm/contacts/merge", {
+      body: { source_ulid: sourceUlid, target_ulid: targetUlid },
+    });
+  }
+
+  /** Bulk delete contacts. POST /v1/crm/contacts/bulk-delete */
+  async bulkDeleteCrmContacts(ulids: string[]): Promise<{ deleted: number }> {
+    return this.client.post<{ deleted: number }>("/v1/crm/contacts/bulk-delete", {
+      body: { ulids },
+    });
+  }
+
+  /** Bulk reassign contacts. POST /v1/crm/contacts/bulk-reassign */
+  async bulkReassignCrmContacts(ulids: string[], ownerId: number): Promise<{ reassigned: number }> {
+    return this.client.post<{ reassigned: number }>("/v1/crm/contacts/bulk-reassign", {
+      body: { ulids, owner_id: ownerId },
+    });
+  }
+
+  /** Get opportunities for a contact. GET /v1/crm/opportunities?contact_ulid=... */
+  async getContactCrmOpportunities(contactUlid: string): Promise<CrmPaginatedResponse<CrmOpportunity>> {
+    return this.getCrmOpportunities({ contact_ulid: contactUlid, per_page: 50 });
+  }
+
+  /** Import leads from CSV. POST /v1/crm/leads/import/csv */
+  async importCrmLeadsCsv(file: File): Promise<ContactImportResult> {
+    const formData = new FormData();
+    formData.append("file", file);
+    return this.client.post<ContactImportResult>("/v1/crm/leads/import/csv", {
+      body: formData,
+      });
+  }
+
+  /** Import leads from Google Sheets. POST /v1/crm/leads/import/google-sheets */
+  async importCrmLeadsGoogleSheets(url: string): Promise<ContactImportResult> {
+    return this.client.post<ContactImportResult>("/v1/crm/leads/import/google-sheets", {
+      body: { url },
+    });
+  }
+
+  /** Merge two leads. POST /v1/crm/leads/merge */
+  async mergeCrmLeads(sourceUlid: string, targetUlid: string): Promise<CrmLead> {
+    return this.client.post<CrmLead>("/v1/crm/leads/merge", {
+      body: { source_ulid: sourceUlid, target_ulid: targetUlid },
+    });
+  }
+
+  /** Bulk delete leads. POST /v1/crm/leads/bulk-delete */
+  async bulkDeleteCrmLeads(ulids: string[]): Promise<{ deleted: number }> {
+    return this.client.post<{ deleted: number }>("/v1/crm/leads/bulk-delete", {
+      body: { ulids },
+    });
+  }
+
+  /** Bulk reassign leads. POST /v1/crm/leads/bulk-reassign */
+  async bulkReassignCrmLeads(ulids: string[], ownerId: number): Promise<{ reassigned: number }> {
+    return this.client.post<{ reassigned: number }>("/v1/crm/leads/bulk-reassign", {
+      body: { ulids, owner_id: ownerId },
+    });
+  }
+
+  /** Bulk change lead status. POST /v1/crm/leads/bulk-status */
+  async bulkChangeCrmLeadStatus(ulids: string[], status: string): Promise<{ updated: number }> {
+    return this.client.post<{ updated: number }>("/v1/crm/leads/bulk-status", {
+      body: { ulids, status },
+    });
+  }
+
+  /** Bulk delete accounts. POST /v1/crm/accounts/bulk-delete */
+  async bulkDeleteCrmAccounts(ulids: string[]): Promise<{ deleted: number }> {
+    return this.client.post<{ deleted: number }>("/v1/crm/accounts/bulk-delete", {
+      body: { ulids },
+    });
+  }
+
+  /** Bulk reassign accounts. POST /v1/crm/accounts/bulk-reassign */
+  async bulkReassignCrmAccounts(ulids: string[], ownerId: number): Promise<{ reassigned: number }> {
+    return this.client.post<{ reassigned: number }>("/v1/crm/accounts/bulk-reassign", {
+      body: { ulids, owner_id: ownerId },
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Opportunity Contacts & Products
+  // ---------------------------------------------------------------------------
+
+  /** Add a contact to an opportunity. POST /v1/crm/opportunities/{ulid}/contacts */
+  async addCrmOpportunityContact(
+    opportunityUlid: string,
+    contactUlid: string,
+    role: string,
+  ): Promise<CrmOpportunity> {
+    return this.client.post<CrmOpportunity>(
+      `/v1/crm/opportunities/${encodeURIComponent(opportunityUlid)}/contacts`,
+      { body: { contact_ulid: contactUlid, role } },
+    );
+  }
+
+  /** Remove a contact from an opportunity. DELETE /v1/crm/opportunities/{ulid}/contacts/{contactUlid} */
+  async removeCrmOpportunityContact(
+    opportunityUlid: string,
+    contactUlid: string,
+  ): Promise<CrmOpportunity> {
+    return this.client.delete<CrmOpportunity>(
+      `/v1/crm/opportunities/${encodeURIComponent(opportunityUlid)}/contacts/${encodeURIComponent(contactUlid)}`,
+    );
+  }
+
+  /** Update contact role on an opportunity. PATCH /v1/crm/opportunities/{ulid}/contacts/{contactUlid} */
+  async updateCrmOpportunityContactRole(
+    opportunityUlid: string,
+    contactUlid: string,
+    role: string,
+  ): Promise<CrmOpportunity> {
+    return this.client.patch<CrmOpportunity>(
+      `/v1/crm/opportunities/${encodeURIComponent(opportunityUlid)}/contacts/${encodeURIComponent(contactUlid)}`,
+      { body: { role } },
+    );
+  }
+
+  /** Add a product to an opportunity. POST /v1/crm/opportunities/{ulid}/products */
+  async addCrmOpportunityProduct(
+    opportunityUlid: string,
+    payload: { name: string; sku?: string; quantity: number; unit_price: number; discount?: number },
+  ): Promise<CrmOpportunityProduct> {
+    return this.client.post<CrmOpportunityProduct>(
+      `/v1/crm/opportunities/${encodeURIComponent(opportunityUlid)}/products`,
+      { body: payload },
+    );
+  }
+
+  /** Update a product on an opportunity. PATCH /v1/crm/opportunities/{ulid}/products/{productId} */
+  async updateCrmOpportunityProduct(
+    opportunityUlid: string,
+    productId: number,
+    payload: { name?: string; sku?: string; quantity?: number; unit_price?: number; discount?: number },
+  ): Promise<CrmOpportunityProduct> {
+    return this.client.patch<CrmOpportunityProduct>(
+      `/v1/crm/opportunities/${encodeURIComponent(opportunityUlid)}/products/${productId}`,
+      { body: payload },
+    );
+  }
+
+  /** Delete a product from an opportunity. DELETE /v1/crm/opportunities/{ulid}/products/{productId} */
+  async deleteCrmOpportunityProduct(opportunityUlid: string, productId: number): Promise<void> {
+    await this.client.delete(
+      `/v1/crm/opportunities/${encodeURIComponent(opportunityUlid)}/products/${productId}`,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Dashboard / Reports / Velocity / Search
+  // ---------------------------------------------------------------------------
+
+  /** Get CRM dashboard. GET /v1/crm/opportunities/dashboard */
+  async getCrmDashboard(params?: {
+    scope?: "my" | "team";
+    search?: string;
+    sort?: "value_desc" | "days_asc";
+    pipeline_ulid?: string;
+  }): Promise<CrmDashboardResponse> {
+    const query: Record<string, string> = {};
+    if (params?.scope) query.scope = params.scope;
+    if (params?.search) query.search = params.search;
+    if (params?.sort) query.sort = params.sort;
+    if (params?.pipeline_ulid) query.pipeline_ulid = params.pipeline_ulid;
+    return this.client.get<CrmDashboardResponse>("/v1/crm/opportunities/dashboard", {
+      query: Object.keys(query).length > 0 ? query : undefined,
+    });
+  }
+
+  /** Get CRM reports. GET /v1/crm/reports */
+  async getCrmReports(params?: { period?: number }): Promise<CrmReportResponse> {
+    const query: Record<string, string> = {};
+    if (params?.period != null) query.period = String(params.period);
+    return this.client.get<CrmReportResponse>("/v1/crm/reports", {
+      query: Object.keys(query).length > 0 ? query : undefined,
+    });
+  }
+
+  /** Get pipeline velocity. GET /v1/crm/opportunities/velocity */
+  async getCrmVelocity(): Promise<CrmVelocityResponse> {
+    return this.client.get<CrmVelocityResponse>("/v1/crm/opportunities/velocity");
+  }
+
+  /** Search CRM entities. GET /v1/crm/search */
+  async searchCrm(params: {
+    q: string;
+    entity_type?: string;
+    per_page?: number;
+  }): Promise<CrmSearchResult[]> {
+    const query: Record<string, string> = { q: params.q };
+    if (params.entity_type) query.entity_type = params.entity_type;
+    if (params.per_page != null) query.per_page = String(params.per_page);
+    const response = await this.client.get<CrmSearchResult[]>("/v1/crm/search", { query });
+    return Array.isArray(response) ? response : [];
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Tasks / Reminders
+  // ---------------------------------------------------------------------------
+
+  /** Get CRM tasks. GET /v1/crm/tasks */
+  async getCrmTasks(params?: {
+    status?: "pending" | "completed" | "overdue" | "all";
+    priority?: "low" | "medium" | "high";
+    assigned_to_id?: number;
+    scope?: "my" | "all";
+    date_from?: string;
+    date_to?: string;
+    page?: number;
+    per_page?: number;
+  }): Promise<CrmTasksResponse> {
+    const query: Record<string, string> = {};
+    if (params?.status) query.status = params.status;
+    if (params?.priority) query.priority = params.priority;
+    if (params?.assigned_to_id != null) query.assigned_to_id = String(params.assigned_to_id);
+    if (params?.scope) query.scope = params.scope;
+    if (params?.date_from) query.date_from = params.date_from;
+    if (params?.date_to) query.date_to = params.date_to;
+    if (params?.page != null) query.page = String(params.page);
+    if (params?.per_page != null) query.per_page = String(params.per_page);
+    return this.client.get<CrmTasksResponse>("/v1/crm/tasks", {
+      query: Object.keys(query).length > 0 ? query : undefined,
+    });
+  }
+
+  /** Get CRM reminders. GET /v1/crm/reminders */
+  async getCrmReminders(): Promise<CrmReminder[]> {
+    const response = await this.client.get<CrmReminder[]>("/v1/crm/reminders");
+    return Array.isArray(response) ? response : [];
+  }
+
+  /** Mark a reminder/activity complete. PATCH /v1/crm/activities/{id}/complete */
+  async markCrmReminderComplete(activityId: number): Promise<void> {
+    await this.client.patch(`/v1/crm/activities/${activityId}/complete`);
+  }
+
+  /** Add a comment to a task/activity. POST /v1/crm/activities/{id}/comments */
+  async addCrmTaskComment(
+    id: number,
+    comment: string,
+  ): Promise<{ comments: CrmActivityComment[] }> {
+    return this.client.post<{ comments: CrmActivityComment[] }>(
+      `/v1/crm/activities/${id}/comments`,
+      { body: { comment } },
+    );
+  }
+
+  /** Bulk complete tasks. POST /v1/crm/activities/bulk-complete */
+  async bulkCompleteCrmTasks(ids: number[]): Promise<{ completed: number }> {
+    return this.client.post<{ completed: number }>("/v1/crm/activities/bulk-complete", {
+      body: { ids },
+    });
+  }
+
+  /** Bulk delete tasks. POST /v1/crm/activities/bulk-delete */
+  async bulkDeleteCrmTasks(ids: number[]): Promise<{ deleted: number }> {
+    return this.client.post<{ deleted: number }>("/v1/crm/activities/bulk-delete", {
+      body: { ids },
+    });
+  }
+
+  /** Bulk reassign tasks. POST /v1/crm/activities/bulk-reassign */
+  async bulkReassignCrmTasks(ids: number[], assignedToId: number): Promise<{ reassigned: number }> {
+    return this.client.post<{ reassigned: number }>("/v1/crm/activities/bulk-reassign", {
+      body: { ids, assigned_to_id: assignedToId },
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Pipeline Management
+  // ---------------------------------------------------------------------------
+
+  /** Get all pipelines. GET /v1/crm/pipelines */
+  async getCrmPipelines(): Promise<CrmPipelineConfig[]> {
+    const response = await this.client.get<CrmPipelineConfig[]>("/v1/crm/pipelines");
+    return Array.isArray(response) ? response : [];
+  }
+
+  /** Get pipeline detail. GET /v1/crm/pipelines/{ulid} */
+  async getCrmPipelineDetail(ulid: string): Promise<CrmPipelineConfig> {
+    return this.client.get<CrmPipelineConfig>(`/v1/crm/pipelines/${encodeURIComponent(ulid)}`);
+  }
+
+  /** Create a pipeline. POST /v1/crm/pipelines */
+  async createCrmPipeline(payload: {
+    name: string;
+    is_default?: boolean;
+    stages?: Array<{ name: string; probability?: number; is_closed?: boolean; is_won?: boolean }>;
+  }): Promise<CrmPipelineConfig> {
+    return this.client.post<CrmPipelineConfig>("/v1/crm/pipelines", { body: payload });
+  }
+
+  /** Update a pipeline. PUT /v1/crm/pipelines/{ulid} */
+  async updateCrmPipeline(
+    ulid: string,
+    payload: {
+      name?: string;
+      is_default?: boolean;
+      stages?: Array<{ id?: number; name: string; probability?: number; is_closed?: boolean; is_won?: boolean }>;
+    },
+  ): Promise<CrmPipelineConfig> {
+    return this.client.put<CrmPipelineConfig>(
+      `/v1/crm/pipelines/${encodeURIComponent(ulid)}`,
+      { body: payload },
+    );
+  }
+
+  /** Delete a pipeline. DELETE /v1/crm/pipelines/{ulid} */
+  async deleteCrmPipeline(ulid: string): Promise<void> {
+    await this.client.delete(`/v1/crm/pipelines/${encodeURIComponent(ulid)}`);
+  }
+
+  /** Reorder pipeline stages. PUT /v1/crm/pipelines/{ulid}/stages/reorder */
+  async reorderCrmPipelineStages(ulid: string, stageIds: number[]): Promise<CrmPipelineConfig> {
+    return this.client.put<CrmPipelineConfig>(
+      `/v1/crm/pipelines/${encodeURIComponent(ulid)}/stages/reorder`,
+      { body: { stage_ids: stageIds } },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Automation Rules
+  // ---------------------------------------------------------------------------
+
+  /** Get all automations. GET /v1/crm/automations */
+  async getCrmAutomations(): Promise<CrmAutomationRule[]> {
+    const response = await this.client.get<CrmAutomationRule[]>("/v1/crm/automations");
+    return Array.isArray(response) ? response : [];
+  }
+
+  /** Get a single automation. GET /v1/crm/automations/{ulid} */
+  async getCrmAutomation(ulid: string): Promise<CrmAutomationRule & { recent_logs?: CrmAutomationLog[] }> {
+    return this.client.get<CrmAutomationRule & { recent_logs?: CrmAutomationLog[] }>(
+      `/v1/crm/automations/${encodeURIComponent(ulid)}`,
+    );
+  }
+
+  /** Create an automation. POST /v1/crm/automations */
+  async createCrmAutomation(payload: {
+    name: string;
+    description?: string;
+    trigger_event: string;
+    conditions?: CrmAutomationCondition[];
+    actions: CrmAutomationAction[];
+  }): Promise<CrmAutomationRule> {
+    return this.client.post<CrmAutomationRule>("/v1/crm/automations", { body: payload });
+  }
+
+  /** Update an automation. PUT /v1/crm/automations/{ulid} */
+  async updateCrmAutomation(
+    ulid: string,
+    payload: {
+      name: string;
+      description?: string;
+      trigger_event: string;
+      conditions?: CrmAutomationCondition[];
+      actions: CrmAutomationAction[];
+    },
+  ): Promise<CrmAutomationRule> {
+    return this.client.put<CrmAutomationRule>(
+      `/v1/crm/automations/${encodeURIComponent(ulid)}`,
+      { body: payload },
+    );
+  }
+
+  /** Delete an automation. DELETE /v1/crm/automations/{ulid} */
+  async deleteCrmAutomation(ulid: string): Promise<void> {
+    await this.client.delete(`/v1/crm/automations/${encodeURIComponent(ulid)}`);
+  }
+
+  /** Toggle automation active/inactive. PATCH /v1/crm/automations/{ulid}/toggle */
+  async toggleCrmAutomation(ulid: string): Promise<CrmAutomationRule> {
+    return this.client.patch<CrmAutomationRule>(
+      `/v1/crm/automations/${encodeURIComponent(ulid)}/toggle`,
+    );
+  }
+
+  /** Get automation logs. GET /v1/crm/automations/{ulid}/logs */
+  async getCrmAutomationLogs(ulid: string, limit?: number): Promise<CrmAutomationLog[]> {
+    const query: Record<string, string> = {};
+    if (limit != null) query.limit = String(limit);
+    const response = await this.client.get<CrmAutomationLog[]>(
+      `/v1/crm/automations/${encodeURIComponent(ulid)}/logs`,
+      { query: Object.keys(query).length > 0 ? query : undefined },
+    );
+    return Array.isArray(response) ? response : [];
+  }
+
+  /** Get automation metadata (triggers, action types). GET /v1/crm/automations/meta */
+  async getCrmAutomationMeta(): Promise<CrmAutomationMeta> {
+    return this.client.get<CrmAutomationMeta>("/v1/crm/automations/meta");
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Lead Scoring
+  // ---------------------------------------------------------------------------
+
+  /** Get all scoring rules. GET /v1/crm/scoring-rules */
+  async getCrmScoringRules(): Promise<CrmLeadScoringRule[]> {
+    const response = await this.client.get<CrmLeadScoringRule[]>("/v1/crm/scoring-rules");
+    return Array.isArray(response) ? response : [];
+  }
+
+  /** Create a scoring rule. POST /v1/crm/scoring-rules */
+  async createCrmScoringRule(payload: {
+    name: string;
+    description?: string;
+    category: string;
+    event_trigger?: string;
+    conditions?: CrmAutomationCondition[];
+    points: number;
+    max_points_per_lead?: number;
+    cooldown_hours?: number;
+  }): Promise<CrmLeadScoringRule> {
+    return this.client.post<CrmLeadScoringRule>("/v1/crm/scoring-rules", { body: payload });
+  }
+
+  /** Update a scoring rule. PUT /v1/crm/scoring-rules/{ulid} */
+  async updateCrmScoringRule(
+    ulid: string,
+    payload: {
+      name: string;
+      description?: string;
+      category: string;
+      event_trigger?: string;
+      conditions?: CrmAutomationCondition[];
+      points: number;
+      max_points_per_lead?: number;
+      cooldown_hours?: number;
+    },
+  ): Promise<CrmLeadScoringRule> {
+    return this.client.put<CrmLeadScoringRule>(
+      `/v1/crm/scoring-rules/${encodeURIComponent(ulid)}`,
+      { body: payload },
+    );
+  }
+
+  /** Delete a scoring rule. DELETE /v1/crm/scoring-rules/{ulid} */
+  async deleteCrmScoringRule(ulid: string): Promise<void> {
+    await this.client.delete(`/v1/crm/scoring-rules/${encodeURIComponent(ulid)}`);
+  }
+
+  /** Toggle scoring rule active/inactive. PATCH /v1/crm/scoring-rules/{ulid}/toggle */
+  async toggleCrmScoringRule(ulid: string): Promise<CrmLeadScoringRule> {
+    return this.client.patch<CrmLeadScoringRule>(
+      `/v1/crm/scoring-rules/${encodeURIComponent(ulid)}/toggle`,
+    );
+  }
+
+  /** Get scoring metadata. GET /v1/crm/scoring-rules/meta */
+  async getCrmScoringMeta(): Promise<CrmScoringMeta> {
+    return this.client.get<CrmScoringMeta>("/v1/crm/scoring-rules/meta");
+  }
+
+  /** Get lead score history. GET /v1/crm/leads/{ulid}/score-history */
+  async getCrmLeadScoreHistory(ulid: string, limit?: number): Promise<CrmLeadScoreLog[]> {
+    const query: Record<string, string> = {};
+    if (limit != null) query.limit = String(limit);
+    const response = await this.client.get<CrmLeadScoreLog[]>(
+      `/v1/crm/leads/${encodeURIComponent(ulid)}/score-history`,
+      { query: Object.keys(query).length > 0 ? query : undefined },
+    );
+    return Array.isArray(response) ? response : [];
+  }
+
+  /** Recalculate lead score. POST /v1/crm/leads/{ulid}/recalculate-score */
+  async recalculateCrmLeadScore(ulid: string): Promise<{ score: number; score_tier: string }> {
+    return this.client.post<{ score: number; score_tier: string }>(
+      `/v1/crm/leads/${encodeURIComponent(ulid)}/recalculate-score`,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Email Templates
+  // ---------------------------------------------------------------------------
+
+  /** Get email templates. GET /v1/crm/email-templates */
+  async getCrmEmailTemplates(params?: {
+    search?: string;
+    category?: string;
+    per_page?: number;
+    page?: number;
+  }): Promise<CrmPaginatedResponse<CrmEmailTemplate>> {
+    const query: Record<string, string> = {};
+    if (params?.search) query.search = params.search;
+    if (params?.category) query.category = params.category;
+    if (params?.per_page != null) query.per_page = String(params.per_page);
+    if (params?.page != null) query.page = String(params.page);
+    return this.client.get<CrmPaginatedResponse<CrmEmailTemplate>>("/v1/crm/email-templates", {
+      query: Object.keys(query).length > 0 ? query : undefined,
+    });
+  }
+
+  /** Get a single email template. GET /v1/crm/email-templates/{ulid} */
+  async getCrmEmailTemplate(ulid: string): Promise<CrmEmailTemplate> {
+    return this.client.get<CrmEmailTemplate>(`/v1/crm/email-templates/${encodeURIComponent(ulid)}`);
+  }
+
+  /** Create an email template. POST /v1/crm/email-templates */
+  async createCrmEmailTemplate(payload: {
+    name: string;
+    subject: string;
+    body_json: string;
+    category?: string;
+    is_shared?: boolean;
+  }): Promise<CrmEmailTemplate> {
+    return this.client.post<CrmEmailTemplate>("/v1/crm/email-templates", { body: payload });
+  }
+
+  /** Update an email template. PUT /v1/crm/email-templates/{ulid} */
+  async updateCrmEmailTemplate(
+    ulid: string,
+    payload: Partial<{
+      name: string;
+      subject: string;
+      body_json: string;
+      category: string | null;
+      is_shared: boolean;
+    }>,
+  ): Promise<CrmEmailTemplate> {
+    return this.client.put<CrmEmailTemplate>(
+      `/v1/crm/email-templates/${encodeURIComponent(ulid)}`,
+      { body: payload },
+    );
+  }
+
+  /** Delete an email template. DELETE /v1/crm/email-templates/{ulid} */
+  async deleteCrmEmailTemplate(ulid: string): Promise<void> {
+    await this.client.delete(`/v1/crm/email-templates/${encodeURIComponent(ulid)}`);
+  }
+
+  /** Preview an email template. POST /v1/crm/email-templates/{ulid}/preview */
+  async previewCrmEmailTemplate(ulid: string): Promise<{ subject: string; body_html: string }> {
+    return this.client.post<{ subject: string; body_html: string }>(
+      `/v1/crm/email-templates/${encodeURIComponent(ulid)}/preview`,
+    );
+  }
+
+  /** Get email template metadata. GET /v1/crm/email-templates/meta */
+  async getCrmEmailTemplateMeta(): Promise<CrmEmailTemplateMeta> {
+    return this.client.get<CrmEmailTemplateMeta>("/v1/crm/email-templates/meta");
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Email Sending / History
+  // ---------------------------------------------------------------------------
+
+  /** Send a CRM email. POST /v1/crm/emails/send */
+  async sendCrmEmail(payload: {
+    entity_type: string;
+    entity_ulid: string;
+    to_email: string;
+    subject: string;
+    body_json: string;
+    template_ulid?: string;
+  }): Promise<CrmEmailSend> {
+    return this.client.post<CrmEmailSend>("/v1/crm/emails/send", { body: payload });
+  }
+
+  /** Get emails for an entity. GET /v1/crm/{entityType}/{ulid}/emails */
+  async getCrmEntityEmails(
+    entityType: string,
+    ulid: string,
+    limit?: number,
+  ): Promise<CrmEmailSend[]> {
+    const query: Record<string, string> = {};
+    if (limit != null) query.limit = String(limit);
+    const response = await this.client.get<CrmEmailSend[]>(
+      `/v1/crm/${encodeURIComponent(entityType)}/${encodeURIComponent(ulid)}/emails`,
+      { query: Object.keys(query).length > 0 ? query : undefined },
+    );
+    return Array.isArray(response) ? response : [];
+  }
+
+  /** Get a single email. GET /v1/crm/emails/{ulid} */
+  async getCrmEmail(ulid: string): Promise<CrmEmailSend> {
+    return this.client.get<CrmEmailSend>(`/v1/crm/emails/${encodeURIComponent(ulid)}`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Timeline
+  // ---------------------------------------------------------------------------
+
+  /** Get entity timeline. GET /v1/crm/{entity}/{ulid}/timeline */
+  async getCrmTimeline(
+    entity: "contacts" | "accounts" | "leads" | "opportunities",
+    ulid: string,
+    limit?: number,
+  ): Promise<CrmTimelineEntry[]> {
+    const query: Record<string, string> = {};
+    if (limit != null) query.limit = String(limit);
+    const response = await this.client.get<CrmTimelineEntry[]>(
+      `/v1/crm/${encodeURIComponent(entity)}/${encodeURIComponent(ulid)}/timeline`,
+      { query: Object.keys(query).length > 0 ? query : undefined },
+    );
+    return Array.isArray(response) ? response : [];
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Attachments
+  // ---------------------------------------------------------------------------
+
+  /** Get attachments for an entity. GET /v1/crm/{entity}/{ulid}/attachments */
+  async getCrmEntityAttachments(
+    entity: "contacts" | "accounts" | "leads" | "opportunities",
+    ulid: string,
+  ): Promise<CrmAttachment[]> {
+    const response = await this.client.get<CrmAttachment[]>(
+      `/v1/crm/${encodeURIComponent(entity)}/${encodeURIComponent(ulid)}/attachments`,
+    );
+    return Array.isArray(response) ? response : [];
+  }
+
+  /** Upload an attachment. POST /v1/crm/{entity}/{ulid}/attachments */
+  async uploadCrmAttachment(
+    entity: "contacts" | "accounts" | "leads" | "opportunities",
+    ulid: string,
+    file: File,
+  ): Promise<CrmAttachment> {
+    const formData = new FormData();
+    formData.append("file", file);
+    return this.client.post<CrmAttachment>(
+      `/v1/crm/${encodeURIComponent(entity)}/${encodeURIComponent(ulid)}/attachments`,
+      { body: formData },
+    );
+  }
+
+  /** Delete an attachment. DELETE /v1/crm/attachments/{ulid} */
+  async deleteCrmAttachment(ulid: string): Promise<void> {
+    await this.client.delete(`/v1/crm/attachments/${encodeURIComponent(ulid)}`);
+  }
+
+  /** Get attachment download URL. GET /v1/crm/attachments/{ulid}/download */
+  async getCrmAttachmentDownloadUrl(ulid: string): Promise<string> {
+    const response = await this.client.get<{ url: string }>(
+      `/v1/crm/attachments/${encodeURIComponent(ulid)}/download`,
+    );
+    return response.url;
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Duplicate Detection
+  // ---------------------------------------------------------------------------
+
+  /** Check for duplicates. GET /v1/crm/duplicates/check */
+  async checkCrmDuplicates(params: {
+    email?: string;
+    phone?: string;
+    first_name?: string;
+    last_name?: string;
+    company?: string;
+    exclude_ulid?: string;
+  }): Promise<CrmDuplicateCheckResult> {
+    const query: Record<string, string> = {};
+    for (const [key, val] of Object.entries(params)) {
+      if (val) query[key] = val;
+    }
+    return this.client.get<CrmDuplicateCheckResult>("/v1/crm/duplicates/check", { query });
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Saved Views
+  // ---------------------------------------------------------------------------
+
+  /** Get saved views. GET /v1/crm/saved-views */
+  async getCrmSavedViews(entityType?: string): Promise<CrmSavedView[]> {
+    const query: Record<string, string> = {};
+    if (entityType) query.entity_type = entityType;
+    const response = await this.client.get<CrmSavedView[]>("/v1/crm/saved-views", {
+      query: Object.keys(query).length > 0 ? query : undefined,
+    });
+    return Array.isArray(response) ? response : [];
+  }
+
+  /** Create a saved view. POST /v1/crm/saved-views */
+  async createCrmSavedView(payload: {
+    entity_type: string;
+    name: string;
+    filters: CrmSavedViewFilter[];
+    sort?: { field: string; direction: "asc" | "desc" } | null;
+    is_default?: boolean;
+    is_shared?: boolean;
+  }): Promise<CrmSavedView> {
+    return this.client.post<CrmSavedView>("/v1/crm/saved-views", { body: payload });
+  }
+
+  /** Update a saved view. PUT /v1/crm/saved-views/{ulid} */
+  async updateCrmSavedView(
+    ulid: string,
+    payload: Partial<{
+      name: string;
+      filters: CrmSavedViewFilter[];
+      sort: { field: string; direction: "asc" | "desc" } | null;
+      is_default: boolean;
+      is_shared: boolean;
+    }>,
+  ): Promise<CrmSavedView> {
+    return this.client.put<CrmSavedView>(
+      `/v1/crm/saved-views/${encodeURIComponent(ulid)}`,
+      { body: payload },
+    );
+  }
+
+  /** Delete a saved view. DELETE /v1/crm/saved-views/{ulid} */
+  async deleteCrmSavedView(ulid: string): Promise<void> {
+    await this.client.delete(`/v1/crm/saved-views/${encodeURIComponent(ulid)}`);
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Audit Log
+  // ---------------------------------------------------------------------------
+
+  /** Get audit log for an entity. GET /v1/crm/{entity}/{ulid}/audit-log */
+  async getCrmAuditLog(
+    entity: "contacts" | "accounts" | "leads" | "opportunities",
+    ulid: string,
+    page = 1,
+    perPage = 25,
+  ): Promise<CrmAuditLogResponse> {
+    return this.client.get<CrmAuditLogResponse>(
+      `/v1/crm/${encodeURIComponent(entity)}/${encodeURIComponent(ulid)}/audit-log`,
+      { query: { page: String(page), per_page: String(perPage) } },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: CSV Export
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Get the URL for CSV export. Returns the full URL with auth token as query param.
+   * The caller should use fetch() directly to get the blob for download.
+   * GET /v1/crm/{entity}/export
+   */
+  getCrmExportUrl(entity: "contacts" | "leads" | "accounts" | "opportunities"): string {
+    const baseUrl = this.options.baseUrl.replace(/\/$/, "");
+    return `${baseUrl}/v1/crm/${encodeURIComponent(entity)}/export`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // CRM: Drip Campaigns
+  // ---------------------------------------------------------------------------
+
+  /** Get drip campaigns. GET /v1/crm/drip-campaigns */
+  async getDripCampaigns(params?: {
+    per_page?: number;
+    page?: number;
+  }): Promise<DripPaginatedResponse<DripCampaign>> {
+    const query: Record<string, string> = {};
+    if (params?.per_page != null) query.per_page = String(params.per_page);
+    if (params?.page != null) query.page = String(params.page);
+    return this.client.get<DripPaginatedResponse<DripCampaign>>("/v1/crm/drip-campaigns", {
+      query: Object.keys(query).length > 0 ? query : undefined,
+    });
+  }
+
+  /** Get a single drip campaign. GET /v1/crm/drip-campaigns/{id} */
+  async getDripCampaign(id: number): Promise<DripCampaign> {
+    return this.client.get<DripCampaign>(`/v1/crm/drip-campaigns/${id}`);
+  }
+
+  /** Create a drip campaign. POST /v1/crm/drip-campaigns */
+  async createDripCampaign(payload: {
+    name: string;
+    is_active?: boolean;
+    steps: { subject: string; body_json: string; delay_days?: number }[];
+  }): Promise<DripCampaign> {
+    return this.client.post<DripCampaign>("/v1/crm/drip-campaigns", { body: payload });
+  }
+
+  /** Update a drip campaign. PUT /v1/crm/drip-campaigns/{id} */
+  async updateDripCampaign(
+    id: number,
+    payload: {
+      name?: string;
+      is_active?: boolean;
+      steps?: { id?: number; subject: string; body_json: string; delay_days?: number }[];
+    },
+  ): Promise<DripCampaign> {
+    return this.client.put<DripCampaign>(`/v1/crm/drip-campaigns/${id}`, { body: payload });
+  }
+
+  /** Delete a drip campaign. DELETE /v1/crm/drip-campaigns/{id} */
+  async deleteDripCampaign(id: number): Promise<void> {
+    await this.client.delete(`/v1/crm/drip-campaigns/${id}`);
+  }
+
+  /** Get drip campaign enrollments. GET /v1/crm/drip-campaigns/{id}/enrollments */
+  async getDripCampaignEnrollments(
+    campaignId: number,
+    params?: { per_page?: number; page?: number },
+  ): Promise<DripPaginatedResponse<DripCampaignEnrollment>> {
+    const query: Record<string, string> = {};
+    if (params?.per_page != null) query.per_page = String(params.per_page);
+    if (params?.page != null) query.page = String(params.page);
+    return this.client.get<DripPaginatedResponse<DripCampaignEnrollment>>(
+      `/v1/crm/drip-campaigns/${campaignId}/enrollments`,
+      { query: Object.keys(query).length > 0 ? query : undefined },
+    );
+  }
+
+  /** Enroll in a drip campaign. POST /v1/crm/drip-campaigns/{id}/enroll */
+  async enrollInDripCampaign(
+    campaignId: number,
+    payload: {
+      user_id?: number;
+      email?: string;
+      create_as_lead?: boolean;
+      create_as_contact?: boolean;
+    },
+  ): Promise<DripCampaignEnrollment> {
+    return this.client.post<DripCampaignEnrollment>(
+      `/v1/crm/drip-campaigns/${campaignId}/enroll`,
+      { body: payload },
+    );
+  }
+
+  /** Get drip campaign stats. GET /v1/crm/drip-campaigns/{id}/stats */
+  async getDripCampaignStats(campaignId: number): Promise<DripCampaignStats> {
+    return this.client.get<DripCampaignStats>(`/v1/crm/drip-campaigns/${campaignId}/stats`);
   }
 
   // ---------------------------------------------------------------------------
