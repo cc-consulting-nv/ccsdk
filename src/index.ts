@@ -34,6 +34,7 @@
  */
 
 export * from "./types";
+export * from "./types/crm";
 export * from "./httpClient";
 export * from "./cache/cacheDB";
 export * from "./platformSdk";
