@@ -9296,4 +9296,497 @@ export class CcPlatformSdk {
       },
     });
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Business Directory API
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Public Routes - Businesses
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch businesses with optional filtering.
+   * GET /v1/businesses
+   *
+   * @param filters - Optional filters (category, city, search, featured)
+   * @returns List of businesses with pagination info
+   *
+   * @example
+   * ```typescript
+   * const result = await sdk.fetchBusinesses({ category: 'restaurants', city: 'Port of Spain' });
+   * console.log(result.businesses);
+   * ```
+   *
+   * @category Business Directory
+   */
+  async fetchBusinesses(filters?: {
+    category?: string;
+    city?: string;
+    search?: string;
+    featured?: boolean;
+    perPage?: number;
+    cursor?: string | null;
+  }): Promise<import("./types/business").BusinessListResponse> {
+    const params = new URLSearchParams();
+    if (filters?.category) params.append("category", filters.category);
+    if (filters?.city) params.append("city", filters.city);
+    if (filters?.search) params.append("search", filters.search);
+    if (filters?.featured) params.append("featured", "true");
+    if (filters?.perPage) params.append("per_page", String(filters.perPage));
+    if (filters?.cursor) params.append("cursor", filters.cursor);
+
+    const queryString = params.toString();
+    const url = `/v1/businesses${queryString ? `?${queryString}` : ""}`;
+
+    const response = await this.client.get<{
+      data: import("./types/business").Business[];
+      meta?: { next_cursor?: string };
+    }>(url);
+
+    return {
+      businesses: response.data || [],
+      nextCursor: response.meta?.next_cursor || null,
+      hasMore: !!response.meta?.next_cursor,
+    };
+  }
+
+  /**
+   * Fetch a single business by ULID.
+   * GET /v1/businesses/{ulid}
+   *
+   * @param ulid - Business ULID
+   * @returns Business details or null if not found
+   *
+   * @category Business Directory
+   */
+  async fetchBusiness(ulid: string): Promise<import("./types/business").Business | null> {
+    const response = await this.client.get<{
+      data: import("./types/business").Business;
+    }>(`/v1/businesses/${ulid}`);
+    return response.data || null;
+  }
+
+  /**
+   * Search businesses.
+   * GET /v1/businesses/search
+   *
+   * @param query - Search query
+   * @param city - Optional city filter
+   * @returns List of matching businesses
+   *
+   * @category Business Directory
+   */
+  async searchBusinesses(query: string, city?: string): Promise<import("./types/business").Business[]> {
+    const params = new URLSearchParams({ q: query });
+    if (city) params.append("city", city);
+
+    const response = await this.client.get<{
+      data: import("./types/business").Business[];
+    }>(`/v1/businesses/search?${params.toString()}`);
+    return response.data || [];
+  }
+
+  /**
+   * Fetch featured businesses.
+   * GET /v1/businesses/featured
+   *
+   * @param limit - Number of businesses to fetch
+   * @returns List of featured businesses
+   *
+   * @category Business Directory
+   */
+  async fetchFeaturedBusinesses(limit = 6): Promise<import("./types/business").Business[]> {
+    const response = await this.client.get<{
+      data: import("./types/business").Business[];
+    }>(`/v1/businesses/featured?limit=${limit}`);
+    return response.data || [];
+  }
+
+  /**
+   * Fetch nearby businesses.
+   * GET /v1/businesses/nearby
+   *
+   * @param latitude - User's latitude
+   * @param longitude - User's longitude
+   * @param radius - Search radius in meters (default: 5000)
+   * @returns List of nearby businesses
+   *
+   * @category Business Directory
+   */
+  async fetchNearbyBusinesses(
+    latitude: number,
+    longitude: number,
+    radius = 5000
+  ): Promise<import("./types/business").Business[]> {
+    const response = await this.client.get<{
+      data: import("./types/business").Business[];
+    }>(`/v1/businesses/nearby?lat=${latitude}&lng=${longitude}&radius=${radius}`);
+    return response.data || [];
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Public Routes - Categories
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch all business categories.
+   * GET /v1/business-categories
+   *
+   * @returns List of categories
+   *
+   * @category Business Directory
+   */
+  async fetchBusinessCategories(): Promise<import("./types/business").BusinessCategory[]> {
+    const response = await this.client.get<{
+      data: import("./types/business").BusinessCategory[];
+    }>("/v1/business-categories");
+    return response.data || [];
+  }
+
+  /**
+   * Fetch a single category by slug.
+   * GET /v1/business-categories/{slug}
+   *
+   * @param slug - Category slug
+   * @returns Category details or null
+   *
+   * @category Business Directory
+   */
+  async fetchBusinessCategory(slug: string): Promise<import("./types/business").BusinessCategory | null> {
+    const response = await this.client.get<{
+      data: import("./types/business").BusinessCategory;
+    }>(`/v1/business-categories/${slug}`);
+    return response.data || null;
+  }
+
+  /**
+   * Fetch businesses in a category.
+   * GET /v1/business-categories/{slug}/businesses
+   *
+   * @param slug - Category slug
+   * @param cursor - Pagination cursor
+   * @returns Paginated list of businesses
+   *
+   * @category Business Directory
+   */
+  async fetchBusinessesByCategory(
+    slug: string,
+    cursor?: string | null
+  ): Promise<import("./types/business").BusinessListResponse> {
+    const url = `/v1/business-categories/${slug}/businesses${cursor ? `?cursor=${cursor}` : ""}`;
+    const response = await this.client.get<{
+      data: import("./types/business").Business[];
+      meta?: { next_cursor?: string };
+    }>(url);
+    return {
+      businesses: response.data || [],
+      nextCursor: response.meta?.next_cursor || null,
+      hasMore: !!response.meta?.next_cursor,
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Public Routes - Events
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch business events.
+   * GET /v1/business-events
+   *
+   * @param options - Filter options
+   * @returns Paginated list of events
+   *
+   * @category Business Directory
+   */
+  async fetchBusinessEvents(options?: {
+    upcoming?: boolean;
+    city?: string;
+    perPage?: number;
+    cursor?: string | null;
+  }): Promise<import("./types/business").BusinessEventListResponse> {
+    const params = new URLSearchParams();
+    if (options?.upcoming) params.append("upcoming", "true");
+    if (options?.city) params.append("city", options.city);
+    if (options?.perPage) params.append("per_page", String(options.perPage));
+    if (options?.cursor) params.append("cursor", options.cursor);
+
+    const queryString = params.toString();
+    const url = `/v1/business-events${queryString ? `?${queryString}` : ""}`;
+
+    const response = await this.client.get<{
+      data: import("./types/business").BusinessEvent[];
+      meta?: { next_cursor?: string };
+    }>(url);
+
+    return {
+      events: response.data || [],
+      nextCursor: response.meta?.next_cursor || null,
+      hasMore: !!response.meta?.next_cursor,
+    };
+  }
+
+  /**
+   * Fetch a single event.
+   * GET /v1/business-events/{ulid}
+   *
+   * @param ulid - Event ULID
+   * @returns Event details or null
+   *
+   * @category Business Directory
+   */
+  async fetchBusinessEvent(ulid: string): Promise<import("./types/business").BusinessEvent | null> {
+    const response = await this.client.get<{
+      data: import("./types/business").BusinessEvent;
+    }>(`/v1/business-events/${ulid}`);
+    return response.data || null;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Public Routes - Reviews
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch reviews for a business.
+   * GET /v1/businesses/{ulid}/reviews
+   *
+   * @param businessUlid - Business ULID
+   * @param options - Pagination options
+   * @returns Paginated list of reviews
+   *
+   * @category Business Directory
+   */
+  async fetchBusinessReviews(
+    businessUlid: string,
+    options?: { cursor?: string | null; perPage?: number }
+  ): Promise<import("./types/business").BusinessReviewListResponse> {
+    const params = new URLSearchParams();
+    if (options?.perPage) params.append("per_page", String(options.perPage));
+    if (options?.cursor) params.append("cursor", options.cursor);
+
+    const queryString = params.toString();
+    const url = `/v1/businesses/${businessUlid}/reviews${queryString ? `?${queryString}` : ""}`;
+
+    const response = await this.client.get<{
+      data: import("./types/business").BusinessReview[];
+      meta?: { next_cursor?: string; average_rating?: number };
+    }>(url);
+
+    return {
+      reviews: response.data || [],
+      nextCursor: response.meta?.next_cursor || null,
+      hasMore: !!response.meta?.next_cursor,
+      averageRating: response.meta?.average_rating || 0,
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Authenticated Routes - Collections
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch user's business collections.
+   * GET /v1/users/me/business-collections
+   *
+   * @returns List of collections
+   *
+   * @category Business Directory
+   */
+  async fetchBusinessCollections(): Promise<import("./types/business").BusinessCollection[]> {
+    const response = await this.client.get<{
+      data: import("./types/business").BusinessCollection[];
+    }>("/v1/users/me/business-collections");
+    return response.data || [];
+  }
+
+  /**
+   * Create a new business collection.
+   * POST /v1/users/me/business-collections
+   *
+   * @param data - Collection data
+   * @returns Created collection
+   *
+   * @category Business Directory
+   */
+  async createBusinessCollection(
+    data: import("./types/business").BusinessCollectionInput
+  ): Promise<import("./types/business").BusinessCollection> {
+    const response = await this.client.post<{
+      data: import("./types/business").BusinessCollection;
+    }>("/v1/users/me/business-collections", { body: data });
+    return response.data;
+  }
+
+  /**
+   * Add a business to a collection.
+   * POST /v1/users/me/business-collections/{id}/businesses
+   *
+   * @param collectionId - Collection ULID
+   * @param businessId - Business ULID
+   *
+   * @category Business Directory
+   */
+  async addBusinessToCollection(collectionId: string, businessId: string): Promise<void> {
+    await this.client.post(`/v1/users/me/business-collections/${collectionId}/businesses`, {
+      body: { business_id: businessId },
+    });
+  }
+
+  /**
+   * Remove a business from a collection.
+   * DELETE /v1/users/me/business-collections/{collectionId}/businesses/{businessId}
+   *
+   * @param collectionId - Collection ULID
+   * @param businessId - Business ULID
+   *
+   * @category Business Directory
+   */
+  async removeBusinessFromCollection(collectionId: string, businessId: string): Promise<void> {
+    await this.client.delete(
+      `/v1/users/me/business-collections/${collectionId}/businesses/${businessId}`
+    );
+  }
+
+  /**
+   * Fetch recently viewed businesses.
+   * GET /v1/users/me/recently-viewed-businesses
+   *
+   * @returns List of recently viewed businesses
+   *
+   * @category Business Directory
+   */
+  async fetchRecentlyViewedBusinesses(): Promise<import("./types/business").RecentlyViewedBusiness[]> {
+    const response = await this.client.get<{
+      data: import("./types/business").RecentlyViewedBusiness[];
+    }>("/v1/users/me/recently-viewed-businesses");
+    return response.data || [];
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Authenticated Routes - Business Management
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Create a new business listing.
+   * POST /v1/businesses
+   *
+   * @param data - Business data
+   * @returns Created business
+   *
+   * @category Business Directory
+   */
+  async createBusiness(
+    data: import("./types/business").BusinessInput
+  ): Promise<import("./types/business").Business> {
+    const response = await this.client.post<{
+      data: import("./types/business").Business;
+    }>("/v1/businesses", { body: data });
+    return response.data;
+  }
+
+  /**
+   * Update a business.
+   * PUT /v1/businesses/{ulid}
+   *
+   * @param ulid - Business ULID
+   * @param data - Updated business data
+   * @returns Updated business
+   *
+   * @category Business Directory
+   */
+  async updateBusiness(
+    ulid: string,
+    data: import("./types/business").BusinessInput
+  ): Promise<import("./types/business").Business> {
+    const response = await this.client.put<{
+      data: import("./types/business").Business;
+    }>(`/v1/businesses/${ulid}`, { body: data });
+    return response.data;
+  }
+
+  /**
+   * Delete a business.
+   * DELETE /v1/businesses/{ulid}
+   *
+   * @param ulid - Business ULID
+   *
+   * @category Business Directory
+   */
+  async deleteBusiness(ulid: string): Promise<void> {
+    await this.client.delete(`/v1/businesses/${ulid}`);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Authenticated Routes - Reviews
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Submit a business review.
+   * POST /v1/businesses/{ulid}/reviews
+   *
+   * @param businessUlid - Business ULID
+   * @param data - Review data
+   * @returns Created review
+   *
+   * @category Business Directory
+   */
+  async submitBusinessReview(
+    businessUlid: string,
+    data: import("./types/business").BusinessReviewInput
+  ): Promise<import("./types/business").BusinessReview> {
+    const response = await this.client.post<{
+      data: import("./types/business").BusinessReview;
+    }>(`/v1/businesses/${businessUlid}/reviews`, { body: data });
+    return response.data;
+  }
+
+  /**
+   * Mark a review as helpful.
+   * POST /v1/businesses/{ulid}/reviews/{reviewUlid}/helpful
+   *
+   * @param businessUlid - Business ULID
+   * @param reviewUlid - Review ULID
+   *
+   * @category Business Directory
+   */
+  async markBusinessReviewHelpful(businessUlid: string, reviewUlid: string): Promise<void> {
+    await this.client.post(`/v1/businesses/${businessUlid}/reviews/${reviewUlid}/helpful`, {
+      body: {},
+    });
+  }
+
+  /**
+   * Mark a review as not helpful.
+   * POST /v1/businesses/{ulid}/reviews/{reviewUlid}/not-helpful
+   *
+   * @param businessUlid - Business ULID
+   * @param reviewUlid - Review ULID
+   *
+   * @category Business Directory
+   */
+  async markBusinessReviewNotHelpful(businessUlid: string, reviewUlid: string): Promise<void> {
+    await this.client.post(`/v1/businesses/${businessUlid}/reviews/${reviewUlid}/not-helpful`, {
+      body: {},
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Authenticated Routes - Analytics
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch business analytics dashboard.
+   * GET /v1/businesses/{id}/analytics/dashboard
+   *
+   * @param businessId - Business ULID
+   * @returns Analytics data
+   *
+   * @category Business Directory
+   */
+  async fetchBusinessAnalytics(businessId: string): Promise<import("./types/business").BusinessAnalytics> {
+    const response = await this.client.get<{
+      data: import("./types/business").BusinessAnalytics;
+    }>(`/v1/businesses/${businessId}/analytics/dashboard`);
+    return response.data;
+  }
 }
