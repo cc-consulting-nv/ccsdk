@@ -9437,11 +9437,32 @@ export class CcPlatformSdk {
    *
    * @category Business Directory
    */
-  async fetchBusinessCategories(): Promise<import("./types/business").BusinessCategory[]> {
-    const response = await this.client.get<{
-      data: import("./types/business").BusinessCategory[];
-    }>("/v1/business-categories");
-    return response.data || [];
+  async fetchBusinessCategories(options?: { 
+    parentOnly?: boolean;
+    withChildren?: boolean;
+  }): Promise<import("./types/business").BusinessCategory[]> {
+    const params = new URLSearchParams();
+    if (options?.parentOnly) params.append("parent_only", "true");
+    if (options?.withChildren) params.append("with_children", "true");
+    
+    const queryString = params.toString();
+    const url = `/v1/business-categories${queryString ? `?${queryString}` : ""}`;
+    
+    const response = await this.client.get<unknown>(url);
+    
+    console.log('[SDK FIX] Raw response:', response);
+    console.log('[SDK FIX] Is array?', Array.isArray(response));
+    console.log('[SDK FIX] Has data?', (response as any)?.data);
+    
+    // Handle both direct array and {data: [...]} wrapped responses
+    if (Array.isArray(response)) {
+      console.log('[SDK FIX] Returning array directly, length:', response.length);
+      return response as import("./types/business").BusinessCategory[];
+    }
+    
+    const data = (response as { data?: import("./types/business").BusinessCategory[] })?.data;
+    console.log('[SDK FIX] Returning data:', data);
+    return data || [];
   }
 
   /**
@@ -9454,10 +9475,15 @@ export class CcPlatformSdk {
    * @category Business Directory
    */
   async fetchBusinessCategory(slug: string): Promise<import("./types/business").BusinessCategory | null> {
-    const response = await this.client.get<{
-      data: import("./types/business").BusinessCategory;
-    }>(`/v1/business-categories/${slug}`);
-    return response.data || null;
+    const response = await this.client.get<
+      import("./types/business").BusinessCategory | { data: import("./types/business").BusinessCategory }
+    >(`/v1/business-categories/${slug}`);
+    
+    // Handle both direct object and {data: {...}} wrapped responses
+    if (response && typeof response === 'object' && 'id' in response) {
+      return response as import("./types/business").BusinessCategory;
+    }
+    return (response as any)?.data || null;
   }
 
   /**
@@ -9465,24 +9491,43 @@ export class CcPlatformSdk {
    * GET /v1/business-categories/{slug}/businesses
    *
    * @param slug - Category slug
-   * @param cursor - Pagination cursor
+   * @param filters - Optional filters (city, region, subcategory, perPage, cursor)
    * @returns Paginated list of businesses
    *
    * @category Business Directory
    */
   async fetchBusinessesByCategory(
     slug: string,
-    cursor?: string | null
+    filters?: {
+      city?: string;
+      region?: string;
+      subcategory?: string;
+      perPage?: number;
+      cursor?: string | null;
+    }
   ): Promise<import("./types/business").BusinessListResponse> {
-    const url = `/v1/business-categories/${slug}/businesses${cursor ? `?cursor=${cursor}` : ""}`;
+    const params = new URLSearchParams();
+    if (filters?.city) params.append("city", filters.city);
+    if (filters?.region) params.append("region", filters.region);
+    if (filters?.subcategory) params.append("subcategory", filters.subcategory);
+    if (filters?.perPage) params.append("per_page", String(filters.perPage));
+    if (filters?.cursor) params.append("cursor", filters.cursor);
+
+    const queryString = params.toString();
+    const url = `/v1/business-categories/${slug}/businesses${queryString ? `?${queryString}` : ""}`;
+
     const response = await this.client.get<{
-      data: import("./types/business").Business[];
-      meta?: { next_cursor?: string };
+      category?: any;
+      businesses: {
+        data: import("./types/business").Business[];
+        next_cursor?: string;
+      };
     }>(url);
+
     return {
-      businesses: response.data || [],
-      nextCursor: response.meta?.next_cursor || null,
-      hasMore: !!response.meta?.next_cursor,
+      businesses: response?.businesses?.data || [],
+      nextCursor: response?.businesses?.next_cursor || null,
+      hasMore: !!response?.businesses?.next_cursor,
     };
   }
 
