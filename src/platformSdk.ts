@@ -760,6 +760,7 @@ export class CcPlatformSdk {
       website: string;
       background: string;
       accountSetup: boolean;
+      acceptTermsOfService: boolean;
       birthday: string;
     }>,
     callback?: (error: Error | null, profile: UserProfile | null) => void
@@ -9437,31 +9438,25 @@ export class CcPlatformSdk {
    *
    * @category Business Directory
    */
-  async fetchBusinessCategories(options?: { 
+  async fetchBusinessCategories(options?: {
     parentOnly?: boolean;
     withChildren?: boolean;
   }): Promise<import("./types/business").BusinessCategory[]> {
     const params = new URLSearchParams();
     if (options?.parentOnly) params.append("parent_only", "true");
     if (options?.withChildren) params.append("with_children", "true");
-    
+
     const queryString = params.toString();
     const url = `/v1/business-categories${queryString ? `?${queryString}` : ""}`;
-    
+
     const response = await this.client.get<unknown>(url);
-    
-    console.log('[SDK FIX] Raw response:', response);
-    console.log('[SDK FIX] Is array?', Array.isArray(response));
-    console.log('[SDK FIX] Has data?', (response as any)?.data);
-    
+
     // Handle both direct array and {data: [...]} wrapped responses
     if (Array.isArray(response)) {
-      console.log('[SDK FIX] Returning array directly, length:', response.length);
       return response as import("./types/business").BusinessCategory[];
     }
-    
+
     const data = (response as { data?: import("./types/business").BusinessCategory[] })?.data;
-    console.log('[SDK FIX] Returning data:', data);
     return data || [];
   }
 
@@ -9478,7 +9473,7 @@ export class CcPlatformSdk {
     const response = await this.client.get<
       import("./types/business").BusinessCategory | { data: import("./types/business").BusinessCategory }
     >(`/v1/business-categories/${slug}`);
-    
+
     // Handle both direct object and {data: {...}} wrapped responses
     if (response && typeof response === 'object' && 'id' in response) {
       return response as import("./types/business").BusinessCategory;

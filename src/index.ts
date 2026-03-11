@@ -14,9 +14,9 @@
  * ## Quick Start
  *
  * ```typescript
- * import { CcPlatformSdk, BrowserTokenProvider } from '@social/cc-platform-sdk';
+ * import { CcPlatformSdk, StorageTokenProvider } from '@cc-consulting-nv/ccsdk';
  *
- * const tokenProvider = new BrowserTokenProvider();
+ * const tokenProvider = new StorageTokenProvider(localStorage);
  * const sdk = new CcPlatformSdk({
  *   baseUrl: 'https://api.example.com',
  *   tokenProvider,

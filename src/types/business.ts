@@ -103,6 +103,8 @@ export interface BusinessCategory {
   sortOrder?: number;
   /** Number of businesses in category */
   businessCount?: number;
+  /** Child categories */
+  children?: BusinessCategory[];
 }
 
 /**
