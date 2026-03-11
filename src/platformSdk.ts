@@ -9556,13 +9556,13 @@ export class CcPlatformSdk {
 
     const response = await this.client.get<{
       data: import("./types/business").BusinessEvent[];
-      meta?: { next_cursor?: string };
+      pagination?: { nextCursor?: string; hasMore?: boolean };
     }>(url);
 
     return {
       events: response.data || [],
-      nextCursor: response.meta?.next_cursor || null,
-      hasMore: !!response.meta?.next_cursor,
+      nextCursor: response.pagination?.nextCursor || null,
+      hasMore: response.pagination?.hasMore || false,
     };
   }
 

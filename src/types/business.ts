@@ -116,32 +116,78 @@ export interface BusinessEvent {
   id: Ulid;
   /** ULID string */
   ulid: Ulid;
-  /** Event name */
-  name: string;
+  /** Event title */
+  title: string;
   /** Event description */
   description?: string;
+  /** URL-friendly slug */
+  slug?: string;
+  /** Event category */
+  category?: string;
+  /** Tags */
+  tags?: string[];
   /** Host business ULID */
   businessId?: Ulid;
-  /** Host business name */
-  businessName?: string;
-  /** Venue location */
-  venue?: string;
+  /** Host business info */
+  business?: { id: Ulid; name: string; slug: string } | null;
+  /** Venue name */
+  venueName?: string;
+  /** Venue address */
+  address?: string;
+  /** City */
+  city?: string;
+  /** Latitude */
+  latitude?: number | null;
+  /** Longitude */
+  longitude?: number | null;
+  /** Whether the event is virtual */
+  isVirtual?: boolean;
+  /** Virtual event link */
+  virtualLink?: string | null;
   /** Start date/time (ISO 8601) */
-  startDate: string;
+  startsAt: string;
   /** End date/time (ISO 8601) */
-  endDate?: string;
+  endsAt?: string;
   /** Whether it's an all-day event */
   isAllDay?: boolean;
-  /** Ticket information */
-  ticketInfo?: "free" | "paid" | "tba";
+  /** Duration string */
+  duration?: string;
+  /** Recurrence info */
+  recurrence?: string | null;
+  /** Whether event is upcoming */
+  isUpcoming?: boolean;
+  /** Whether event is ongoing */
+  isOngoing?: boolean;
+  /** Whether event is past */
+  isPast?: boolean;
+  /** Image URL */
+  imageUrl?: string | null;
+  /** Gallery images */
+  gallery?: string[];
+  /** Whether the event is free */
+  isFree?: boolean;
+  /** Ticket price */
+  ticketPrice?: string | null;
+  /** Ticket currency */
+  ticketCurrency?: string;
+  /** Formatted price string */
+  formattedPrice?: string | null;
   /** Ticket purchase URL */
-  ticketUrl?: string;
-  /** Cover image URL */
-  coverImage?: string;
+  ticketLink?: string | null;
+  /** Venue capacity */
+  capacity?: number | null;
   /** Number of interested users */
   interestedCount?: number;
   /** Number of going users */
   goingCount?: number;
+  /** Event status */
+  status?: string;
+  /** Whether event is featured */
+  isFeatured?: boolean;
+  /** Created at (ISO 8601) */
+  createdAt?: string;
+  /** Updated at (ISO 8601) */
+  updatedAt?: string;
 }
 
 /**
