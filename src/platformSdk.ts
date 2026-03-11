@@ -760,6 +760,7 @@ export class CcPlatformSdk {
       website: string;
       background: string;
       accountSetup: boolean;
+      acceptTermsOfService: boolean;
       birthday: string;
     }>,
     callback?: (error: Error | null, profile: UserProfile | null) => void
