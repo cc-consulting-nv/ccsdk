@@ -52,8 +52,12 @@ export interface PostEngagement {
   reactionCounts?: Record<string, number>;
   /** The current user's reaction, if any */
   userReaction?: string | null;
-  /** Number of replies to this post */
+  /** Number of direct replies/comments to this post */
   replyCount?: number;
+  /** Number of direct comments on this post */
+  commentCount?: number;
+  /** Total number of comments including nested replies */
+  totalCommentCount?: number;
   /** Number of reposts */
   repostCount?: number;
   /** Number of shares */
