@@ -2106,6 +2106,8 @@ export interface GroupPost {
 export interface GroupMember {
   /** User ULID */
   ulid: string;
+  /** User ULID (Ban/Unban Users) */
+  id: string;
   /** Username */
   username: string;
   /** Display name */
@@ -2158,6 +2160,8 @@ export interface UpdateGroupRequest {
   name?: string;
   /** New description */
   description?: string;
+  /** New visibility setting */
+  visibility?: GroupVisibility;
 }
 
 // Export blog types
