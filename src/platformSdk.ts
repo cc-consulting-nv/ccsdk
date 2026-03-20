@@ -756,7 +756,6 @@ export class CcPlatformSdk {
       username: string;
       bio: string;
       avatarUrl: string;
-      email: string;
       website: string;
       background: string;
       accountSetup: boolean;
@@ -847,6 +846,34 @@ export class CcPlatformSdk {
     } catch (error) {
       throw error;
     }
+  }
+
+  /**
+   * Request an email change. A 6-digit verification code will be sent to the new email.
+   *
+   * @category User Profile
+   */
+  async requestEmailChange(newEmail: string): Promise<void> {
+    await this.client.post<ApiEnvelope<unknown>>("/v1/users/me/email/request-change", {
+      body: { email: newEmail },
+    });
+  }
+
+  /**
+   * Confirm an email change with the 6-digit verification code sent to the new email.
+   * Returns the updated user profile.
+   *
+   * @category User Profile
+   */
+  async confirmEmailChange(code: string): Promise<UserProfile> {
+    const response = await this.client.post<ApiEnvelope<UserProfile>>("/v1/users/me/email/confirm-change", {
+      body: { code },
+    });
+    const profile = this.unwrap<UserProfile>(response);
+    if (!profile) {
+      throw new Error("Failed to confirm email change");
+    }
+    return profile;
   }
 
   /**
