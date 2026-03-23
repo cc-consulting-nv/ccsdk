@@ -101,6 +101,11 @@ import {
   // Image types
   type ImageVariants,
   type AppViolation,
+  // Story types
+  type Story,
+  type StoryFeedResponse,
+  type StoryViewersResponse,
+  type CreateStoryInput,
 } from "./types";
 
 // ============================================================================
@@ -9855,5 +9860,161 @@ export class CcPlatformSdk {
       data: import("./types/business").BusinessAnalytics;
     }>(`/v1/businesses/${businessId}/analytics/dashboard`);
     return response.data;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Stories
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Get stories feed (stories from followed users and own stories).
+   * GET /v1/stories/feed
+   *
+   * Stories are grouped by user, sorted by most recent.
+   *
+   * @returns Story feed grouped by user
+   *
+   * @example
+   * ```typescript
+   * const feed = await sdk.getStoryFeed();
+   * for (const userStories of feed.data) {
+   *   console.log(`${userStories.user.username} has ${userStories.storyCount} stories`);
+   * }
+   * ```
+   *
+   * @category Stories
+   */
+  async getStoryFeed(): Promise<StoryFeedResponse> {
+    return this.client.get<StoryFeedResponse>("/v1/stories/feed");
+  }
+
+  /**
+   * Get current user's own stories (includes archived/expired).
+   * GET /v1/stories/me
+   *
+   * Returns all stories for the current user, including expired ones
+   * that can be added to highlights.
+   *
+   * @returns Array of stories owned by the current user
+   *
+   * @category Stories
+   */
+  async getMyStories(): Promise<Story[]> {
+    const response = await this.client.get<{ data: Story[] }>("/v1/stories/me");
+    return response.data;
+  }
+
+  /**
+   * Get active stories for a specific user.
+   * GET /v1/stories/user/{username}
+   *
+   * Only returns non-expired stories (visible to others).
+   *
+   * @param username - Username of the user
+   * @returns Array of active stories for the user
+   *
+   * @category Stories
+   */
+  async getUserStories(username: string): Promise<Story[]> {
+    const response = await this.client.get<{ data: Story[] }>(
+      `/v1/stories/user/${encodeURIComponent(username)}`
+    );
+    return response.data;
+  }
+
+  /**
+   * Get a single story by ULID.
+   * GET /v1/stories/{ulid}
+   *
+   * @param ulid - Story ULID
+   * @returns The story if found and not expired
+   *
+   * @category Stories
+   */
+  async getStory(ulid: string): Promise<Story> {
+    const response = await this.client.get<{ data: Story }>(
+      `/v1/stories/${encodeURIComponent(ulid)}`
+    );
+    return response.data;
+  }
+
+  /**
+   * Create a new story.
+   * POST /v1/stories
+   *
+   * Stories expire after 24 hours. Maximum one media item per story.
+   *
+   * @param input - Story creation data
+   * @returns The created story
+   *
+   * @example
+   * ```typescript
+   * const story = await sdk.createStory({
+   *   imageIds: [123],
+   *   caption: "Check this out!",
+   *   visibility: "followers",
+   * });
+   * ```
+   *
+   * @category Stories
+   */
+  async createStory(input: CreateStoryInput): Promise<Story> {
+    const response = await this.client.post<{ data: Story }>("/v1/stories", {
+      body: {
+        image_ids: input.imageIds,
+        caption: input.caption,
+        visibility: input.visibility,
+        group_id: input.groupId,
+      },
+    });
+    return response.data;
+  }
+
+  /**
+   * Delete a story.
+   * DELETE /v1/stories/{ulid}
+   *
+   * Only the story owner can delete their stories.
+   *
+   * @param ulid - Story ULID
+   *
+   * @category Stories
+   */
+  async deleteStory(ulid: string): Promise<void> {
+    await this.client.delete(`/v1/stories/${encodeURIComponent(ulid)}`);
+  }
+
+  /**
+   * Mark a story as viewed.
+   * POST /v1/stories/{ulid}/view
+   *
+   * Records that the current user has viewed this story.
+   * Views on own stories are not tracked.
+   *
+   * @param ulid - Story ULID
+   *
+   * @category Stories
+   */
+  async markStoryViewed(ulid: string): Promise<void> {
+    await this.client.post(`/v1/stories/${encodeURIComponent(ulid)}/view`, {
+      body: {},
+    });
+  }
+
+  /**
+   * Get viewers for a story.
+   * GET /v1/stories/{ulid}/viewers
+   *
+   * Only accessible by the story owner.
+   *
+   * @param ulid - Story ULID
+   * @returns List of users who viewed the story
+   *
+   * @category Stories
+   */
+  async getStoryViewers(ulid: string): Promise<StoryViewersResponse> {
+    return this.client.get<StoryViewersResponse>(
+      `/v1/stories/${encodeURIComponent(ulid)}/viewers`
+    );
   }
 }
