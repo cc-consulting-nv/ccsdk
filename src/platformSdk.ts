@@ -9962,6 +9962,7 @@ export class CcPlatformSdk {
     const response = await this.client.post<{ data: Story }>("/v1/stories", {
       body: {
         image_ids: input.imageIds,
+        image_urls: input.imageUrls,
         caption: input.caption,
         visibility: input.visibility,
         group_id: input.groupId,

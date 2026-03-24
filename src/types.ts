@@ -2273,6 +2273,8 @@ export interface StoryFeedResponse {
 export interface CreateStoryInput {
   /** Image IDs from prior upload (max 1) */
   imageIds?: number[];
+  /** Image URLs/S3 keys from upload (max 1) - alternative to imageIds */
+  imageUrls?: string[];
   /** Story caption (max 500 characters) */
   caption?: string;
   /** Visibility setting (defaults to "public") */
