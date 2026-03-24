@@ -7400,11 +7400,12 @@ export class CcPlatformSdk {
 
   /**
    * Get trending hashtags
-   * Returns hashtags ordered by usage count in the last 24 hours
+   * Returns hashtags ordered by usage count
+   * TODO: Switch back to /v1/trending/hashtags/last24 once we have more users
    */
   async getTrendingHashtags(limit: number = 5): Promise<TrendingHashtag[]> {
     const response = await this.client.get<ApiEnvelope<{ hashtags: TrendingHashtag[] }>>(
-      "/v1/trending/hashtags/last24",
+      "/v1/trending/hashtags/allTime",
     );
     const data = this.unwrap<{ hashtags: TrendingHashtag[] }>(response);
     return (data.hashtags || []).slice(0, limit);
@@ -8031,6 +8032,43 @@ export class CcPlatformSdk {
   // ---------------------------------------------------------------------------
   // Trending Methods
   // ---------------------------------------------------------------------------
+
+  /**
+   * Get trending posts feed (all post types)
+   * Hydrates posts with full data via batch fetch
+   */
+  async trendingGetPosts(cursor?: string): Promise<FeedPage> {
+    const params = new URLSearchParams();
+    if (cursor) params.append("cursor", cursor);
+
+    const queryString = params.toString();
+    const endpoint = `/v1/trending/posts${queryString ? `?${queryString}` : ""}`;
+
+    const response = await this.client.get<ApiEnvelope<Post[]>>(endpoint);
+    const feedItems = this.unwrap(response) ?? [];
+
+    // Extract ULIDs from feed items (they are objects with { ulid: "..." })
+    const ulids = (Array.isArray(feedItems) ? feedItems : [])
+      .map((item) => item.ulid || item.id)
+      .filter((u): u is string => !!u);
+
+    this.log(`[SDK] 📊 trendingGetPosts: Got ${ulids.length} ULIDs from feed endpoint`);
+
+    // Hydrate posts with full data via batch fetch
+    const hydratedPosts = await this.fetchPostsBatch(ulids);
+    this.log(`[SDK] 💧 trendingGetPosts: Hydrated ${Object.keys(hydratedPosts).length} posts`);
+
+    // Map hydrated posts back to original order
+    const posts = ulids
+      .map((ulid) => hydratedPosts[ulid])
+      .filter((p): p is Post => !!p);
+
+    return {
+      ulids,
+      posts,
+      nextCursor: this.extractNextCursor(response as ApiEnvelope<unknown>),
+    };
+  }
 
   /**
    * Get trending songs feed
