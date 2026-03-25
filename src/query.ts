@@ -24,7 +24,7 @@ import type {
   QueryClient,
 } from "@tanstack/query-core";
 import type { CcPlatformSdk } from "./platformSdk";
-import type { FeedPage, Post, Ulid } from "./types";
+import type { FeedPage, Post, Story, StoryFeedResponse, Ulid } from "./types";
 
 /**
  * Query key factories for posts and feeds.
@@ -53,6 +53,14 @@ export const queryKeys = {
   feed: {
     all: ["feed"] as const,
     music: () => ["feed", "music"] as const,
+  },
+  stories: {
+    all: ["stories"] as const,
+    feed: () => ["stories", "feed"] as const,
+    mine: () => ["stories", "mine"] as const,
+    user: (username: string) => ["stories", "user", username] as const,
+    detail: (ulid: string) => ["stories", "detail", ulid] as const,
+    viewers: (ulid: string) => ["stories", "viewers", ulid] as const,
   },
 } as const;
 
@@ -293,4 +301,172 @@ export function hydrateFeedFromCache(
     pages: [cached],
   };
   queryClient.setQueryData(cacheKey, data);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Story Query Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Create query options for fetching the story feed.
+ *
+ * Returns stories grouped by user from followed users and the current user.
+ *
+ * @param sdk - The CC Platform SDK instance
+ * @param opts - Optional overrides for query options
+ * @returns Query options object for use with useQuery
+ *
+ * @example
+ * ```typescript
+ * const { data: feed } = useQuery(createStoryFeedQueryOptions(sdk));
+ * for (const userStories of feed?.data ?? []) {
+ *   if (userStories.hasUnviewed) {
+ *     console.log(`${userStories.user.username} has new stories!`);
+ *   }
+ * }
+ * ```
+ *
+ * @category Query Helpers
+ */
+export function createStoryFeedQueryOptions(
+  sdk: CcPlatformSdk,
+  opts?: Partial<
+    FetchQueryOptions<
+      StoryFeedResponse,
+      Error,
+      StoryFeedResponse,
+      ReturnType<typeof queryKeys.stories.feed>
+    >
+  >,
+): FetchQueryOptions<
+  StoryFeedResponse,
+  Error,
+  StoryFeedResponse,
+  ReturnType<typeof queryKeys.stories.feed>
+> {
+  return {
+    queryKey: queryKeys.stories.feed(),
+    queryFn: () => sdk.getStoryFeed(),
+    staleTime: 30_000, // Stories change frequently, keep stale time short
+    gcTime: 5 * 60 * 1000,
+    ...opts,
+  };
+}
+
+/**
+ * Create query options for fetching the current user's own stories.
+ *
+ * Includes both active and expired/archived stories.
+ *
+ * @param sdk - The CC Platform SDK instance
+ * @param opts - Optional overrides for query options
+ * @returns Query options object for use with useQuery
+ *
+ * @category Query Helpers
+ */
+export function createMyStoriesQueryOptions(
+  sdk: CcPlatformSdk,
+  opts?: Partial<
+    FetchQueryOptions<Story[], Error, Story[], ReturnType<typeof queryKeys.stories.mine>>
+  >,
+): FetchQueryOptions<Story[], Error, Story[], ReturnType<typeof queryKeys.stories.mine>> {
+  return {
+    queryKey: queryKeys.stories.mine(),
+    queryFn: () => sdk.getMyStories(),
+    staleTime: 30_000,
+    gcTime: 5 * 60 * 1000,
+    ...opts,
+  };
+}
+
+/**
+ * Create query options for fetching a specific user's active stories.
+ *
+ * Only returns non-expired stories visible to others.
+ *
+ * @param sdk - The CC Platform SDK instance
+ * @param username - The username of the user
+ * @param opts - Optional overrides for query options
+ * @returns Query options object for use with useQuery
+ *
+ * @category Query Helpers
+ */
+export function createUserStoriesQueryOptions(
+  sdk: CcPlatformSdk,
+  username: string,
+  opts?: Partial<
+    FetchQueryOptions<Story[], Error, Story[], ReturnType<typeof queryKeys.stories.user>>
+  >,
+): FetchQueryOptions<Story[], Error, Story[], ReturnType<typeof queryKeys.stories.user>> {
+  return {
+    queryKey: queryKeys.stories.user(username),
+    queryFn: () => sdk.getUserStories(username),
+    staleTime: 30_000,
+    gcTime: 5 * 60 * 1000,
+    ...opts,
+  };
+}
+
+/**
+ * Create query options for fetching a single story by ULID.
+ *
+ * @param sdk - The CC Platform SDK instance
+ * @param ulid - The story ULID
+ * @param opts - Optional overrides for query options
+ * @returns Query options object for use with useQuery
+ *
+ * @category Query Helpers
+ */
+export function createStoryQueryOptions(
+  sdk: CcPlatformSdk,
+  ulid: string,
+  opts?: Partial<
+    FetchQueryOptions<Story, Error, Story, ReturnType<typeof queryKeys.stories.detail>>
+  >,
+): FetchQueryOptions<Story, Error, Story, ReturnType<typeof queryKeys.stories.detail>> {
+  return {
+    queryKey: queryKeys.stories.detail(ulid),
+    queryFn: () => sdk.getStory(ulid),
+    staleTime: 30_000,
+    gcTime: 5 * 60 * 1000,
+    ...opts,
+  };
+}
+
+/**
+ * Prefetch the story feed into the query cache.
+ *
+ * Useful for prefetching stories when navigating to the home feed.
+ *
+ * @param sdk - The CC Platform SDK instance
+ * @param queryClient - The TanStack QueryClient instance
+ * @returns Promise that resolves when prefetch is complete
+ *
+ * @category Query Helpers
+ */
+export async function prefetchStoryFeed(
+  sdk: CcPlatformSdk,
+  queryClient: QueryClient,
+): Promise<void> {
+  await queryClient.prefetchQuery(createStoryFeedQueryOptions(sdk));
+}
+
+/**
+ * Prefetch a user's stories into the query cache.
+ *
+ * Useful for prefetching when hovering over a user's avatar in the story bar.
+ *
+ * @param sdk - The CC Platform SDK instance
+ * @param queryClient - The TanStack QueryClient instance
+ * @param username - The username of the user
+ * @returns Promise that resolves when prefetch is complete
+ *
+ * @category Query Helpers
+ */
+export async function prefetchUserStories(
+  sdk: CcPlatformSdk,
+  queryClient: QueryClient,
+  username: string,
+): Promise<void> {
+  await queryClient.prefetchQuery(createUserStoriesQueryOptions(sdk, username));
 }

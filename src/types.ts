@@ -2164,5 +2164,156 @@ export interface UpdateGroupRequest {
   visibility?: GroupVisibility;
 }
 
+// ---------------------------------------------------------------------------
+// Story Types
+// ---------------------------------------------------------------------------
+
+/** Story visibility options */
+export type StoryVisibility = "public" | "followers";
+
+/** Media item attached to a story */
+export interface StoryMedia {
+  /** Full URL to the media file */
+  url: string;
+  /** MIME type (e.g., "image/jpeg", "video/mp4") */
+  mimeType: string | null;
+  /** Width in pixels */
+  width: number | null;
+  /** Height in pixels */
+  height: number | null;
+}
+
+/** User info embedded in a story */
+export interface StoryUser {
+  /** User ULID */
+  ulid: string;
+  /** Username */
+  username: string;
+  /** Display name */
+  name: string;
+  /** Avatar URL (fully resolved) */
+  avatar: string | null;
+}
+
+/**
+ * A story (ephemeral post that expires after 24 hours).
+ *
+ * Stories can contain a single image or short video plus optional caption.
+ *
+ * @example
+ * ```typescript
+ * const story = await sdk.getStory('01HX...');
+ * if (!story.isExpired) {
+ *   console.log(`Story by ${story.user.username}`);
+ * }
+ * ```
+ *
+ * @category Stories
+ */
+export interface Story {
+  /** Unique identifier (ULID format, lowercase) */
+  ulid: string;
+  /** Story caption/text */
+  caption: string | null;
+  /** Visibility setting */
+  visibility: StoryVisibility;
+  /** Media attachments (max 1 for stories) */
+  media: StoryMedia[];
+  /** View count (only present for story owner) */
+  viewCount?: number;
+  /** Whether the current user has viewed this story */
+  hasViewed: boolean;
+  /** Whether this story belongs to the current user */
+  isOwn: boolean;
+  /** Whether the story has expired (past 24 hours) */
+  isExpired: boolean;
+  /** When the story was created (ISO 8601) */
+  createdAt: string;
+  /** When the story expires (ISO 8601) */
+  expiresAt: string;
+  /** User who created the story */
+  user: StoryUser;
+}
+
+/**
+ * A user's story group in the feed (grouped stories from a single user).
+ *
+ * Stories are grouped by user in the feed, sorted by most recent.
+ *
+ * @category Stories
+ */
+export interface StoryFeedUser {
+  /** User who owns these stories */
+  user: StoryUser;
+  /** User's active stories */
+  stories: Story[];
+  /** Whether any stories are unviewed by the current user */
+  hasUnviewed: boolean;
+  /** Total number of active stories */
+  storyCount: number;
+  /** Timestamp of most recent story (ISO 8601) */
+  latestAt: string;
+}
+
+/**
+ * Response from the story feed endpoint.
+ *
+ * @category Stories
+ */
+export interface StoryFeedResponse {
+  /** Story groups by user */
+  data: StoryFeedUser[];
+}
+
+/**
+ * Input for creating a new story.
+ *
+ * @category Stories
+ */
+export interface CreateStoryInput {
+  /** Image IDs from prior upload (max 1) */
+  imageIds?: number[];
+  /** Image URLs/S3 keys from upload (max 1) - alternative to imageIds */
+  imageUrls?: string[];
+  /** Story caption (max 500 characters) */
+  caption?: string;
+  /** Visibility setting (defaults to "public") */
+  visibility?: StoryVisibility;
+  /** Group ID if posting to a group */
+  groupId?: number;
+}
+
+/**
+ * A user who has viewed a story.
+ *
+ * Only accessible by the story owner.
+ * Note: The user avatar is a raw database path, not a fully resolved URL.
+ * Use the media URL config to resolve it.
+ *
+ * @category Stories
+ */
+export interface StoryViewer {
+  /** Viewer user info (avatar is raw path, needs URL resolution) */
+  user: {
+    id: number;
+    ulid: string;
+    username: string;
+    name: string;
+    avatar: string | null;
+  };
+  /** When they viewed the story (ISO 8601) */
+  viewedAt: string;
+}
+
+/**
+ * Response from the story viewers endpoint.
+ *
+ * @category Stories
+ */
+export interface StoryViewersResponse {
+  /** List of users who viewed the story */
+  data: StoryViewer[];
+}
+
 // Export blog types
 export * from "./types/blog";
