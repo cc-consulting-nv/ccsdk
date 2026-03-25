@@ -236,6 +236,32 @@ export interface FeedPage {
   posts: Post[];
   /** Cursor for fetching the next page (null if no more pages) */
   nextCursor?: string | null;
+  /** Affiliate products to display in the feed (injected by API) */
+  affiliateProducts?: AffiliateProduct[];
+  /** How often to show an affiliate product (every Nth item) */
+  affiliateFrequency?: number;
+}
+
+/**
+ * An affiliate product injected into feeds.
+ *
+ * @category Feeds
+ */
+export interface AffiliateProduct {
+  ulid: string;
+  feedItemType: "AFFILIATE_PRODUCT";
+  productName: string;
+  description: string | null;
+  brand: string | null;
+  merchantName: string;
+  category: string | null;
+  price: number;
+  salePrice: number | null;
+  currency: string;
+  imageUrl: string;
+  thumbnailUrl: string | null;
+  buyUrl: string;
+  isOnSale: boolean;
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   type UserProfile,
   type CurrentUser,
   type SuggestedUser,
+  type AffiliateProduct,
   type FeedPage,
   type Post,
   type Poll,
@@ -1613,10 +1614,16 @@ export class CcPlatformSdk {
       await this.hydrateUsersFromHints(hints as any[]);
     }
 
+    // Extract affiliate products from envelope (sibling to 'data')
+    const rawEnvelope = response as unknown as Record<string, unknown>;
+    const affiliateProducts = (rawEnvelope.affiliateProducts ?? (rawEnvelope.data as Record<string, unknown> | undefined)?.affiliateProducts) as AffiliateProduct[] | undefined;
+    const affiliateFrequency = (rawEnvelope.affiliateFrequency ?? (rawEnvelope.data as Record<string, unknown> | undefined)?.affiliateFrequency) as number | undefined;
+
     return {
       ulids,
       posts,
       nextCursor,
+      ...(affiliateProducts?.length ? { affiliateProducts, affiliateFrequency } : {}),
     };
   }
 
