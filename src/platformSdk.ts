@@ -1399,7 +1399,8 @@ export class CcPlatformSdk {
             imagesLength: Array.isArray(normalized.images) ? normalized.images.length : 0,
           });
         }
-        acc[id] = normalized;
+        // Normalize ULID to uppercase for consistent lookup (API returns lowercase, feed returns uppercase)
+        acc[id.toUpperCase()] = normalized;
         return acc;
       }, {});
       this.log(`[SDK] 🗺️  Mapped ${Object.keys(mapped).length} posts from ${posts.length} raw posts`);
@@ -1408,7 +1409,8 @@ export class CcPlatformSdk {
       this.log(`[SDK] 🎯 Resolving promises for ${idsToFetch.length} IDs with ${Object.keys(mapped).length} posts`);
       idsToFetch.forEach((id) => {
         const resolvers = this.postPendingResolvers.get(id) || [];
-        const post = mapped[id];
+        // Normalize lookup to uppercase for consistent matching
+        const post = mapped[id.toUpperCase()];
         resolvers.forEach(({ resolve, reject }) => {
           if (post) {
             resolve(post);
