@@ -1399,7 +1399,8 @@ export class CcPlatformSdk {
             imagesLength: Array.isArray(normalized.images) ? normalized.images.length : 0,
           });
         }
-        acc[id] = normalized;
+        // Normalize ULID to uppercase for consistent lookup (API returns lowercase, feed returns uppercase)
+        acc[id.toUpperCase()] = normalized;
         return acc;
       }, {});
       this.log(`[SDK] 🗺️  Mapped ${Object.keys(mapped).length} posts from ${posts.length} raw posts`);
@@ -1408,7 +1409,8 @@ export class CcPlatformSdk {
       this.log(`[SDK] 🎯 Resolving promises for ${idsToFetch.length} IDs with ${Object.keys(mapped).length} posts`);
       idsToFetch.forEach((id) => {
         const resolvers = this.postPendingResolvers.get(id) || [];
-        const post = mapped[id];
+        // Normalize lookup to uppercase for consistent matching
+        const post = mapped[id.toUpperCase()];
         resolvers.forEach(({ resolve, reject }) => {
           if (post) {
             resolve(post);
@@ -1534,6 +1536,8 @@ export class CcPlatformSdk {
           groupName: item.groupName,
           commentCount: item.commentCount,
           isLikedByProfileUser: item.isLikedByProfileUser,
+          updatedAt: item.updatedAt,
+          updatedAtEpoch: item.updatedAtEpoch,
         };
       }
       return acc;
@@ -1545,6 +1549,40 @@ export class CcPlatformSdk {
       this.log(`[SDK] 🔄 Calling fetchPostsBatch with ${ulids.length} ULIDs...`);
       const hydrated = await this.fetchPostsBatch(ulids);
       this.log(`[SDK] ✅ fetchPostsBatch returned ${Object.keys(hydrated).length} posts`);
+
+      // Check for stale cached posts by comparing updatedAt from feed vs cache
+      const staleUlids: Ulid[] = [];
+      for (const id of ulids) {
+        const post = hydrated[id];
+        const feedMeta = feedItemMap[id];
+        if (!post || !feedMeta) continue;
+
+        const feedUpdatedAt = feedMeta.updatedAt as string | undefined;
+        const feedUpdatedAtEpoch = feedMeta.updatedAtEpoch as number | undefined;
+        const cachedUpdatedAt = post.updatedAt as string | undefined;
+        const cachedUpdatedAtEpoch = post.updatedAtEpoch as number | undefined;
+
+        // Compare using epoch timestamps first (most reliable), fall back to string comparison
+        if (feedUpdatedAtEpoch && cachedUpdatedAtEpoch) {
+          if (feedUpdatedAtEpoch !== cachedUpdatedAtEpoch) {
+            staleUlids.push(id);
+          }
+        } else if (feedUpdatedAt && cachedUpdatedAt && feedUpdatedAt !== cachedUpdatedAt) {
+          staleUlids.push(id);
+        }
+      }
+
+      // Re-fetch stale posts from API (bypasses cache)
+      if (staleUlids.length > 0) {
+        this.log(`[SDK] 🔄 Re-fetching ${staleUlids.length} stale posts (updatedAt mismatch)`);
+        // Evict stale entries from IndexedDB so fetchPostsBatch hits the API
+        const cache = await this.cachePromise;
+        for (const id of staleUlids) {
+          await cache.deletePost(id);
+        }
+        const refreshed = await this.fetchPostsBatch(staleUlids);
+        Object.assign(hydrated, refreshed);
+      }
 
       // Enrich posts with metadata from feed items
       posts = ulids
