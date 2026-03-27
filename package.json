@@ -20,7 +20,7 @@
     "clean": "rimraf dist",
     "prepublishOnly": "npm run clean && npm run build",
     "lint": "echo \"lint not configured for sdk\"",
-    "test": "node --test tests/httpClient.test.js",
+    "test": "node --test tests/httpClient.test.js && npx tsx --test tests/stories.test.js",
     "test:integration": "node ./tests/integration.js",
     "docs": "typedoc --options typedoc.html.json",
     "docs:html": "typedoc --options typedoc.html.json",
@@ -53,6 +53,7 @@
     "dexie": "^4.2.1"
   },
   "devDependencies": {
+    "fake-indexeddb": "^6.2.5",
     "rimraf": "^5.0.5",
     "typedoc": "^0.28.15",
     "typedoc-plugin-markdown": "^4.9.0",

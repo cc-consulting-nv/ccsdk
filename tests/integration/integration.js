@@ -1,4 +1,4 @@
-import { ccPlatformSdk } from "../dist/index.js";
+import { ccPlatformSdk } from "../../dist/index.js";
 
 const API_BASE = process.env.API_BASE;
 const API_TOKEN = process.env.API_TOKEN;

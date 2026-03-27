@@ -477,6 +477,11 @@ export interface CcPlatformSdkOptions {
    * Defaults to false (JSON responses).
    */
   useMsgpack?: boolean;
+  /**
+   * Optional fetch implementation override (e.g., for tests).
+   * Defaults to the global fetch function.
+   */
+  fetchImpl?: typeof fetch;
 }
 
 /**
@@ -586,6 +591,7 @@ export class CcPlatformSdk {
 
     const clientOptions: HttpClientOptions = {
       baseUrl: options.baseUrl.replace(/\/$/, ""),
+      fetchImpl: options.fetchImpl,
       getAuthTokens: () => this.tokens.getTokens(),
       getActingContext: () => this.actingContext,
       onRefreshTokens: options.onRefreshTokens
