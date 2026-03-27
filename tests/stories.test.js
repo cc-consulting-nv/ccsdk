@@ -6,7 +6,7 @@
  * see integration/stories.integration.js.
  */
 
-// Polyfill IndexedDB for Node.js (must be before SDK import)
+// Polyfill IndexedDB for Node.js
 import "fake-indexeddb/auto";
 
 import test from "node:test";
@@ -327,7 +327,7 @@ test("getStoryViewers returns list of viewers", async () => {
 });
 
 test("getStoryViewers handles no viewers", async () => {
-  const { sdk, calls } = createMockSdk({ data: [] });
+  const { sdk } = createMockSdk({ data: [] });
 
   const response = await sdk.getStoryViewers("01hx9876543210fedcba");
 

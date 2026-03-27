@@ -2,18 +2,13 @@
  * Stories SDK Integration Test
  *
  * Run with:
- *   API_TOKEN=<your-token> npx tsx tests/stories.test.js
+ *   API_TOKEN=<your-token> npx tsx tests/integration/stories.integration.js
  *
  * Get a token by logging in via the UI and grabbing the access_token from localStorage.
  */
 
-// Silence IndexedDB errors (expected in Node.js environment)
-process.on('unhandledRejection', (reason) => {
-  if (reason?.name === 'MissingAPIError' || reason?.message?.includes('IndexedDB')) {
-    return; // Expected - no IndexedDB in Node.js
-  }
-  console.error('Unhandled Rejection:', reason);
-});
+// Polyfill IndexedDB for Node.js
+import "fake-indexeddb/auto";
 
 import { CcPlatformSdk } from "../../src/platformSdk.ts";
 

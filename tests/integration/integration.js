@@ -1,18 +1,25 @@
-import { ccPlatformSdk } from "../../dist/index.js";
+// Polyfill IndexedDB for Node.js
+import "fake-indexeddb/auto";
 
-const API_BASE = process.env.API_BASE;
+import { CcPlatformSdk } from "../../src/platformSdk.ts";
+
+const API_BASE = process.env.API_BASE || "http://localhost:8089";
 const API_TOKEN = process.env.API_TOKEN;
 
-if (!API_BASE || !API_TOKEN) {
+if (!API_TOKEN) {
   console.log(
-    "Skipping integration test: set API_BASE and API_TOKEN env vars to run live API checks.",
+    "Usage: API_TOKEN=<token> npx tsx tests/integration/integration.js\n" +
+    "Get your token from localStorage after logging into the UI."
   );
   process.exit(0);
 }
 
+const sdk = new CcPlatformSdk({
+  baseUrl: API_BASE,
+  tokens: { accessToken: API_TOKEN },
+});
+
 async function main() {
-  const sdk = ccPlatformSdk;
-  sdk.setTokens({ accessToken: API_TOKEN });
 
   console.log(`Hitting ${API_BASE} for /v1/songs/feed/all…`);
   const page = await sdk.fetchFeedPage(undefined, "/v1/songs/feed/all");
