@@ -8787,6 +8787,87 @@ export class CcPlatformSdk {
   }
 
   /**
+   * Send batched video view tracking data (authenticated).
+   *
+   * Tracks video viewing progress using segment-based bitmap tracking.
+   * Each view records the start and end seconds watched, allowing the
+   * backend to build a bitmap of viewed segments for completion tracking.
+   *
+   * Views are batched client-side and sent periodically or on page unload.
+   *
+   * @param payload - The tracking payload
+   * @param payload.views - Array of view segments with position data
+   * @returns Promise that resolves when tracking data is sent
+   *
+   * @example
+   * ```typescript
+   * await sdk.sendVideoViews({
+   *   views: [
+   *     {
+   *       post_ulid: '01HX...ULID',
+   *       start_second: 0,
+   *       end_second: 30,
+   *       last_position: 30,
+   *     },
+   *   ],
+   * });
+   * ```
+   *
+   * @category Analytics
+   */
+  async sendVideoViews(payload: {
+    views: Array<{
+      post_ulid: string;
+      start_second: number;
+      end_second: number;
+      last_position: number;
+    }>;
+  }): Promise<void> {
+    await this.client.post<void>("/v1/video-views", {
+      body: payload,
+    });
+  }
+
+  /**
+   * Send batched video view tracking data (unauthenticated).
+   *
+   * Same as sendVideoViews but for unauthenticated users. The backend
+   * attributes these views to a default anonymous user.
+   *
+   * @param payload - The tracking payload
+   * @param payload.views - Array of view segments with position data
+   * @returns Promise that resolves when tracking data is sent
+   *
+   * @example
+   * ```typescript
+   * await sdk.sendVideoViewsNoAuth({
+   *   views: [
+   *     {
+   *       post_ulid: '01HX...ULID',
+   *       start_second: 0,
+   *       end_second: 15,
+   *       last_position: 15,
+   *     },
+   *   ],
+   * });
+   * ```
+   *
+   * @category Analytics
+   */
+  async sendVideoViewsNoAuth(payload: {
+    views: Array<{
+      post_ulid: string;
+      start_second: number;
+      end_second: number;
+      last_position: number;
+    }>;
+  }): Promise<void> {
+    await this.client.post<void>("/v1/video-views-na", {
+      body: payload,
+    });
+  }
+
+  /**
    * Get all 3 Daily Mix playlists.
    *
    * Returns personalized daily mix playlists generated based on the user's
