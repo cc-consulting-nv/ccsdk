@@ -10133,7 +10133,8 @@ export class CcPlatformSdk {
         image_urls: input.imageUrls,
         caption: input.caption,
         visibility: input.visibility,
-        group_id: input.groupId,
+        // Default to 'default' group if no groupId provided (matches post creation behavior)
+        ...(input.groupId ? { group_id: input.groupId } : { group_name: "default" }),
       },
     });
     return response.data;
