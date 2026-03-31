@@ -5515,6 +5515,84 @@ export class CcPlatformSdk {
   }
 
   // ---------------------------------------------------------------------------
+  // Post Analytics
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Get analytics for a specific post (views, impressions, engagement).
+   *
+   * Only accessible by the post author or admins.
+   *
+   * @param ulid - The ULID of the post
+   * @param params - Optional date range
+   * @returns Promise resolving to post analytics data
+   *
+   * @category Analytics
+   */
+  async getPostAnalytics(
+    ulid: string,
+    params?: { startDate?: string; endDate?: string },
+  ): Promise<ApiEnvelope<unknown>> {
+    const queryParams = new URLSearchParams();
+    if (params?.startDate) queryParams.append("start_date", params.startDate);
+    if (params?.endDate) queryParams.append("end_date", params.endDate);
+    const queryString = queryParams.toString();
+    return this.client.get<ApiEnvelope<unknown>>(
+      `/v1/analytics/posts/${encodeURIComponent(ulid)}${queryString ? `?${queryString}` : ""}`,
+    );
+  }
+
+  /**
+   * Get author analytics dashboard with aggregate metrics across all posts.
+   *
+   * @param params - Optional date range and content type filter
+   * @returns Promise resolving to dashboard data
+   *
+   * @category Analytics
+   */
+  async getPostAnalyticsDashboard(params?: {
+    startDate?: string;
+    endDate?: string;
+    contentType?: "post" | "song" | "video" | "all";
+  }): Promise<ApiEnvelope<unknown>> {
+    const queryParams = new URLSearchParams();
+    if (params?.startDate) queryParams.append("start_date", params.startDate);
+    if (params?.endDate) queryParams.append("end_date", params.endDate);
+    if (params?.contentType) queryParams.append("content_type", params.contentType);
+    const queryString = queryParams.toString();
+    return this.client.get<ApiEnvelope<unknown>>(
+      `/v1/analytics/posts/dashboard${queryString ? `?${queryString}` : ""}`,
+    );
+  }
+
+  /**
+   * Batch report post impressions (when posts appear in a user's feed).
+   *
+   * Call this when posts are rendered in the feed to track impressions.
+   *
+   * @param impressions - Array of impression events
+   * @returns Promise resolving to count of recorded impressions
+   *
+   * @example
+   * ```typescript
+   * await sdk.reportPostImpressions([
+   *   { postUlid: 'abc123...', context: 'feed' },
+   *   { postUlid: 'def456...', context: 'profile' },
+   * ]);
+   * ```
+   *
+   * @category Analytics
+   */
+  async reportPostImpressions(
+    impressions: Array<{ postUlid: string; context: "feed" | "profile" | "search" | "hashtag" | "embed" }>,
+  ): Promise<ApiEnvelope<{ recorded: number }>> {
+    return this.client.post<ApiEnvelope<{ recorded: number }>>(
+      "/v1/analytics/posts/impressions",
+      { body: { impressions } },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // CEO Dashboard
   // ---------------------------------------------------------------------------
 
@@ -5903,6 +5981,60 @@ export class CcPlatformSdk {
     return this.client.post<ApiEnvelope<ChatMessage>>(
       `/v1/chat/groups/${encodeURIComponent(groupUlid)}/messages`,
       { body: payload },
+    );
+  }
+
+  /**
+   * Find or create a 1:1 DM conversation with a specific user.
+   *
+   * If a DM already exists between the current user and the target user,
+   * it returns the existing conversation. Otherwise, creates a new one.
+   *
+   * @param userUlid - The ULID of the user to DM
+   * @returns Promise resolving to the DM conversation
+   *
+   * @example
+   * ```typescript
+   * const response = await sdk.findOrCreateDm(targetUserUlid);
+   * const dm = sdk.unwrap(response);
+   * await sdk.sendChatMessage(dm.ulid, { body: 'Hey!' });
+   * ```
+   *
+   * @category Chat
+   */
+  async findOrCreateDm(userUlid: string): Promise<ApiEnvelope<ChatGroup>> {
+    return this.client.post<ApiEnvelope<ChatGroup>>(
+      `/v1/chat/dm/${encodeURIComponent(userUlid)}`,
+    );
+  }
+
+  /**
+   * List DM conversations only (excludes group chats).
+   *
+   * @param params - Optional query parameters
+   * @returns Promise resolving to array of DM conversations
+   *
+   * @category Chat
+   */
+  async getDmConversations(params?: Record<string, unknown>): Promise<ApiEnvelope<ChatGroup[]>> {
+    return this.client.get<ApiEnvelope<ChatGroup[]>>("/v1/chat/groups", {
+      query: { ...params, type: "dm" },
+    });
+  }
+
+  /**
+   * Delete a chat message.
+   *
+   * Only the message author can delete their own messages.
+   *
+   * @param groupUlid - The ULID of the chat group
+   * @param messageUlid - The ULID of the message to delete
+   *
+   * @category Chat
+   */
+  async deleteChatMessage(groupUlid: string, messageUlid: string): Promise<void> {
+    await this.client.delete(
+      `/v1/chat/groups/${encodeURIComponent(groupUlid)}/messages/${encodeURIComponent(messageUlid)}`,
     );
   }
 

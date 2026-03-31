@@ -772,6 +772,10 @@ export interface ChatGroup {
   name: string;
   /** Group description */
   description?: string;
+  /** Whether this is a 1:1 direct message conversation */
+  isDm?: boolean;
+  /** Whether this is a group chat (not a DM) */
+  isGroup?: boolean;
   /** Member ULIDs or full member objects */
   members?: string[] | ChatGroupMember[];
   /** Full participant information */
