@@ -676,3 +676,221 @@ test("getCurrentUser includes authorization header", async () => {
 
   assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
 });
+
+// ---------------------------------------------------------------------------
+// Passkey tests (passkeyGetAuthenticateOptions, passkeyAuthenticate,
+// passkeyGetRegisterOptions, passkeyRegister, passkeyList, passkeyRename, passkeyDelete)
+// ---------------------------------------------------------------------------
+
+test("passkeyGetAuthenticateOptions sends POST to /v1/auth/passkey/authenticate-options", async () => {
+  const { sdk, calls } = createMockSdk({
+    data: {
+      session_id: "session-123",
+      public_key: {
+        challenge: "base64-challenge",
+        timeout: 60000,
+        rpId: "example.com",
+        allowCredentials: [],
+      },
+    },
+  });
+
+  const result = await sdk.passkeyGetAuthenticateOptions();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/auth/passkey/authenticate-options`);
+  assert.equal(calls[0].init.method, "POST");
+
+  // Should not include Authorization header (skipAuth: true)
+  assert.equal(calls[0].init.headers.Authorization, undefined);
+
+  assert.equal(result.sessionId, "session-123");
+  assert.ok(result.publicKey);
+});
+
+test("passkeyGetAuthenticateOptions includes email when provided", async () => {
+  const { sdk, calls } = createMockSdk({
+    data: { session_id: "session-123", public_key: {} },
+  });
+
+  await sdk.passkeyGetAuthenticateOptions("user@example.com");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.email, "user@example.com");
+});
+
+test("passkeyAuthenticate sends POST to /v1/auth/passkey/authenticate", async () => {
+  const { sdk, calls } = createMockSdk({
+    data: {
+      access_token: "passkey-access-token",
+      refresh_token: "passkey-refresh-token",
+    },
+  });
+
+  const mockCredential = {
+    id: "credential-id",
+    rawId: "raw-id",
+    response: {
+      authenticatorData: "auth-data",
+      clientDataJSON: "client-data",
+      signature: "signature",
+    },
+    type: "public-key",
+  };
+
+  const result = await sdk.passkeyAuthenticate("session-123", mockCredential);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/auth/passkey/authenticate`);
+  assert.equal(calls[0].init.method, "POST");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.session_id, "session-123");
+  assert.deepEqual(body.credential, mockCredential);
+
+  // Should not include Authorization header (skipAuth: true)
+  assert.equal(calls[0].init.headers.Authorization, undefined);
+
+  assert.equal(result.accessToken, "passkey-access-token");
+  assert.equal(result.refreshToken, "passkey-refresh-token");
+});
+
+test("passkeyGetRegisterOptions sends POST to /v1/auth/passkey/register-options", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({
+    data: {
+      public_key: {
+        challenge: "base64-challenge",
+        rp: { name: "Example", id: "example.com" },
+        user: { id: "user-id", name: "user@example.com", displayName: "User" },
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+      },
+    },
+  });
+
+  const result = await sdk.passkeyGetRegisterOptions("My Passkey");
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/auth/passkey/register-options`);
+  assert.equal(calls[0].init.method, "POST");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.name, "My Passkey");
+
+  // Requires authentication
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
+
+  // Note: passkeyGetRegisterOptions does not convert snake_case to camelCase
+  assert.ok(result.public_key);
+});
+
+test("passkeyRegister sends POST to /v1/auth/passkey/register", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({
+    data: {
+      passkey: {
+        id: "passkey-id-123",
+        name: "My Passkey",
+        created_at: "2024-01-15T10:00:00Z",
+      },
+    },
+  });
+
+  const mockCredential = {
+    id: "credential-id",
+    rawId: "raw-id",
+    response: {
+      attestationObject: "attestation",
+      clientDataJSON: "client-data",
+    },
+    type: "public-key",
+  };
+
+  const result = await sdk.passkeyRegister(mockCredential);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/auth/passkey/register`);
+  assert.equal(calls[0].init.method, "POST");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.deepEqual(body.credential, mockCredential);
+
+  // Requires authentication
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
+
+  assert.ok(result.passkey);
+});
+
+test("passkeyList sends GET to /v1/auth/passkeys", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({
+    data: {
+      passkeys: [
+        { id: "pk-1", name: "MacBook", created_at: "2024-01-10T10:00:00Z" },
+        { id: "pk-2", name: "iPhone", created_at: "2024-01-12T10:00:00Z" },
+      ],
+    },
+  });
+
+  const passkeys = await sdk.passkeyList();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/auth/passkeys`);
+  assert.equal(calls[0].init.method, "GET");
+
+  // Requires authentication
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
+
+  assert.ok(Array.isArray(passkeys));
+  assert.equal(passkeys.length, 2);
+  assert.equal(passkeys[0].name, "MacBook");
+  assert.equal(passkeys[1].name, "iPhone");
+});
+
+test("passkeyList returns empty array when no passkeys", async () => {
+  const { sdk } = createAuthenticatedMockSdk({
+    data: { passkeys: [] },
+  });
+
+  const passkeys = await sdk.passkeyList();
+
+  assert.ok(Array.isArray(passkeys));
+  assert.equal(passkeys.length, 0);
+});
+
+test("passkeyRename sends PATCH to /v1/auth/passkeys/{id}", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({
+    data: {
+      passkey: {
+        id: "pk-123",
+        name: "New Name",
+        updated_at: "2024-01-15T12:00:00Z",
+      },
+    },
+  });
+
+  const result = await sdk.passkeyRename("pk-123", "New Name");
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/auth/passkeys/pk-123`);
+  assert.equal(calls[0].init.method, "PATCH");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.name, "New Name");
+
+  // Requires authentication
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
+
+  assert.ok(result.passkey);
+  assert.equal(result.passkey.name, "New Name");
+});
+
+test("passkeyDelete sends DELETE to /v1/auth/passkeys/{id}", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({});
+
+  await sdk.passkeyDelete("pk-456");
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/auth/passkeys/pk-456`);
+  assert.equal(calls[0].init.method, "DELETE");
+
+  // Requires authentication
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
+});
