@@ -1,0 +1,508 @@
+/**
+ * Auth SDK Unit Tests (mocked HTTP)
+ *
+ * These tests verify the SDK's authentication methods work correctly
+ * by mocking the HTTP layer. For live API integration testing,
+ * see integration/auth.integration.js.
+ */
+
+// Polyfill IndexedDB for Node.js
+import "fake-indexeddb/auto";
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { CcPlatformSdk } from "../src/platformSdk.ts";
+import { HybridTokenProvider } from "../src/auth.ts";
+
+const baseUrl = "https://api.example.com";
+
+/**
+ * Creates an in-memory storage mock for testing (localStorage replacement)
+ */
+function createMockStorage() {
+  const store = new Map();
+  return {
+    getItem: (key) => store.get(key) ?? null,
+    setItem: (key, value) => store.set(key, value),
+    removeItem: (key) => store.delete(key),
+  };
+}
+
+/**
+ * Creates a mock fetch implementation that returns the provided response
+ */
+function createMockFetch(responseData, status = 200) {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init });
+    return new Response(JSON.stringify(responseData), { status });
+  };
+  return { fetchImpl, calls };
+}
+
+/**
+ * Creates a CcPlatformSdk instance with mocked HTTP (no initial auth)
+ */
+function createMockSdk(responseData, status = 200) {
+  const { fetchImpl, calls } = createMockFetch(responseData, status);
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+  });
+  return { sdk, calls };
+}
+
+/**
+ * Creates a CcPlatformSdk instance with mocked HTTP (with auth token)
+ */
+function createAuthenticatedMockSdk(responseData, status = 200) {
+  const { fetchImpl, calls } = createMockFetch(responseData, status);
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    tokens: { accessToken: "test-token" },
+    fetchImpl,
+  });
+  return { sdk, calls };
+}
+
+// ---------------------------------------------------------------------------
+// login tests
+// ---------------------------------------------------------------------------
+
+test("login sends POST to /v1/auth/login with email and password", async () => {
+  const { sdk, calls } = createMockSdk({
+    data: {
+      accessToken: "test-access-token",
+      refreshToken: "test-refresh-token",
+    },
+  });
+
+  const tokens = await sdk.login("user@example.com", "password123");
+
+  // Verify the request
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/auth/login`);
+  assert.equal(calls[0].init.method, "POST");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.email, "user@example.com");
+  assert.equal(body.password, "password123");
+
+  // Verify the response
+  assert.equal(tokens.accessToken, "test-access-token");
+  assert.equal(tokens.refreshToken, "test-refresh-token");
+
+  // Verify tokens were stored
+  assert.ok(sdk.isAuthenticated());
+  assert.equal(sdk.getTokens().accessToken, "test-access-token");
+});
+
+// ---------------------------------------------------------------------------
+// loginWithOAuth tests
+// ---------------------------------------------------------------------------
+
+test("loginWithOAuth sends POST to /v1/auth/{provider}/callback", async () => {
+  const { sdk, calls } = createMockSdk({
+    access_token: "oauth-access-token",
+    refresh_token: "oauth-refresh-token",
+  });
+
+  const tokens = await sdk.loginWithOAuth("google", "auth-code-123", "https://app.example.com/callback");
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/auth/google/callback`);
+  assert.equal(calls[0].init.method, "POST");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.code, "auth-code-123");
+  assert.equal(body.redirect_uri, "https://app.example.com/callback");
+
+  assert.equal(tokens.accessToken, "oauth-access-token");
+  assert.equal(tokens.refreshToken, "oauth-refresh-token");
+});
+
+test("loginWithOAuth handles Apple extraData (id_token, user)", async () => {
+  const { sdk, calls } = createMockSdk({
+    access_token: "apple-access-token",
+  });
+
+  await sdk.loginWithOAuth("apple", "apple-code", "https://app.example.com/callback", {
+    id_token: "apple-id-token",
+    user: '{"name":"John"}',
+  });
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.code, "apple-code");
+  assert.equal(body.redirect_uri, "https://app.example.com/callback");
+  assert.equal(body.id_token, "apple-id-token");
+  assert.equal(body.user, '{"name":"John"}');
+});
+
+test("loginWithOAuth normalizes camelCase response to AuthTokens", async () => {
+  const { sdk } = createMockSdk({
+    accessToken: "camel-access-token",
+    refreshToken: "camel-refresh-token",
+  });
+
+  const tokens = await sdk.loginWithOAuth("google", "code");
+
+  assert.equal(tokens.accessToken, "camel-access-token");
+  assert.equal(tokens.refreshToken, "camel-refresh-token");
+});
+
+// ---------------------------------------------------------------------------
+// loginWithMagicLink tests
+// ---------------------------------------------------------------------------
+
+test("loginWithMagicLink sends POST to /authCodeLogin (no /v1 prefix)", async () => {
+  const { sdk, calls } = createMockSdk({
+    access_token: "magic-access-token",
+    refresh_token: "magic-refresh-token",
+    token_type: "Bearer",
+  });
+
+  const tokens = await sdk.loginWithMagicLink("user@example.com", "123456");
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/authCodeLogin`);
+  assert.equal(calls[0].init.method, "POST");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.identifier, "user@example.com");
+  assert.equal(body.authCode, 123456);
+
+  assert.equal(tokens.accessToken, "magic-access-token");
+  assert.equal(tokens.refreshToken, "magic-refresh-token");
+});
+
+test("loginWithMagicLink converts string authCode to integer", async () => {
+  const { sdk, calls } = createMockSdk({
+    access_token: "token",
+    token_type: "Bearer",
+  });
+
+  await sdk.loginWithMagicLink("user@example.com", "654321");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.authCode, 654321);
+  assert.equal(typeof body.authCode, "number");
+});
+
+test("loginWithMagicLink accepts number authCode directly", async () => {
+  const { sdk, calls } = createMockSdk({
+    access_token: "token",
+    token_type: "Bearer",
+  });
+
+  await sdk.loginWithMagicLink("user@example.com", 999999);
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.authCode, 999999);
+});
+
+// ---------------------------------------------------------------------------
+// register tests
+// ---------------------------------------------------------------------------
+
+test("register sends POST to /v1/auth/register with payload", async () => {
+  const { sdk, calls } = createMockSdk({
+    data: {
+      accessToken: "new-user-token",
+      refreshToken: "new-refresh-token",
+    },
+  });
+
+  const tokens = await sdk.register({
+    email: "newuser@example.com",
+    password: "securePass123",
+    username: "newuser",
+    displayName: "New User",
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/auth/register`);
+  assert.equal(calls[0].init.method, "POST");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.email, "newuser@example.com");
+  assert.equal(body.password, "securePass123");
+  assert.equal(body.username, "newuser");
+  assert.equal(body.displayName, "New User");
+
+  assert.equal(tokens.accessToken, "new-user-token");
+  assert.equal(tokens.refreshToken, "new-refresh-token");
+  assert.ok(sdk.isAuthenticated());
+});
+
+test("register works without optional displayName", async () => {
+  const { sdk, calls } = createMockSdk({
+    data: { accessToken: "token" },
+  });
+
+  await sdk.register({
+    email: "user@example.com",
+    password: "pass",
+    username: "user",
+  });
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.displayName, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// requestMagicLink tests
+// ---------------------------------------------------------------------------
+
+test("requestMagicLink sends POST to /sendMagicLink", async () => {
+  const { sdk, calls } = createMockSdk({});
+
+  await sdk.requestMagicLink("user@example.com");
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/sendMagicLink`);
+  assert.equal(calls[0].init.method, "POST");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.email, "user@example.com");
+});
+
+test("requestMagicLink includes optional parameters (ref, redirect, platform)", async () => {
+  const { sdk, calls } = createMockSdk({});
+
+  await sdk.requestMagicLink("user@example.com", {
+    referralCode: "REF123",
+    redirect: "/dashboard",
+    platform: "ios",
+  });
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.email, "user@example.com");
+  assert.equal(body.ref, "REF123");
+  assert.equal(body.redirect, "/dashboard");
+  assert.equal(body.platform, "ios");
+});
+
+// ---------------------------------------------------------------------------
+// requestAuthCode tests
+// ---------------------------------------------------------------------------
+
+test("requestAuthCode sends POST to /sendAuthCode", async () => {
+  const { sdk, calls } = createMockSdk({});
+
+  await sdk.requestAuthCode("user@example.com");
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/sendAuthCode`);
+  assert.equal(calls[0].init.method, "POST");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.email, "user@example.com");
+});
+
+test("requestAuthCode includes optional parameters (ref, redirect, platform)", async () => {
+  const { sdk, calls } = createMockSdk({});
+
+  await sdk.requestAuthCode("user@example.com", {
+    referralCode: "CODE456",
+    redirect: "/home",
+    platform: "android",
+  });
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.ref, "CODE456");
+  assert.equal(body.redirect, "/home");
+  assert.equal(body.platform, "android");
+});
+
+// ---------------------------------------------------------------------------
+// logout tests
+// ---------------------------------------------------------------------------
+
+test("logout sends POST to /v1/auth/logout and clears tokens", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({});
+
+  assert.ok(sdk.isAuthenticated());
+
+  await sdk.logout();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/auth/logout`);
+  assert.equal(calls[0].init.method, "POST");
+
+  assert.ok(!sdk.isAuthenticated());
+  assert.equal(sdk.getTokens(), null);
+});
+
+test("logout clears tokens even if API call fails (finally block)", async () => {
+  const { fetchImpl } = createMockFetch({}, 500);
+  const storage = createMockStorage();
+  const tokenProvider = new HybridTokenProvider(storage, { accessToken: "test-token" });
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    tokenProvider,
+    fetchImpl,
+  });
+
+  assert.ok(sdk.isAuthenticated());
+
+  // logout() uses try/finally - error is thrown but tokens are still cleared
+  try {
+    await sdk.logout();
+  } catch {
+    // Expected to throw due to 500 error
+  }
+
+  assert.ok(!sdk.isAuthenticated());
+});
+
+// ---------------------------------------------------------------------------
+// deleteAccount tests
+// ---------------------------------------------------------------------------
+
+test("deleteAccount sends DELETE to /v1/users/me and clears tokens", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({});
+
+  assert.ok(sdk.isAuthenticated());
+
+  await sdk.deleteAccount();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/users/me`);
+  assert.equal(calls[0].init.method, "DELETE");
+
+  assert.ok(!sdk.isAuthenticated());
+});
+
+// ---------------------------------------------------------------------------
+// refreshToken tests
+// ---------------------------------------------------------------------------
+
+test("refreshToken sends POST to /auth/refresh (no /v1 prefix)", async () => {
+  const { fetchImpl, calls } = createMockFetch({
+    data: {
+      accessToken: "new-access-token",
+      refreshToken: "new-refresh-token",
+    },
+  });
+
+  // Use HybridTokenProvider with mock storage to properly store refresh token
+  const storage = createMockStorage();
+  const tokenProvider = new HybridTokenProvider(
+    storage,
+    { accessToken: "old-token", refreshToken: "old-refresh-token" }
+  );
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    tokenProvider,
+    fetchImpl,
+  });
+
+  const tokens = await sdk.refreshToken();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/auth/refresh`);
+  assert.equal(calls[0].init.method, "POST");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.refresh_token, "old-refresh-token");
+
+  assert.equal(tokens.accessToken, "new-access-token");
+  assert.equal(tokens.refreshToken, "new-refresh-token");
+  assert.equal(sdk.getTokens().accessToken, "new-access-token");
+});
+
+test("refreshToken returns null when no refresh token available", async () => {
+  const { sdk } = createAuthenticatedMockSdk({});
+  // createAuthenticatedMockSdk only sets accessToken, not refreshToken
+
+  const result = await sdk.refreshToken();
+
+  assert.equal(result, null);
+});
+
+test("refreshToken clears tokens and returns null on failure", async () => {
+  const { fetchImpl } = createMockFetch({}, 401);
+
+  // Use HybridTokenProvider with mock storage to properly store refresh token
+  const storage = createMockStorage();
+  const tokenProvider = new HybridTokenProvider(
+    storage,
+    { accessToken: "token", refreshToken: "refresh" }
+  );
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    tokenProvider,
+    fetchImpl,
+  });
+
+  const result = await sdk.refreshToken();
+
+  assert.equal(result, null);
+  assert.ok(!sdk.isAuthenticated());
+});
+
+// ---------------------------------------------------------------------------
+// requestPasswordReset tests
+// ---------------------------------------------------------------------------
+
+test("requestPasswordReset sends POST to /v1/auth/password/forgot", async () => {
+  const { sdk, calls } = createMockSdk({});
+
+  await sdk.requestPasswordReset("user@example.com");
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/auth/password/forgot`);
+  assert.equal(calls[0].init.method, "POST");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.email, "user@example.com");
+});
+
+// ---------------------------------------------------------------------------
+// resetPassword tests
+// ---------------------------------------------------------------------------
+
+test("resetPassword sends POST to /v1/auth/password/reset", async () => {
+  const { sdk, calls } = createMockSdk({});
+
+  await sdk.resetPassword("reset-token-123", "newPassword", "newPassword");
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/auth/password/reset`);
+  assert.equal(calls[0].init.method, "POST");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.token, "reset-token-123");
+  assert.equal(body.password, "newPassword");
+  assert.equal(body.password_confirmation, "newPassword");
+});
+
+// ---------------------------------------------------------------------------
+// changePassword tests
+// ---------------------------------------------------------------------------
+
+test("changePassword sends POST to /v1/auth/password/change", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({});
+
+  await sdk.changePassword("currentPass", "newPass", "newPass");
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/auth/password/change`);
+  assert.equal(calls[0].init.method, "POST");
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.current_password, "currentPass");
+  assert.equal(body.password, "newPass");
+  assert.equal(body.password_confirmation, "newPass");
+});
+
+test("changePassword includes authorization header", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({});
+
+  await sdk.changePassword("current", "new", "new");
+
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
+});
