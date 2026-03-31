@@ -894,3 +894,93 @@ test("passkeyDelete sends DELETE to /v1/auth/passkeys/{id}", async () => {
   // Requires authentication
   assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
 });
+
+// ---------------------------------------------------------------------------
+// Acting Context tests (setActingContext, getActingContext, clearActingContext, isActing)
+// ---------------------------------------------------------------------------
+
+// Sample acting context for tests
+const sampleActingContext = {
+  token: "acting-token-123",
+  managedUserUlid: "01hx9876543210fedcba",
+  managedUserName: "Managed User",
+  managedUserUsername: "manageduser",
+  managedUserAvatar: "avatars/managed.jpg",
+  expiresAt: new Date(Date.now() + 300000).toISOString(), // 5 minutes from now
+  grantedScopes: ["edit_profile", "view_content"],
+};
+
+test("setActingContext stores context in memory", async () => {
+  const { sdk } = createAuthenticatedMockSdk({});
+
+  assert.equal(sdk.getActingContext(), null);
+
+  sdk.setActingContext(sampleActingContext);
+
+  const context = sdk.getActingContext();
+  assert.equal(context.token, "acting-token-123");
+  assert.equal(context.managedUserUlid, "01hx9876543210fedcba");
+  assert.equal(context.managedUserName, "Managed User");
+});
+
+test("setActingContext(null) clears context", async () => {
+  const { sdk } = createAuthenticatedMockSdk({});
+
+  sdk.setActingContext(sampleActingContext);
+  assert.ok(sdk.getActingContext());
+
+  sdk.setActingContext(null);
+
+  assert.equal(sdk.getActingContext(), null);
+});
+
+test("getActingContext returns null when no context set", async () => {
+  const { sdk } = createAuthenticatedMockSdk({});
+
+  const context = sdk.getActingContext();
+
+  assert.equal(context, null);
+});
+
+test("clearActingContext removes context", async () => {
+  const { sdk } = createAuthenticatedMockSdk({});
+
+  sdk.setActingContext(sampleActingContext);
+  assert.ok(sdk.getActingContext());
+
+  sdk.clearActingContext();
+
+  assert.equal(sdk.getActingContext(), null);
+});
+
+test("isActing returns true with valid non-expired context", async () => {
+  const { sdk } = createAuthenticatedMockSdk({});
+
+  sdk.setActingContext(sampleActingContext);
+
+  assert.equal(sdk.isActing(), true);
+});
+
+test("isActing returns false when no context set", async () => {
+  const { sdk } = createAuthenticatedMockSdk({});
+
+  assert.equal(sdk.isActing(), false);
+});
+
+test("isActing returns false and clears expired context", async () => {
+  const { sdk } = createAuthenticatedMockSdk({});
+
+  // Set context that has already expired
+  const expiredContext = {
+    ...sampleActingContext,
+    expiresAt: new Date(Date.now() - 1000).toISOString(), // 1 second ago
+  };
+
+  sdk.setActingContext(expiredContext);
+
+  // isActing should detect expiration and return false
+  assert.equal(sdk.isActing(), false);
+
+  // Context should be auto-cleared
+  assert.equal(sdk.getActingContext(), null);
+});
