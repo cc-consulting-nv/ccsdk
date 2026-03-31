@@ -506,3 +506,173 @@ test("changePassword includes authorization header", async () => {
 
   assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
 });
+
+// ---------------------------------------------------------------------------
+// Token Management tests (setTokens, getTokens, isAuthenticated, getCurrentUser)
+// ---------------------------------------------------------------------------
+
+test("setTokens stores tokens via TokenProvider", async () => {
+  const { sdk } = createMockSdk({});
+
+  assert.ok(!sdk.isAuthenticated());
+
+  sdk.setTokens({ accessToken: "new-token", refreshToken: "new-refresh" });
+
+  assert.ok(sdk.isAuthenticated());
+  assert.equal(sdk.getTokens().accessToken, "new-token");
+});
+
+test("setTokens(null) clears tokens", async () => {
+  const { sdk } = createAuthenticatedMockSdk({});
+
+  assert.ok(sdk.isAuthenticated());
+
+  sdk.setTokens(null);
+
+  assert.ok(!sdk.isAuthenticated());
+  assert.equal(sdk.getTokens(), null);
+});
+
+test("getTokens returns current tokens from TokenProvider", async () => {
+  const { fetchImpl } = createMockFetch({});
+  const storage = createMockStorage();
+  const tokenProvider = new HybridTokenProvider(
+    storage,
+    { accessToken: "access-123", refreshToken: "refresh-456" }
+  );
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    tokenProvider,
+    fetchImpl,
+  });
+
+  const tokens = sdk.getTokens();
+
+  assert.equal(tokens.accessToken, "access-123");
+  assert.equal(tokens.refreshToken, "refresh-456");
+});
+
+test("getTokens returns null when no tokens set", async () => {
+  const { sdk } = createMockSdk({});
+
+  const tokens = sdk.getTokens();
+
+  assert.equal(tokens, null);
+});
+
+test("isAuthenticated returns true when accessToken exists", async () => {
+  const { sdk } = createAuthenticatedMockSdk({});
+
+  assert.equal(sdk.isAuthenticated(), true);
+});
+
+test("isAuthenticated returns false when no accessToken", async () => {
+  const { sdk } = createMockSdk({});
+
+  assert.equal(sdk.isAuthenticated(), false);
+});
+
+test("isAuthenticated returns false after tokens cleared", async () => {
+  const { sdk } = createAuthenticatedMockSdk({});
+
+  assert.equal(sdk.isAuthenticated(), true);
+
+  sdk.setTokens(null);
+
+  assert.equal(sdk.isAuthenticated(), false);
+});
+
+// ---------------------------------------------------------------------------
+// getCurrentUser tests
+// ---------------------------------------------------------------------------
+
+test("getCurrentUser returns null immediately if not authenticated", async () => {
+  const { sdk, calls } = createMockSdk({});
+
+  const user = await sdk.getCurrentUser();
+
+  // Should not make any API calls
+  assert.equal(calls.length, 0);
+  assert.equal(user, null);
+});
+
+test("getCurrentUser sends GET to /v1/users/me", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({
+    data: {
+      ulid: "01hx1234567890abcdef",
+      username: "testuser",
+      displayName: "Test User",
+      email: "test@example.com",
+      avatar: "avatars/test.jpg",
+      bio: "Hello world",
+      followersCount: 100,
+      followingCount: 50,
+    },
+  });
+
+  const user = await sdk.getCurrentUser();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/users/me`);
+  assert.equal(calls[0].init.method, "GET");
+
+  assert.equal(user.ulid, "01hx1234567890abcdef");
+  assert.equal(user.username, "testuser");
+  assert.equal(user.displayName, "Test User");
+  assert.equal(user.email, "test@example.com");
+});
+
+test("getCurrentUser extracts badges array", async () => {
+  const { sdk } = createAuthenticatedMockSdk({
+    data: {
+      ulid: "01hx1234567890abcdef",
+      username: "testuser",
+      badges: ["verified", "creator", { name: "early_adopter" }],
+    },
+  });
+
+  const user = await sdk.getCurrentUser();
+
+  assert.ok(Array.isArray(user.badges));
+  assert.equal(user.badges.length, 3);
+  assert.ok(user.badges.includes("verified"));
+  assert.ok(user.badges.includes("creator"));
+  assert.ok(user.badges.includes("early_adopter"));
+});
+
+test("getCurrentUser extracts roles array", async () => {
+  const { sdk } = createAuthenticatedMockSdk({
+    data: {
+      ulid: "01hx1234567890abcdef",
+      username: "testuser",
+      roles: ["admin", "moderator"],
+    },
+  });
+
+  const user = await sdk.getCurrentUser();
+
+  assert.ok(Array.isArray(user.roles));
+  assert.equal(user.roles.length, 2);
+  assert.ok(user.roles.includes("admin"));
+  assert.ok(user.roles.includes("moderator"));
+});
+
+test("getCurrentUser returns null on API error", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({}, 401);
+
+  const user = await sdk.getCurrentUser();
+
+  assert.equal(calls.length, 1);
+  assert.equal(user, null);
+});
+
+test("getCurrentUser includes authorization header", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({
+    data: { ulid: "test", username: "user" },
+  });
+
+  await sdk.getCurrentUser();
+
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
+});
