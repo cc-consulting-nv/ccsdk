@@ -6,12 +6,9 @@
  * see integration/stories.integration.js.
  */
 
-// Polyfill IndexedDB for Node.js
-import "fake-indexeddb/auto";
-
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CcPlatformSdk } from "../src/platformSdk.ts";
+import { CcPlatformSdk } from "../dist/platformSdk.js";
 
 const baseUrl = "https://api.example.com";
 
@@ -27,6 +24,10 @@ function createMockFetch(responseData, status = 200) {
   return { fetchImpl, calls };
 }
 
+function createMockCache() {
+  return {};
+}
+
 /**
  * Creates a CcPlatformSdk instance with mocked HTTP
  */
@@ -36,6 +37,7 @@ function createMockSdk(responseData, status = 200) {
     baseUrl,
     tokens: { accessToken: "test-token" },
     fetchImpl,
+    cache: createMockCache(),
   });
   return { sdk, calls };
 }
