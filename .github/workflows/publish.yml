@@ -4,9 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'src/**'
       - 'package.json'
-      - 'tsconfig.json'
   workflow_dispatch:
 
 jobs:
@@ -49,24 +47,21 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Determine next version
+      - name: Read package version
         id: version
         run: |
-          # Get latest git tag version, fallback to package.json
-          LATEST_TAG=$(git tag --sort=-v:refname | grep '^v' | head -1 | sed 's/^v//')
-          if [ -z "$LATEST_TAG" ]; then
-            LATEST_TAG=$(node -p "require('./package.json').version")
-          fi
-          # Increment patch
-          MAJOR=$(echo "$LATEST_TAG" | cut -d. -f1)
-          MINOR=$(echo "$LATEST_TAG" | cut -d. -f2)
-          PATCH=$(echo "$LATEST_TAG" | cut -d. -f3)
-          NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
-          echo "version=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Next version: $NEXT_VERSION"
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Package version: $VERSION"
 
-      - name: Set package version
-        run: pnpm version ${{ steps.version.outputs.version }} --no-git-tag-version --allow-same-version
+      - name: Ensure release tag does not exist
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
+            echo "Tag v${VERSION} already exists. Bump package.json before publishing." >&2
+            exit 1
+          fi
+          echo "Publishing v${VERSION}"
 
       - name: Publish to GitHub Packages
         run: pnpm publish --no-git-checks
