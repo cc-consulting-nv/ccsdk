@@ -84,7 +84,8 @@ function createSdk(fetchImpl, cache = new MockCache()) {
 
 test("createPost re-reads full post data when create response only includes id", async () => {
   const calls = [];
-  const { sdk, cache } = createSdk(async (url, init) => {
+  const cache = new MockCache();
+  const { sdk } = createSdk(async (url, init) => {
     calls.push({ url, init });
 
     if (url === `${baseUrl}/v1/posts/create`) {
@@ -108,7 +109,7 @@ test("createPost re-reads full post data when create response only includes id",
     }
 
     throw new Error(`Unexpected request: ${url}`);
-  });
+  }, cache);
 
   const post = await sdk.createPost({ title: "client title" });
 
@@ -121,7 +122,8 @@ test("createPost re-reads full post data when create response only includes id",
 
 test("updatePost uses the requested ULID for read-after-write when patch response omits identifiers", async () => {
   const calls = [];
-  const { sdk, cache } = createSdk(async (url, init) => {
+  const cache = new MockCache();
+  const { sdk } = createSdk(async (url, init) => {
     calls.push({ url, init });
 
     if (url === `${baseUrl}/v1/posts/post-2`) {
@@ -144,7 +146,7 @@ test("updatePost uses the requested ULID for read-after-write when patch respons
     }
 
     throw new Error(`Unexpected request: ${url}`);
-  });
+  }, cache);
 
   const post = await sdk.updatePost("post-2", { title: "patched" });
 
@@ -275,4 +277,148 @@ test("createComment refreshes parent engagement even when the comment reread mis
   assert.equal(comment.id, "comment-1");
   assert.equal(parent.postEngagement.commentCount, 2);
   assert.equal((await cache.getPost("comment-1")).content, "comment body");
+});
+
+test("createComment refreshes parent engagement exactly once when reread succeeds", async () => {
+  let engagementCalls = 0;
+  const { sdk } = createSdk(async (url, init) => {
+    if (url === `${baseUrl}/v1/comments`) {
+      return new Response(JSON.stringify({
+        data: {
+          id: "comment-2",
+        },
+      }), { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/posts`) {
+      return new Response(JSON.stringify({
+        data: [{
+          id: "comment-2",
+          ulid: "comment-2",
+          content: "hydrated comment",
+        }],
+      }), { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/posts/engagement`) {
+      engagementCalls += 1;
+      assert.deepEqual(JSON.parse(init.body), { ulids: ["parent-2"] });
+      return new Response(JSON.stringify({
+        data: {
+          "parent-2": {
+            postEngagement: {
+              commentCount: 3,
+            },
+          },
+        },
+      }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, new MockCache());
+
+  const comment = await sdk.createComment({
+    parentId: "parent-2",
+    body: "comment body",
+  });
+
+  assert.equal(comment.content, "hydrated comment");
+  assert.equal(engagementCalls, 1);
+});
+
+test("repost refreshes original engagement exactly once when reread succeeds", async () => {
+  let engagementCalls = 0;
+  const cache = new MockCache();
+  const { sdk } = createSdk(async (url, init) => {
+    if (url === `${baseUrl}/v1/posts/original-post/reposts`) {
+      return new Response(JSON.stringify({
+        data: {
+          id: "repost-1",
+        },
+      }), { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/posts`) {
+      return new Response(JSON.stringify({
+        data: [{
+          id: "repost-1",
+          ulid: "repost-1",
+          content: "hydrated repost",
+        }],
+      }), { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/posts/engagement`) {
+      engagementCalls += 1;
+      assert.deepEqual(JSON.parse(init.body), { ulids: ["original-post"] });
+      return new Response(JSON.stringify({
+        data: {
+          "original-post": {
+            postEngagement: {
+              repostCount: 2,
+            },
+          },
+        },
+      }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, cache);
+
+  await cache.setPost("original-post", {
+    id: "original-post",
+    ulid: "original-post",
+    postEngagement: {
+      repostCount: 1,
+    },
+  });
+
+  const repost = await sdk.repost("original-post");
+
+  assert.equal(repost.content, "hydrated repost");
+  assert.equal(engagementCalls, 1);
+});
+
+test("quotePost refreshes original engagement exactly once when reread succeeds", async () => {
+  let engagementCalls = 0;
+  const { sdk } = createSdk(async (url, init) => {
+    if (url === `${baseUrl}/v1/posts/original-quote/quote`) {
+      return new Response(JSON.stringify({
+        data: {
+          id: "quote-1",
+        },
+      }), { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/posts`) {
+      return new Response(JSON.stringify({
+        data: [{
+          id: "quote-1",
+          ulid: "quote-1",
+          content: "hydrated quote",
+        }],
+      }), { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/posts/engagement`) {
+      engagementCalls += 1;
+      assert.deepEqual(JSON.parse(init.body), { ulids: ["original-quote"] });
+      return new Response(JSON.stringify({
+        data: {
+          "original-quote": {
+            postEngagement: {
+              repostCount: 5,
+            },
+          },
+        },
+      }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, new MockCache());
+
+  const quote = await sdk.quotePost("original-quote", "hello");
+
+  assert.equal(quote.content, "hydrated quote");
+  assert.equal(engagementCalls, 1);
 });

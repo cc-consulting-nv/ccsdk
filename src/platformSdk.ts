@@ -2420,17 +2420,17 @@ export class CcPlatformSdk {
     }
 
     // Read-after-write: fetch full repost data to ensure we have complete data with all relationships
+    let fullPost: Post | null = null;
     const repostId = this.getPostIdentifier(post);
     if (repostId) {
-      const fullPost = await this.getPostByUlid(repostId, true);
-      if (fullPost) {
-        // Also refresh original post engagement (repost count changed)
-        await this.refreshPostEngagement(postUlid);
-        return fullPost;
-      }
+      fullPost = await this.getPostByUlid(repostId, true);
     }
 
     await this.refreshPostEngagement(postUlid);
+
+    if (fullPost) {
+      return fullPost;
+    }
 
     // Fallback to caching the response if read-after-write fails
     await this.cachePost(post);
@@ -2479,17 +2479,17 @@ export class CcPlatformSdk {
     const post = this.unwrap<Post>(response);
 
     // Read-after-write: fetch full quote post data to ensure we have complete data with all relationships
+    let fullPost: Post | null = null;
     const quoteId = this.getPostIdentifier(post);
     if (quoteId) {
-      const fullPost = await this.getPostByUlid(quoteId, true);
-      if (fullPost) {
-        // Also refresh original post engagement (quote count changed)
-        await this.refreshPostEngagement(postUlid);
-        return fullPost;
-      }
+      fullPost = await this.getPostByUlid(quoteId, true);
     }
 
     await this.refreshPostEngagement(postUlid);
+
+    if (fullPost) {
+      return fullPost;
+    }
 
     // Fallback to caching the response if read-after-write fails
     await this.cachePost(post);
@@ -3135,17 +3135,17 @@ export class CcPlatformSdk {
     const comment = this.unwrap<Post>(response);
 
     // Read-after-write: fetch full comment data to ensure we have complete data with all relationships
+    let fullComment: Post | null = null;
     const commentId = this.getPostIdentifier(comment);
     if (commentId) {
-      const fullComment = await this.getPostByUlid(commentId, true);
-      if (fullComment) {
-        // Also refresh parent post engagement (comment count changed)
-        await this.refreshPostEngagement(data.parentId);
-        return fullComment;
-      }
+      fullComment = await this.getPostByUlid(commentId, true);
     }
 
     await this.refreshPostEngagement(data.parentId);
+
+    if (fullComment) {
+      return fullComment;
+    }
 
     // Fallback to caching the create response if read-after-write fails
     await this.cachePost(comment);
