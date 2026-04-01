@@ -686,7 +686,7 @@ test("passkeyGetAuthenticateOptions sends POST to /v1/auth/passkey/authenticate-
   const { sdk, calls } = createMockSdk({
     data: {
       session_id: "session-123",
-      public_key: {
+      options: {
         challenge: "base64-challenge",
         timeout: 60000,
         rpId: "example.com",
@@ -705,12 +705,12 @@ test("passkeyGetAuthenticateOptions sends POST to /v1/auth/passkey/authenticate-
   assert.equal(calls[0].init.headers.Authorization, undefined);
 
   assert.equal(result.sessionId, "session-123");
-  assert.ok(result.publicKey);
+  assert.ok(result.options);
 });
 
 test("passkeyGetAuthenticateOptions includes email when provided", async () => {
   const { sdk, calls } = createMockSdk({
-    data: { session_id: "session-123", public_key: {} },
+    data: { session_id: "session-123", options: {} },
   });
 
   await sdk.passkeyGetAuthenticateOptions("user@example.com");
@@ -722,6 +722,8 @@ test("passkeyGetAuthenticateOptions includes email when provided", async () => {
 test("passkeyAuthenticate sends POST to /v1/auth/passkey/authenticate", async () => {
   const { sdk, calls } = createMockSdk({
     data: {
+      token_type: "Bearer",
+      expires_in: 31536000,
       access_token: "passkey-access-token",
       refresh_token: "passkey-refresh-token",
     },
@@ -751,6 +753,8 @@ test("passkeyAuthenticate sends POST to /v1/auth/passkey/authenticate", async ()
   // Should not include Authorization header (skipAuth: true)
   assert.equal(calls[0].init.headers.Authorization, undefined);
 
+  assert.equal(result.tokenType, "Bearer");
+  assert.equal(result.expiresIn, 31536000);
   assert.equal(result.accessToken, "passkey-access-token");
   assert.equal(result.refreshToken, "passkey-refresh-token");
 });
@@ -758,7 +762,7 @@ test("passkeyAuthenticate sends POST to /v1/auth/passkey/authenticate", async ()
 test("passkeyGetRegisterOptions sends POST to /v1/auth/passkey/register-options", async () => {
   const { sdk, calls } = createAuthenticatedMockSdk({
     data: {
-      public_key: {
+      options: {
         challenge: "base64-challenge",
         rp: { name: "Example", id: "example.com" },
         user: { id: "user-id", name: "user@example.com", displayName: "User" },
@@ -779,16 +783,19 @@ test("passkeyGetRegisterOptions sends POST to /v1/auth/passkey/register-options"
   // Requires authentication
   assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
 
-  // Note: passkeyGetRegisterOptions does not convert snake_case to camelCase
-  assert.ok(result.public_key);
+  assert.ok(result.options);
 });
 
 test("passkeyRegister sends POST to /v1/auth/passkey/register", async () => {
   const { sdk, calls } = createAuthenticatedMockSdk({
     data: {
+      message: "Passkey registered successfully",
       passkey: {
         id: "passkey-id-123",
         name: "My Passkey",
+        device_type: "platform",
+        backed_up: true,
+        last_used_at: null,
         created_at: "2024-01-15T10:00:00Z",
       },
     },
@@ -823,8 +830,8 @@ test("passkeyList sends GET to /v1/auth/passkeys", async () => {
   const { sdk, calls } = createAuthenticatedMockSdk({
     data: {
       passkeys: [
-        { id: "pk-1", name: "MacBook", created_at: "2024-01-10T10:00:00Z" },
-        { id: "pk-2", name: "iPhone", created_at: "2024-01-12T10:00:00Z" },
+        { id: "pk-1", name: "MacBook", device_type: "platform", backed_up: true, last_used_at: null, created_at: "2024-01-10T10:00:00Z" },
+        { id: "pk-2", name: "iPhone", device_type: "platform", backed_up: false, last_used_at: "2024-01-11T10:00:00Z", created_at: "2024-01-12T10:00:00Z" },
       ],
     },
   });
@@ -841,7 +848,10 @@ test("passkeyList sends GET to /v1/auth/passkeys", async () => {
   assert.ok(Array.isArray(passkeys));
   assert.equal(passkeys.length, 2);
   assert.equal(passkeys[0].name, "MacBook");
+  assert.equal(passkeys[0].deviceType, "platform");
+  assert.equal(passkeys[0].backedUp, true);
   assert.equal(passkeys[1].name, "iPhone");
+  assert.equal(passkeys[1].lastUsedAt, "2024-01-11T10:00:00Z");
 });
 
 test("passkeyList returns empty array when no passkeys", async () => {
@@ -858,10 +868,14 @@ test("passkeyList returns empty array when no passkeys", async () => {
 test("passkeyRename sends PATCH to /v1/auth/passkeys/{id}", async () => {
   const { sdk, calls } = createAuthenticatedMockSdk({
     data: {
+      message: "Passkey updated successfully",
       passkey: {
         id: "pk-123",
         name: "New Name",
-        updated_at: "2024-01-15T12:00:00Z",
+        device_type: "platform",
+        backed_up: true,
+        last_used_at: null,
+        created_at: "2024-01-10T10:00:00Z",
       },
     },
   });
