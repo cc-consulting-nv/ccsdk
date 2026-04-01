@@ -283,6 +283,17 @@ export class CacheDB {
     await this.db.posts.bulkPut(entries);
   }
 
+  /**
+   * Remove a post object from cache without altering feed membership.
+   * Useful when a stale post body needs to be re-fetched but the feed ordering
+   * should remain intact.
+   *
+   * @param id - The post ULID
+   */
+  async invalidatePost(id: Ulid): Promise<void> {
+    await this.db.posts.delete(id);
+  }
+
   // ========================================================================
   // Users
   // ========================================================================
@@ -496,7 +507,7 @@ export class CacheDB {
    * @param id - The post ULID to delete
    */
   async deletePost(id: Ulid): Promise<void> {
-    await this.db.posts.delete(id);
+    await this.invalidatePost(id);
     await this.removeUlidFromFeeds(id);
   }
 

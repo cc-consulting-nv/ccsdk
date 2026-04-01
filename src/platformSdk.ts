@@ -1268,7 +1268,7 @@ export class CcPlatformSdk {
         const posts = this.unwrap<Post[]>(payload);
         if (Array.isArray(posts) && posts.length > 0) {
           const post = this.normalizePost(posts[0]);
-          const id = (post.ulid || post.id) as Ulid;
+          const id = this.getPostIdentifier(post);
           if (id) {
             await cache.setPost(id, post);
           }
@@ -1356,7 +1356,7 @@ export class CcPlatformSdk {
     this.log(`[SDK] ✅ Successfully fetched ${fulfilled.length}/${settled.length} posts`);
     fulfilled.forEach((result) => {
       const post = result.value;
-      const id = (post.ulid || post.id) as Ulid;
+      const id = this.getPostIdentifier(post);
       if (id) {
         results[id] = post;
       }
@@ -1524,7 +1524,21 @@ export class CcPlatformSdk {
     if (hasContentFields) {
       // Collection contains full post objects - use them directly
       const posts = collection.map((item) => this.normalizePost(item)).filter(Boolean) as Post[];
-      const ulids = posts.map((p) => p.ulid).filter((id): id is string => Boolean(id));
+      const ulids = posts
+        .map((post) => this.getPostIdentifier(post))
+        .filter((id): id is Ulid => Boolean(id));
+      if (ulids.length > 0) {
+        const cache = await this.cachePromise;
+        const mapped = posts.reduce<Record<Ulid, Post>>((acc, post) => {
+          const id = this.getPostIdentifier(post);
+          if (id) {
+            acc[id] = post;
+          }
+          return acc;
+        }, {});
+        await cache.setPosts(mapped);
+        await cache.appendToFeedResource(cacheKey, ulids, nextCursor ?? null);
+      }
       return { ulids, posts, nextCursor: nextCursor ?? null };
     }
 
@@ -1580,10 +1594,11 @@ export class CcPlatformSdk {
       // Re-fetch stale posts from API (bypasses cache)
       if (staleUlids.length > 0) {
         this.log(`[SDK] 🔄 Re-fetching ${staleUlids.length} stale posts (updatedAt mismatch)`);
-        // Evict stale entries from IndexedDB so fetchPostsBatch hits the API
+        // Evict stale post bodies so fetchPostsBatch hits the API without
+        // dropping the post from every cached feed that references it.
         const cache = await this.cachePromise;
         for (const id of staleUlids) {
-          await cache.deletePost(id);
+          await cache.invalidatePost(id);
         }
         const refreshed = await this.fetchPostsBatch(staleUlids);
         Object.assign(hydrated, refreshed);
@@ -2103,8 +2118,9 @@ export class CcPlatformSdk {
 
     // Read-after-write: fetch full post data to ensure we have complete data with all relationships
     // The create endpoint may return minimal data, so we fetch the full post
-    if (post.ulid) {
-      const fullPost = await this.getPostByUlid(post.ulid, true);
+    const postId = this.getPostIdentifier(post);
+    if (postId) {
+      const fullPost = await this.getPostByUlid(postId, true);
       if (fullPost) {
         return fullPost;
       }
@@ -2157,8 +2173,9 @@ export class CcPlatformSdk {
     const post = this.unwrap<Post>(response);
 
     // Read-after-write to get complete post data
-    if (post.ulid) {
-      const fullPost = await this.getPostByUlid(post.ulid, true);
+    const postId = this.getPostIdentifier(post);
+    if (postId) {
+      const fullPost = await this.getPostByUlid(postId, true);
       if (fullPost) {
         return fullPost;
       }
@@ -2196,8 +2213,9 @@ export class CcPlatformSdk {
 
     // Read-after-write: fetch full post data to ensure we have complete data with all relationships
     // The update endpoint may return minimal data, so we fetch the full post
-    if (post.ulid) {
-      const fullPost = await this.getPostByUlid(post.ulid, true);
+    const readAfterWriteId = this.getPostIdentifier(post) ?? postUlid;
+    if (readAfterWriteId) {
+      const fullPost = await this.getPostByUlid(readAfterWriteId, true);
       if (fullPost) {
         return fullPost;
       }
@@ -2402,14 +2420,17 @@ export class CcPlatformSdk {
     }
 
     // Read-after-write: fetch full repost data to ensure we have complete data with all relationships
-    if (post.ulid) {
-      const fullPost = await this.getPostByUlid(post.ulid, true);
+    const repostId = this.getPostIdentifier(post);
+    if (repostId) {
+      const fullPost = await this.getPostByUlid(repostId, true);
       if (fullPost) {
         // Also refresh original post engagement (repost count changed)
         await this.refreshPostEngagement(postUlid);
         return fullPost;
       }
     }
+
+    await this.refreshPostEngagement(postUlid);
 
     // Fallback to caching the response if read-after-write fails
     await this.cachePost(post);
@@ -2458,14 +2479,17 @@ export class CcPlatformSdk {
     const post = this.unwrap<Post>(response);
 
     // Read-after-write: fetch full quote post data to ensure we have complete data with all relationships
-    if (post.ulid) {
-      const fullPost = await this.getPostByUlid(post.ulid, true);
+    const quoteId = this.getPostIdentifier(post);
+    if (quoteId) {
+      const fullPost = await this.getPostByUlid(quoteId, true);
       if (fullPost) {
         // Also refresh original post engagement (quote count changed)
         await this.refreshPostEngagement(postUlid);
         return fullPost;
       }
     }
+
+    await this.refreshPostEngagement(postUlid);
 
     // Fallback to caching the response if read-after-write fails
     await this.cachePost(post);
@@ -2618,6 +2642,42 @@ export class CcPlatformSdk {
 
   async getRatingsBatch(postUlids: Ulid[]): Promise<unknown> {
     return this.client.post("/v1/posts/ratings/batch", { body: { ulids: postUlids } });
+  }
+
+  /**
+   * Fetch the full engagement payload for specific posts.
+   * Unlike `fetchEngagement()`, this bypasses the changed-only batching logic and
+   * always returns the current `/v1/posts/engagement` response for the requested ULIDs.
+   * Use this after explicit mutations when the caller needs authoritative counts immediately.
+   *
+   * @param postUlids - Array of post ULIDs to fetch engagement for
+   * @returns Full engagement data keyed by ULID
+   */
+  async fetchEngagementSnapshot(postUlids: Ulid[]): Promise<Record<string, unknown>> {
+    const uniqueUlids = [...new Set(postUlids.filter(Boolean))];
+    if (uniqueUlids.length === 0) {
+      return {};
+    }
+
+    const BATCH_SIZE = 40;
+    const data: Record<string, unknown> = {};
+
+    for (let i = 0; i < uniqueUlids.length; i += BATCH_SIZE) {
+      const chunk = uniqueUlids.slice(i, i + BATCH_SIZE);
+      const response = await this.client.post<ApiEnvelope<Record<string, unknown>>>(
+        "/v1/posts/engagement",
+        { body: { ulids: chunk } },
+      );
+      Object.assign(data, this.unwrap<Record<string, unknown>>(response));
+    }
+
+    await Promise.all(
+      Object.entries(data).map(([ulid, engagement]) =>
+        this.updateCachedEngagement(ulid as Ulid, engagement as Record<string, unknown>),
+      ),
+    );
+
+    return data;
   }
 
   /**
@@ -3075,14 +3135,17 @@ export class CcPlatformSdk {
     const comment = this.unwrap<Post>(response);
 
     // Read-after-write: fetch full comment data to ensure we have complete data with all relationships
-    if (comment.ulid) {
-      const fullComment = await this.getPostByUlid(comment.ulid, true);
+    const commentId = this.getPostIdentifier(comment);
+    if (commentId) {
+      const fullComment = await this.getPostByUlid(commentId, true);
       if (fullComment) {
         // Also refresh parent post engagement (comment count changed)
         await this.refreshPostEngagement(data.parentId);
         return fullComment;
       }
     }
+
+    await this.refreshPostEngagement(data.parentId);
 
     // Fallback to caching the create response if read-after-write fails
     await this.cachePost(comment);
@@ -5842,8 +5905,9 @@ export class CcPlatformSdk {
 
     // Read-after-write: fetch full post data to ensure we have complete data with all relationships
     // The create endpoint may return minimal data, so we fetch the full post
-    if (post.ulid) {
-      const fullPost = await this.getPostByUlid(post.ulid, true);
+    const postId = this.getPostIdentifier(post);
+    if (postId) {
+      const fullPost = await this.getPostByUlid(postId, true);
       if (fullPost) {
         return fullPost;
       }
@@ -8446,10 +8510,15 @@ export class CcPlatformSdk {
   // ---------------------------------------------------------------------------
 
   private async cachePost(post: Post): Promise<void> {
-    const id = (post.ulid || post.id) as Ulid;
+    const id = this.getPostIdentifier(post);
     if (!id) return;
     const cache = await this.cachePromise;
     await cache.setPost(id, this.normalizePost(post));
+  }
+
+  private getPostIdentifier(post: Pick<Post, "id" | "ulid"> | null | undefined): Ulid | null {
+    if (!post) return null;
+    return ((post.ulid || post.id) as Ulid | undefined) ?? null;
   }
 
   private unwrap<T>(payload: ApiEnvelope<T> | T): T {
