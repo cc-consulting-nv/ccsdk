@@ -11,8 +11,8 @@ import "fake-indexeddb/auto";
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CcPlatformSdk } from "../src/platformSdk.ts";
-import { HybridTokenProvider } from "../src/auth.ts";
+import { CcPlatformSdk } from "../dist/platformSdk.js";
+import { HybridTokenProvider } from "../dist/auth.js";
 
 const baseUrl = "https://api.example.com";
 
