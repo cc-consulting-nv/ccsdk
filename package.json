@@ -20,7 +20,7 @@
     "clean": "rimraf dist",
     "prepublishOnly": "npm run clean && npm run build",
     "lint": "echo \"lint not configured for sdk\"",
-    "test": "pnpm build && node --loader ./tests/extension-loader.mjs --test tests/httpClient.test.js tests/stories.test.js tests/platformSdk.cache.test.js",
+    "test": "pnpm build && node --loader ./tests/extension-loader.mjs --test tests/httpClient.test.js tests/stories.test.js tests/platformSdk.cache.test.js tests/posts.cache.test.js",
     "test:integration": "node ./tests/integration.js",
     "docs": "typedoc --options typedoc.html.json",
     "docs:html": "typedoc --options typedoc.html.json",
