@@ -21,6 +21,23 @@ export interface TokenProvider {
 }
 
 /**
+ * Async session store for SDK-managed auth persistence.
+ *
+ * Use this when token persistence needs async I/O, such as native secure
+ * storage, IndexedDB-backed adapters, or cookie-bridging layers.
+ *
+ * @category Authentication
+ */
+export interface SessionStore {
+  /** Load the most recently persisted authentication tokens. */
+  loadTokens(): Promise<AuthTokens | null>;
+  /** Persist the latest authentication tokens. */
+  saveTokens(tokens: AuthTokens): Promise<void>;
+  /** Remove all persisted authentication tokens. */
+  clearTokens(): Promise<void>;
+}
+
+/**
  * In-memory token storage provider.
  *
  * Stores tokens in memory only - they are lost when the page refreshes.

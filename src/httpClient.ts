@@ -48,6 +48,8 @@ export interface RequestOptions {
   headers?: Record<string, string>;
   /** Skip authentication header injection */
   skipAuth?: boolean;
+  /** Request credential mode (for cookie-backed auth flows) */
+  credentials?: RequestCredentials;
 }
 
 /**
@@ -158,6 +160,7 @@ export class HttpClient {
       method,
       headers,
       body,
+      credentials: options?.credentials,
     });
 
     if (response.status === 401 && !options?.skipAuth) {
@@ -168,6 +171,7 @@ export class HttpClient {
           method,
           headers,
           body,
+          credentials: options?.credentials,
         });
 
         return this.parseResponse<T>(retry);

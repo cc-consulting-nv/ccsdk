@@ -1,6 +1,6 @@
 import { CacheDB, createCache } from "./cache/cacheDB";
 import { HttpClient, type HttpClientOptions } from "./httpClient";
-import { HybridTokenProvider, RefreshCoordinator, type TokenProvider } from "./auth";
+import { HybridTokenProvider, RefreshCoordinator, type SessionStore, type TokenProvider } from "./auth";
 import { MultipartUpload, type MultipartUploadOptions, type UploadResult } from "./multipartUpload";
 import {
   type ApiEnvelope,
@@ -448,6 +448,11 @@ export interface CcPlatformSdkOptions {
   /** Token storage provider (default: HybridTokenProvider) */
   tokenProvider?: TokenProvider;
   /**
+   * Optional async session store for persisting tokens outside the token provider.
+   * Use this for native secure storage or other async persistence backends.
+   */
+  sessionStore?: SessionStore;
+  /**
    * Optional Dexie-backed cache. If omitted, a new cache instance is created.
    */
   cache?: CacheDB;
@@ -483,6 +488,11 @@ export interface CcPlatformSdkOptions {
    * Defaults to the global fetch function.
    */
   fetchImpl?: typeof fetch;
+  /**
+   * When true, send credentials on auth/session endpoints so refresh can use an httpOnly cookie.
+   * Keep this disabled for native apps and legacy bearer-only deployments.
+   */
+  useRefreshCookie?: boolean;
 }
 
 /**
@@ -526,6 +536,7 @@ export class CcPlatformSdk {
   /** SDK version for cache busting - v2 adds requestAuthCode */
   static readonly SDK_VERSION = "2.0.0";
   private readonly tokens: TokenProvider;
+  private readonly sessionStore?: SessionStore;
   private readonly cachePromise: Promise<CacheDB>;
   private readonly client: HttpClient;
   private readonly refreshCoordinator = new RefreshCoordinator();
@@ -572,6 +583,7 @@ export class CcPlatformSdk {
 
   // Logging state - check option first, then environment variable
   private readonly enableLogging: boolean;
+  private readonly useRefreshCookie: boolean;
 
   constructor(private readonly options: CcPlatformSdkOptions) {
     // Determine logging state: explicit option > environment variable > false
@@ -588,6 +600,8 @@ export class CcPlatformSdk {
       },
       options.tokens,
     );
+    this.sessionStore = options.sessionStore;
+    this.useRefreshCookie = options.useRefreshCookie === true;
     this.cachePromise = options.cache ? Promise.resolve(options.cache) : createCache(undefined, options.dbName);
 
     const clientOptions: HttpClientOptions = {
@@ -616,6 +630,58 @@ export class CcPlatformSdk {
 
   setTokens(tokens: AuthTokens | null): void {
     this.tokens.setTokens(tokens);
+  }
+
+  private async persistSession(tokens: AuthTokens | null): Promise<void> {
+    if (!this.sessionStore) return;
+
+    if (tokens?.accessToken || tokens?.refreshToken) {
+      await this.sessionStore.saveTokens(tokens);
+      return;
+    }
+
+    await this.sessionStore.clearTokens();
+  }
+
+  private async updateSession(tokens: AuthTokens | null): Promise<void> {
+    this.setTokens(tokens);
+    await this.persistSession(tokens);
+  }
+
+  /**
+   * Set the in-memory session and persist it via the configured session store.
+   */
+  async setSession(tokens: AuthTokens | null): Promise<void> {
+    await this.updateSession(tokens);
+  }
+
+  /**
+   * Restore any previously persisted session into the active token provider.
+   */
+  async restoreSession(): Promise<AuthTokens | null> {
+    const currentTokens = this.getTokens();
+    if (currentTokens?.accessToken || currentTokens?.refreshToken) {
+      return currentTokens;
+    }
+
+    if (!this.sessionStore) {
+      return currentTokens;
+    }
+
+    const storedTokens = await this.sessionStore.loadTokens();
+    if (storedTokens?.accessToken || storedTokens?.refreshToken) {
+      this.setTokens(storedTokens);
+      return storedTokens;
+    }
+
+    return null;
+  }
+
+  /**
+   * Clear the active session and remove any persisted tokens.
+   */
+  async clearSession(): Promise<void> {
+    await this.updateSession(null);
   }
 
   getTokens(): AuthTokens | null {
@@ -925,9 +991,10 @@ export class CcPlatformSdk {
   async login(email: string, password: string): Promise<AuthTokens> {
     const response = await this.client.post<ApiEnvelope<AuthTokens>>("/v1/auth/login", {
       body: { email, password },
+      credentials: this.useRefreshCookie ? "include" : undefined,
     });
     const tokens = this.unwrap<AuthTokens>(response);
-    this.setTokens(tokens);
+    await this.updateSession(tokens);
     return tokens;
   }
 
@@ -973,13 +1040,14 @@ export class CcPlatformSdk {
     }
     const response = await this.client.post<Record<string, unknown>>(`/v1/auth/${provider}/callback`, {
       body,
+      credentials: this.useRefreshCookie ? "include" : undefined,
     });
     // The OAuth callback endpoint returns a flat response with snake_case keys
     const tokens: AuthTokens = {
       accessToken: (response.access_token as string) || (response.accessToken as string),
       refreshToken: (response.refresh_token as string) || (response.refreshToken as string),
     };
-    this.setTokens(tokens);
+    await this.updateSession(tokens);
     return tokens;
   }
 
@@ -1011,13 +1079,14 @@ export class CcPlatformSdk {
     // API expects authCode as integer
     const response = await this.client.post<AuthCodeResponse>("/authCodeLogin", {
       body: { identifier, authCode: parseInt(String(authCode), 10) },
+      credentials: this.useRefreshCookie ? "include" : undefined,
     });
     // The authCodeLogin endpoint returns a flat response, not wrapped in ApiEnvelope
     const tokens: AuthTokens = {
       accessToken: response.access_token,
       refreshToken: response.refresh_token,
     };
-    this.setTokens(tokens);
+    await this.updateSession(tokens);
     return tokens;
   }
 
@@ -1132,9 +1201,10 @@ export class CcPlatformSdk {
   }): Promise<AuthTokens> {
     const response = await this.client.post<ApiEnvelope<AuthTokens>>("/v1/auth/register", {
       body: payload,
+      credentials: this.useRefreshCookie ? "include" : undefined,
     });
     const tokens = this.unwrap<AuthTokens>(response);
-    this.setTokens(tokens);
+    await this.updateSession(tokens);
     return tokens;
   }
 
@@ -1153,11 +1223,20 @@ export class CcPlatformSdk {
    */
   async logout(): Promise<void> {
     try {
-      await this.client.post("/v1/auth/logout");
+      await this.client.post("/v1/auth/logout", {
+        credentials: this.useRefreshCookie ? "include" : undefined,
+      });
     } finally {
-      this.setTokens(null);
+      await this.clearSession();
       await this.clearCache();
     }
+  }
+
+  /**
+   * Alias for logout() that emphasizes session ownership in the SDK.
+   */
+  async signOut(): Promise<void> {
+    await this.logout();
   }
 
   /**
@@ -1180,7 +1259,7 @@ export class CcPlatformSdk {
    */
   async deleteAccount(): Promise<void> {
     await this.client.delete("/v1/users/me");
-    this.setTokens(null);
+    await this.clearSession();
     await this.clearCache();
   }
 
@@ -1201,21 +1280,35 @@ export class CcPlatformSdk {
    * @category Authentication
    */
   async refreshToken(): Promise<AuthTokens | null> {
-    const currentTokens = this.getTokens();
-    if (!currentTokens?.refreshToken) return null;
+    const currentTokens = await this.restoreSession();
+    if (!currentTokens?.refreshToken && !this.useRefreshCookie) return null;
 
     try {
       // Note: /auth/refresh endpoint doesn't have /v1 prefix in the API
-      const response = await this.client.post<ApiEnvelope<AuthTokens>>("/auth/refresh", {
-        body: { refresh_token: currentTokens.refreshToken },
+      const response = await this.client.post<Record<string, unknown>>("/auth/refresh", {
+        body: currentTokens?.refreshToken
+          ? { refresh_token: currentTokens.refreshToken }
+          : undefined,
+        skipAuth: true,
+        credentials: this.useRefreshCookie ? "include" : undefined,
       });
-      const tokens = this.unwrap<AuthTokens>(response);
-      this.setTokens(tokens);
+      const tokens: AuthTokens = {
+        accessToken: (response.access_token as string) || (response.accessToken as string),
+        refreshToken: (response.refresh_token as string) || (response.refreshToken as string),
+      };
+      await this.updateSession(tokens);
       return tokens;
     } catch {
-      this.setTokens(null);
+      await this.clearSession();
       return null;
     }
+  }
+
+  /**
+   * Alias for refreshToken() that matches the broader session API surface.
+   */
+  async refreshSession(): Promise<AuthTokens | null> {
+    return this.refreshToken();
   }
 
   /**
@@ -8153,7 +8246,11 @@ export class CcPlatformSdk {
   ): Promise<PasskeyAuthenticateResponse> {
     const response = await this.client.post<PasskeyAuthenticateResponse>(
       "/v1/auth/passkey/authenticate",
-      { body: { session_id: sessionId, credential }, skipAuth: true },
+      {
+        body: { session_id: sessionId, credential },
+        skipAuth: true,
+        credentials: this.useRefreshCookie ? "include" : undefined,
+      },
     );
     return snakeToCamelObject(this.unwrap(response));
   }
