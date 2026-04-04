@@ -185,6 +185,29 @@ test("loginWithOAuth normalizes camelCase response to AuthTokens", async () => {
   assert.equal(tokens.refreshToken, "camel-refresh-token");
 });
 
+test("loginWithOAuth supports enveloped auth token responses", async () => {
+  const { sdk } = createMockSdk({
+    data: {
+      accessToken: "enveloped-access-token",
+      refreshToken: "enveloped-refresh-token",
+    },
+  });
+
+  const tokens = await sdk.loginWithOAuth("google", "code");
+
+  assert.equal(tokens.accessToken, "enveloped-access-token");
+  assert.equal(tokens.refreshToken, "enveloped-refresh-token");
+});
+
+test("loginWithOAuth rejects malformed auth responses", async () => {
+  const { sdk } = createMockSdk({});
+
+  await assert.rejects(
+    () => sdk.loginWithOAuth("google", "code"),
+    /Invalid auth token response from \/v1\/auth\/google\/callback/,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // loginWithMagicLink tests
 // ---------------------------------------------------------------------------
@@ -441,6 +464,20 @@ test("deleteAccount sends DELETE to /v1/users/me and clears tokens", async () =>
   assert.ok(!sdk.isAuthenticated());
 });
 
+test("deleteAccount includes credentials when refresh-cookie mode is enabled", async () => {
+  const { fetchImpl, calls } = createMockFetch({});
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    tokens: { accessToken: "test-token" },
+    fetchImpl,
+    useRefreshCookie: true,
+  });
+
+  await sdk.deleteAccount();
+
+  assert.equal(calls[0].init.credentials, "include");
+});
+
 // ---------------------------------------------------------------------------
 // refreshToken tests
 // ---------------------------------------------------------------------------
@@ -505,6 +542,33 @@ test("refreshToken supports cookie-backed refresh without a persisted refresh to
   assert.equal(tokens.refreshToken, "cookie-refresh-token");
 });
 
+test("refreshToken supports enveloped auth token responses", async () => {
+  const { fetchImpl } = createMockFetch({
+    data: {
+      accessToken: "enveloped-access-token",
+      refreshToken: "enveloped-refresh-token",
+    },
+  });
+  const storage = createMockStorage();
+  const tokenProvider = new HybridTokenProvider(
+    storage,
+    { accessToken: "old-token", refreshToken: "old-refresh-token" }
+  );
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    tokenProvider,
+  });
+
+  const tokens = await sdk.refreshToken();
+
+  assert.deepEqual(tokens, {
+    accessToken: "enveloped-access-token",
+    refreshToken: "enveloped-refresh-token",
+  });
+});
+
 test("setSession persists tokens via async sessionStore", async () => {
   const { fetchImpl } = createMockFetch({});
   const sessionStore = createMockSessionStore();
@@ -547,6 +611,37 @@ test("restoreSession hydrates tokens from async sessionStore", async () => {
     refreshToken: "stored-refresh-token",
   });
   assert.equal(sdk.getTokens().accessToken, "stored-access-token");
+});
+
+test("restoreSession prefers newer persisted tokens over stale in-memory tokens", async () => {
+  const { fetchImpl } = createMockFetch({});
+  const sessionStore = createMockSessionStore({
+    accessToken: "stored-access-token",
+    refreshToken: "stored-refresh-token",
+  });
+  const storage = createMockStorage();
+  const tokenProvider = new HybridTokenProvider(storage, {
+    accessToken: "stale-access-token",
+    refreshToken: "stale-refresh-token",
+  });
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    tokenProvider,
+    sessionStore,
+  });
+
+  const restored = await sdk.restoreSession();
+
+  assert.deepEqual(restored, {
+    accessToken: "stored-access-token",
+    refreshToken: "stored-refresh-token",
+  });
+  assert.deepEqual(sdk.getTokens(), {
+    accessToken: "stored-access-token",
+    refreshToken: "stored-refresh-token",
+  });
 });
 
 test("clearSession removes persisted tokens from async sessionStore", async () => {
@@ -632,6 +727,30 @@ test("refreshToken clears tokens and returns null on failure", async () => {
 
   assert.equal(result, null);
   assert.ok(!sdk.isAuthenticated());
+});
+
+test("refreshToken returns null without clearing the session on malformed success payload", async () => {
+  const { fetchImpl } = createMockFetch({});
+
+  const storage = createMockStorage();
+  const tokenProvider = new HybridTokenProvider(
+    storage,
+    { accessToken: "token", refreshToken: "refresh" }
+  );
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    tokenProvider,
+    fetchImpl,
+  });
+
+  const result = await sdk.refreshToken();
+
+  assert.equal(result, null);
+  assert.deepEqual(sdk.getTokens(), {
+    accessToken: "token",
+    refreshToken: "refresh",
+  });
 });
 
 // ---------------------------------------------------------------------------

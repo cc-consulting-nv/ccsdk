@@ -1,11 +1,6 @@
 import { CacheDB, createCache } from "./cache/cacheDB";
 import { HttpClient, type HttpClientOptions } from "./httpClient";
-import {
-  HybridTokenProvider,
-  RefreshCoordinator,
-  type SessionStore,
-  type TokenProvider,
-} from "./auth";
+import { HybridTokenProvider, RefreshCoordinator, type SessionStore, type TokenProvider } from "./auth";
 import { MultipartUpload, type MultipartUploadOptions, type UploadResult } from "./multipartUpload";
 import {
   type ApiEnvelope,
@@ -237,6 +232,13 @@ export interface ModerationFeedStatsResponse {
   appeal_count: number;
 }
 
+class InvalidAuthResponseError extends Error {
+  constructor(context: string) {
+    super(`Invalid auth token response from ${context}`);
+    this.name = "InvalidAuthResponseError";
+  }
+}
+
 /**
  * Convert a snake_case string to camelCase.
  */
@@ -386,7 +388,7 @@ export interface CcPlatformSdkOptions {
   /** Token storage provider (default: HybridTokenProvider) */
   tokenProvider?: TokenProvider;
   /**
-   * Optional async session store for persisting tokens outside the tokenProvider.
+   * Optional async session store for persisting tokens outside the token provider.
    * Use this for native secure storage or other async persistence backends.
    */
   sessionStore?: SessionStore;
@@ -427,9 +429,7 @@ export interface CcPlatformSdkOptions {
    */
   fetchImpl?: typeof fetch;
   /**
-   * When true, auth login/refresh/logout requests include browser credentials so
-   * the API can issue and consume an httpOnly refresh-token cookie.
-   *
+   * When true, send credentials on auth/session endpoints so refresh can use an httpOnly cookie.
    * Keep this disabled for native apps and legacy bearer-only deployments.
    */
   useRefreshCookie?: boolean;
@@ -572,10 +572,14 @@ export class CcPlatformSdk {
     this.tokens.setTokens(tokens);
   }
 
+  private hasAuthTokens(tokens: AuthTokens | null | undefined): tokens is AuthTokens {
+    return Boolean(tokens?.accessToken || tokens?.refreshToken);
+  }
+
   private async persistSession(tokens: AuthTokens | null): Promise<void> {
     if (!this.sessionStore) return;
 
-    if (tokens?.accessToken || tokens?.refreshToken) {
+    if (this.hasAuthTokens(tokens)) {
       await this.sessionStore.saveTokens(tokens);
       return;
     }
@@ -584,8 +588,9 @@ export class CcPlatformSdk {
   }
 
   private async updateSession(tokens: AuthTokens | null): Promise<void> {
-    this.setTokens(tokens);
-    await this.persistSession(tokens);
+    const normalizedTokens = this.hasAuthTokens(tokens) ? tokens : null;
+    this.setTokens(normalizedTokens);
+    await this.persistSession(normalizedTokens);
   }
 
   /**
@@ -600,18 +605,25 @@ export class CcPlatformSdk {
    */
   async restoreSession(): Promise<AuthTokens | null> {
     const currentTokens = this.getTokens();
-    if (currentTokens?.accessToken || currentTokens?.refreshToken) {
-      return currentTokens;
-    }
-
     if (!this.sessionStore) {
-      return currentTokens;
+      return this.hasAuthTokens(currentTokens) ? currentTokens : null;
     }
 
     const storedTokens = await this.sessionStore.loadTokens();
-    if (storedTokens?.accessToken || storedTokens?.refreshToken) {
-      this.setTokens(storedTokens);
+    if (this.hasAuthTokens(storedTokens)) {
+      const tokensChanged =
+        !this.hasAuthTokens(currentTokens) ||
+        currentTokens.accessToken !== storedTokens.accessToken ||
+        currentTokens.refreshToken !== storedTokens.refreshToken;
+
+      if (tokensChanged) {
+        this.setTokens(storedTokens);
+      }
       return storedTokens;
+    }
+
+    if (this.hasAuthTokens(currentTokens)) {
+      return currentTokens;
     }
 
     return null;
@@ -933,7 +945,7 @@ export class CcPlatformSdk {
       body: { email, password },
       credentials: this.useRefreshCookie ? "include" : undefined,
     });
-    const tokens = this.unwrap<AuthTokens>(response);
+    const tokens = this.extractAuthTokens(response, "/v1/auth/login");
     await this.updateSession(tokens);
     return tokens;
   }
@@ -982,11 +994,7 @@ export class CcPlatformSdk {
       body,
       credentials: this.useRefreshCookie ? "include" : undefined,
     });
-    // The OAuth callback endpoint returns a flat response with snake_case keys
-    const tokens: AuthTokens = {
-      accessToken: (response.access_token as string) || (response.accessToken as string),
-      refreshToken: (response.refresh_token as string) || (response.refreshToken as string),
-    };
+    const tokens = this.extractAuthTokens(response, `/v1/auth/${provider}/callback`);
     await this.updateSession(tokens);
     return tokens;
   }
@@ -1010,22 +1018,12 @@ export class CcPlatformSdk {
    * @category Authentication
    */
   async loginWithMagicLink(identifier: string, authCode: string | number): Promise<AuthTokens> {
-    interface AuthCodeResponse {
-      access_token: string;
-      refresh_token?: string;
-      expires_in?: number;
-      token_type: string;
-    }
     // API expects authCode as integer
-    const response = await this.client.post<AuthCodeResponse>("/authCodeLogin", {
+    const response = await this.client.post<Record<string, unknown>>("/authCodeLogin", {
       body: { identifier, authCode: parseInt(String(authCode), 10) },
       credentials: this.useRefreshCookie ? "include" : undefined,
     });
-    // The authCodeLogin endpoint returns a flat response, not wrapped in ApiEnvelope
-    const tokens: AuthTokens = {
-      accessToken: response.access_token,
-      refreshToken: response.refresh_token,
-    };
+    const tokens = this.extractAuthTokens(response, "/authCodeLogin");
     await this.updateSession(tokens);
     return tokens;
   }
@@ -1143,7 +1141,7 @@ export class CcPlatformSdk {
       body: payload,
       credentials: this.useRefreshCookie ? "include" : undefined,
     });
-    const tokens = this.unwrap<AuthTokens>(response);
+    const tokens = this.extractAuthTokens(response, "/v1/auth/register");
     await this.updateSession(tokens);
     return tokens;
   }
@@ -1198,7 +1196,9 @@ export class CcPlatformSdk {
    * @category Authentication
    */
   async deleteAccount(): Promise<void> {
-    await this.client.delete("/v1/users/me");
+    await this.client.delete("/v1/users/me", {
+      credentials: this.useRefreshCookie ? "include" : undefined,
+    });
     await this.clearSession();
     await this.clearCache();
   }
@@ -1232,13 +1232,13 @@ export class CcPlatformSdk {
         skipAuth: true,
         credentials: this.useRefreshCookie ? "include" : undefined,
       });
-      const tokens: AuthTokens = {
-        accessToken: (response.access_token as string) || (response.accessToken as string),
-        refreshToken: (response.refresh_token as string) || (response.refreshToken as string),
-      };
+      const tokens = this.extractAuthTokens(response, "/auth/refresh");
       await this.updateSession(tokens);
       return tokens;
-    } catch {
+    } catch (error) {
+      if (error instanceof InvalidAuthResponseError) {
+        return null;
+      }
       await this.clearSession();
       return null;
     }
@@ -6903,6 +6903,38 @@ export class CcPlatformSdk {
       return (payload as ApiEnvelope<T>).data;
     }
     return payload as T;
+  }
+
+  private extractAuthTokens(
+    payload: ApiEnvelope<AuthTokens | Record<string, unknown>> | AuthTokens | Record<string, unknown>,
+    context: string,
+  ): AuthTokens {
+    const unwrapped = this.unwrap(payload);
+    if (!unwrapped || typeof unwrapped !== "object") {
+      throw new InvalidAuthResponseError(context);
+    }
+
+    const response = unwrapped as Record<string, unknown>;
+    const accessToken =
+      typeof response.access_token === "string"
+        ? response.access_token
+        : typeof response.accessToken === "string"
+          ? response.accessToken
+          : undefined;
+    const refreshToken =
+      typeof response.refresh_token === "string"
+        ? response.refresh_token
+        : typeof response.refreshToken === "string"
+          ? response.refreshToken
+          : undefined;
+
+    if (!accessToken) {
+      throw new InvalidAuthResponseError(context);
+    }
+
+    return refreshToken
+      ? { accessToken, refreshToken }
+      : { accessToken };
   }
 
   private extractNextCursor(payload: ApiEnvelope<unknown>): string | null | undefined {
