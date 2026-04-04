@@ -208,6 +208,8 @@ export interface Post {
   visibility?: "public" | "followers" | "private";
   /** Scheduled time for hidden post to become visible */
   unhideAt?: string | null;
+  /** Whether the current user can edit this post (based on ownership and time window) */
+  isEditable?: boolean;
   /** Additional properties from API */
   [key: string]: unknown;
 }
