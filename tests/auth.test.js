@@ -28,6 +28,24 @@ function createMockStorage() {
   };
 }
 
+function createMockSessionStore(initialTokens = null) {
+  let tokens = initialTokens;
+  return {
+    async loadTokens() {
+      return tokens;
+    },
+    async saveTokens(nextTokens) {
+      tokens = nextTokens;
+    },
+    async clearTokens() {
+      tokens = null;
+    },
+    getSnapshot() {
+      return tokens;
+    },
+  };
+}
+
 /**
  * Creates a mock fetch implementation that returns the provided response
  */
@@ -121,6 +139,23 @@ test("loginWithOAuth sends POST to /v1/auth/{provider}/callback", async () => {
   assert.equal(tokens.refreshToken, "oauth-refresh-token");
 });
 
+test("loginWithOAuth includes credentials when refresh-cookie mode is enabled", async () => {
+  const { fetchImpl, calls } = createMockFetch({
+    access_token: "oauth-access-token",
+    refresh_token: "oauth-refresh-token",
+  });
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    useRefreshCookie: true,
+  });
+
+  await sdk.loginWithOAuth("google", "auth-code-123");
+
+  assert.equal(calls[0].init.credentials, "include");
+});
+
 test("loginWithOAuth handles Apple extraData (id_token, user)", async () => {
   const { sdk, calls } = createMockSdk({
     access_token: "apple-access-token",
@@ -173,6 +208,24 @@ test("loginWithMagicLink sends POST to /authCodeLogin (no /v1 prefix)", async ()
 
   assert.equal(tokens.accessToken, "magic-access-token");
   assert.equal(tokens.refreshToken, "magic-refresh-token");
+});
+
+test("loginWithMagicLink includes credentials when refresh-cookie mode is enabled", async () => {
+  const { fetchImpl, calls } = createMockFetch({
+    access_token: "magic-access-token",
+    refresh_token: "magic-refresh-token",
+    token_type: "Bearer",
+  });
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    useRefreshCookie: true,
+  });
+
+  await sdk.loginWithMagicLink("user@example.com", "123456");
+
+  assert.equal(calls[0].init.credentials, "include");
 });
 
 test("loginWithMagicLink converts string authCode to integer", async () => {
@@ -333,6 +386,20 @@ test("logout sends POST to /v1/auth/logout and clears tokens", async () => {
   assert.equal(sdk.getTokens(), null);
 });
 
+test("logout includes credentials when refresh-cookie mode is enabled", async () => {
+  const { fetchImpl, calls } = createMockFetch({});
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    tokens: { accessToken: "test-token" },
+    fetchImpl,
+    useRefreshCookie: true,
+  });
+
+  await sdk.logout();
+
+  assert.equal(calls[0].init.credentials, "include");
+});
+
 test("logout clears tokens even if API call fails (finally block)", async () => {
   const { fetchImpl } = createMockFetch({}, 500);
   const storage = createMockStorage();
@@ -380,10 +447,10 @@ test("deleteAccount sends DELETE to /v1/users/me and clears tokens", async () =>
 
 test("refreshToken sends POST to /auth/refresh (no /v1 prefix)", async () => {
   const { fetchImpl, calls } = createMockFetch({
-    data: {
-      accessToken: "new-access-token",
-      refreshToken: "new-refresh-token",
-    },
+    token_type: "Bearer",
+    expires_in: 3600,
+    access_token: "new-access-token",
+    refresh_token: "new-refresh-token",
   });
 
   // Use HybridTokenProvider with mock storage to properly store refresh token
@@ -404,6 +471,7 @@ test("refreshToken sends POST to /auth/refresh (no /v1 prefix)", async () => {
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, `${baseUrl}/auth/refresh`);
   assert.equal(calls[0].init.method, "POST");
+  assert.equal(calls[0].init.headers.Authorization, undefined);
 
   const body = JSON.parse(calls[0].init.body);
   assert.equal(body.refresh_token, "old-refresh-token");
@@ -413,6 +481,94 @@ test("refreshToken sends POST to /auth/refresh (no /v1 prefix)", async () => {
   assert.equal(sdk.getTokens().accessToken, "new-access-token");
 });
 
+test("refreshToken supports cookie-backed refresh without a persisted refresh token", async () => {
+  const { fetchImpl, calls } = createMockFetch({
+    token_type: "Bearer",
+    expires_in: 3600,
+    access_token: "cookie-access-token",
+    refresh_token: "cookie-refresh-token",
+  });
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    useRefreshCookie: true,
+  });
+
+  const tokens = await sdk.refreshToken();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/auth/refresh`);
+  assert.equal(calls[0].init.credentials, "include");
+  assert.equal(calls[0].init.body, undefined);
+  assert.equal(tokens.accessToken, "cookie-access-token");
+  assert.equal(tokens.refreshToken, "cookie-refresh-token");
+});
+
+test("setSession persists tokens via async sessionStore", async () => {
+  const { fetchImpl } = createMockFetch({});
+  const sessionStore = createMockSessionStore();
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    sessionStore,
+  });
+
+  await sdk.setSession({
+    accessToken: "session-access-token",
+    refreshToken: "session-refresh-token",
+  });
+
+  assert.deepEqual(sessionStore.getSnapshot(), {
+    accessToken: "session-access-token",
+    refreshToken: "session-refresh-token",
+  });
+  assert.equal(sdk.getTokens().accessToken, "session-access-token");
+});
+
+test("restoreSession hydrates tokens from async sessionStore", async () => {
+  const { fetchImpl } = createMockFetch({});
+  const sessionStore = createMockSessionStore({
+    accessToken: "stored-access-token",
+    refreshToken: "stored-refresh-token",
+  });
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    sessionStore,
+  });
+
+  const restored = await sdk.restoreSession();
+
+  assert.deepEqual(restored, {
+    accessToken: "stored-access-token",
+    refreshToken: "stored-refresh-token",
+  });
+  assert.equal(sdk.getTokens().accessToken, "stored-access-token");
+});
+
+test("clearSession removes persisted tokens from async sessionStore", async () => {
+  const { fetchImpl } = createMockFetch({});
+  const sessionStore = createMockSessionStore({
+    accessToken: "stored-access-token",
+    refreshToken: "stored-refresh-token",
+  });
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    sessionStore,
+  });
+
+  await sdk.restoreSession();
+  await sdk.clearSession();
+
+  assert.equal(sessionStore.getSnapshot(), null);
+  assert.equal(sdk.getTokens(), null);
+});
+
 test("refreshToken returns null when no refresh token available", async () => {
   const { sdk } = createAuthenticatedMockSdk({});
   // createAuthenticatedMockSdk only sets accessToken, not refreshToken
@@ -420,6 +576,40 @@ test("refreshToken returns null when no refresh token available", async () => {
   const result = await sdk.refreshToken();
 
   assert.equal(result, null);
+});
+
+test("refreshToken restores persisted session before refreshing", async () => {
+  const { fetchImpl, calls } = createMockFetch({
+    token_type: "Bearer",
+    expires_in: 3600,
+    access_token: "new-access-token",
+    refresh_token: "new-refresh-token",
+  });
+  const sessionStore = createMockSessionStore({
+    refreshToken: "stored-refresh-token",
+  });
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    sessionStore,
+  });
+
+  const result = await sdk.refreshToken();
+
+  assert.deepEqual(result, {
+    accessToken: "new-access-token",
+    refreshToken: "new-refresh-token",
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/auth/refresh`);
+  assert.deepEqual(JSON.parse(calls[0].init.body), {
+    refresh_token: "stored-refresh-token",
+  });
+  assert.deepEqual(sessionStore.getSnapshot(), {
+    accessToken: "new-access-token",
+    refreshToken: "new-refresh-token",
+  });
 });
 
 test("refreshToken clears tokens and returns null on failure", async () => {
