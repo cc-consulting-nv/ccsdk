@@ -5,6 +5,8 @@ Cache-aware TypeScript SDK for the CC-API that mirrors the Social UI's IndexedDB
 ## Features
 - HTTP client with token injection and refresh hook (pluggable fetch).
 - Pluggable token provider (memory by default) for easy integration with your auth storage; refresh coordinator serializes concurrent refreshes; optional storage-backed provider.
+- Async session-store support for native secure storage and other non-blocking persistence backends.
+- Optional cookie-backed refresh mode for web apps using in-memory bearer tokens plus `httpOnly` refresh cookies.
 - Dexie-backed cache for posts and feed ULID ordering.
 - Batch post hydration (`/v1/posts`) for efficient feed rendering (ULIDs come from `/v1/songs/feed/all` by default).
 - Query-core helpers for framework adapters (React Query, Vue Query, Svelte Query).
@@ -98,7 +100,8 @@ const feedOptions = createMusicFeedInfiniteQueryOptions(sdk);
   - `readCachedFeed(cacheKey)`
   - `clearCache()`
 - Auth helpers
-  - `MemoryTokenProvider`, `StorageTokenProvider` (pass localStorage/AsyncStorage), `RefreshCoordinator`
+  - `MemoryTokenProvider`, `StorageTokenProvider`, `HybridTokenProvider`, `RefreshCoordinator`
+  - Session helpers: `setSession`, `restoreSession`, `clearSession`, `refreshSession`
 - Cache utilities
   - `createCache(ttlMs?)`
   - `CacheDB` (if you want to provide your own instance)
@@ -111,6 +114,43 @@ const feedOptions = createMusicFeedInfiniteQueryOptions(sdk);
   - `createDexieQueryPersister(cache, { key?, maxAge? })`
 
 ## Configuration
+
+### Auth Session Storage
+
+The SDK supports two complementary auth persistence layers:
+
+- `tokenProvider` for synchronous storage strategies such as in-memory or Web Storage
+- `sessionStore` for async persistence such as secure native storage or IndexedDB-backed session adapters
+
+```ts
+const sdk = new CcPlatformSdk({
+  baseUrl: "https://api.example.com",
+  sessionStore: {
+    async loadTokens() {
+      return await secureStore.get("session");
+    },
+    async saveTokens(tokens) {
+      await secureStore.set("session", tokens);
+    },
+    async clearTokens() {
+      await secureStore.delete("session");
+    },
+  },
+});
+```
+
+### Cookie-Backed Web Refresh
+
+For browser apps that keep the access token in memory and store the refresh token in an `httpOnly` cookie:
+
+```ts
+const sdk = new CcPlatformSdk({
+  baseUrl: "https://api.example.com",
+  useRefreshCookie: true,
+});
+```
+
+In this mode, login/logout/refresh auth calls include `credentials: "include"`, while normal API calls continue to use the bearer access token.
 
 ### Debug Logging
 
