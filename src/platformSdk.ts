@@ -518,6 +518,9 @@ export class CcPlatformSdk {
     seen_count_false: number;
   }> | null = null;
 
+  // Session refresh - single-flight request deduplication
+  private refreshSessionInFlight: Promise<AuthTokens | null> | null = null;
+
   // Acting context for delegated user access
   private actingContext: ActingContext | null = null;
 
@@ -1220,6 +1223,20 @@ export class CcPlatformSdk {
    * @category Authentication
    */
   async refreshToken(): Promise<AuthTokens | null> {
+    if (this.refreshSessionInFlight) {
+      return this.refreshSessionInFlight;
+    }
+
+    this.refreshSessionInFlight = this.performRefreshToken();
+
+    try {
+      return await this.refreshSessionInFlight;
+    } finally {
+      this.refreshSessionInFlight = null;
+    }
+  }
+
+  private async performRefreshToken(): Promise<AuthTokens | null> {
     const currentTokens = await this.restoreSession();
     if (!currentTokens?.refreshToken && !this.useRefreshCookie) return null;
 

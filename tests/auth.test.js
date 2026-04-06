@@ -542,6 +542,57 @@ test("refreshToken supports cookie-backed refresh without a persisted refresh to
   assert.equal(tokens.refreshToken, "cookie-refresh-token");
 });
 
+test("refreshToken dedupes concurrent refresh calls", async () => {
+  let resolveRefresh;
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init });
+    return await new Promise((resolve) => {
+      resolveRefresh = () =>
+        resolve(
+          new Response(
+            JSON.stringify({
+              access_token: "new-access-token",
+              refresh_token: "new-refresh-token",
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          ),
+        );
+    });
+  };
+
+  const storage = createMockStorage();
+  const tokenProvider = new HybridTokenProvider(storage, {
+    accessToken: "old-token",
+    refreshToken: "old-refresh-token",
+  });
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    tokenProvider,
+    fetchImpl,
+  });
+
+  const first = sdk.refreshToken();
+  const second = sdk.refreshToken();
+
+  await Promise.resolve();
+  assert.equal(calls.length, 1);
+  resolveRefresh();
+
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+
+  assert.deepEqual(firstResult, {
+    accessToken: "new-access-token",
+    refreshToken: "new-refresh-token",
+  });
+  assert.deepEqual(secondResult, firstResult);
+  assert.equal(calls.length, 1);
+});
+
 test("refreshToken supports enveloped auth token responses", async () => {
   const { fetchImpl } = createMockFetch({
     data: {
