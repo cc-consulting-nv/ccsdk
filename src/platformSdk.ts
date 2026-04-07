@@ -8151,10 +8151,11 @@ export class CcPlatformSdk {
    * @category Business Directory
    */
   async fetchBusiness(ulid: string): Promise<import("./types/business").Business | null> {
-    const response = await this.client.get<{
-      data: import("./types/business").Business;
-    }>(`/v1/businesses/${ulid}`);
-    return response.data || null;
+    const response = await this.client.get<
+      ApiEnvelope<import("./types/business").Business> | import("./types/business").Business
+    >(`/v1/businesses/${ulid}`);
+    
+    return this.unwrap(response) || null;
   }
 
   /**
