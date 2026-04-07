@@ -68,10 +68,6 @@ import {
   type PushNotificationRegisterResponse,
   // Branding types
   type Branding,
-  // Creation mode types
-  type CreationModeType,
-  type CreationModeVoteResponse,
-  type CreationModeDeleteResponse,
   // Group types
   type Group,
   type GroupListResponse,
@@ -517,6 +513,9 @@ export class CcPlatformSdk {
     seen_count: number;
     seen_count_false: number;
   }> | null = null;
+
+  // Session refresh - single-flight request deduplication
+  private refreshSessionInFlight: Promise<AuthTokens | null> | null = null;
 
   // Acting context for delegated user access
   private actingContext: ActingContext | null = null;
@@ -1220,6 +1219,20 @@ export class CcPlatformSdk {
    * @category Authentication
    */
   async refreshToken(): Promise<AuthTokens | null> {
+    if (this.refreshSessionInFlight) {
+      return this.refreshSessionInFlight;
+    }
+
+    this.refreshSessionInFlight = this.performRefreshToken();
+
+    try {
+      return await this.refreshSessionInFlight;
+    } finally {
+      this.refreshSessionInFlight = null;
+    }
+  }
+
+  private async performRefreshToken(): Promise<AuthTokens | null> {
     const currentTokens = await this.restoreSession();
     if (!currentTokens?.refreshToken && !this.useRefreshCookie) return null;
 
@@ -7691,40 +7704,6 @@ export class CcPlatformSdk {
       body: options,
     });
     return response;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Creation Mode Methods (AI/Human content voting)
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Vote on a post's creation mode (AI, HUMAN, HYBRID, or CANT_TELL).
-   * POST /v1/posts/{postUlid}/creation-mode
-   *
-   * @param postUlid - The ULID of the post to vote on
-   * @param mode - The creation mode to vote for
-   * @returns The vote response with stats
-   */
-  async voteCreationMode(postUlid: Ulid, mode: CreationModeType): Promise<CreationModeVoteResponse> {
-    const response = await this.client.post<ApiEnvelope<CreationModeVoteResponse>>(
-      `/v1/posts/${encodeURIComponent(postUlid)}/creation-mode`,
-      { body: { mode } },
-    );
-    return this.unwrap(response);
-  }
-
-  /**
-   * Remove the current user's creation mode vote from a post.
-   * DELETE /v1/posts/{postUlid}/creation-mode
-   *
-   * @param postUlid - The ULID of the post to remove the vote from
-   * @returns The delete response with message and stats
-   */
-  async deleteCreationModeVote(postUlid: Ulid): Promise<CreationModeDeleteResponse> {
-    const response = await this.client.delete<ApiEnvelope<CreationModeDeleteResponse>>(
-      `/v1/posts/${encodeURIComponent(postUlid)}/creation-mode`,
-    );
-    return this.unwrap(response);
   }
 
   // ---------------------------------------------------------------------------

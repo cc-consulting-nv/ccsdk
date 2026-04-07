@@ -202,8 +202,6 @@ export interface Post {
   groupName?: string;
   /** Number of comments/replies */
   commentCount?: number;
-  /** User's creation mode vote for this post */
-  userCreationMode?: string | null;
   /** Post visibility setting */
   visibility?: "public" | "followers" | "private";
   /** Scheduled time for hidden post to become visible */
@@ -1802,27 +1800,6 @@ export interface Branding {
   backgroundColor: string;
   backgroundColorDark: string;
   icons: BrandingIcons;
-}
-
-// ---------------------------------------------------------------------------
-// Creation Mode Types
-// ---------------------------------------------------------------------------
-
-/** Creation mode types for voting on AI/Human content */
-export type CreationModeType = "AI" | "HUMAN" | "HYBRID" | "CANT_TELL";
-
-/** Creation mode vote response */
-export interface CreationModeVoteResponse {
-  vote: {
-    mode: CreationModeType;
-  };
-  stats: Record<string, number>;
-}
-
-/** Creation mode delete response */
-export interface CreationModeDeleteResponse {
-  message: string;
-  stats: Record<string, number>;
 }
 
 // ---------------------------------------------------------------------------

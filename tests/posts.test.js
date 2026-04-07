@@ -69,7 +69,6 @@ function createSamplePostResponse(overrides = {}) {
     edited: false,
     userReaction: null,
     userRating: null,
-    userCreationMode: null,
     isRepost: false,
     isRepostWithComment: false,
     embedUrl: null,
@@ -97,10 +96,6 @@ function createSamplePostResponse(overrides = {}) {
       average_rating: 0,
       total_ratings: 0,
       rating_distribution: {},
-    },
-    creationModeStats: {
-      counts: { ai: 0, human: 0, hybrid: 0, cant_tell: 0 },
-      total: 0,
     },
     poll: null,
     otherRepostUsers: [],
