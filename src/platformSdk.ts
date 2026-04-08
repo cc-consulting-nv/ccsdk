@@ -587,7 +587,15 @@ export class CcPlatformSdk {
   }
 
   private async updateSession(tokens: AuthTokens | null): Promise<void> {
-    const normalizedTokens = this.hasAuthTokens(tokens) ? tokens : null;
+    let normalizedTokens = this.hasAuthTokens(tokens) ? tokens : null;
+
+    // When using httpOnly refresh cookie, strip the refresh token from in-memory
+    // storage so it only lives in the cookie. This prevents duplicate refresh
+    // tokens being sent (one in the body, one via cookie).
+    if (normalizedTokens && this.useRefreshCookie) {
+      normalizedTokens = { accessToken: normalizedTokens.accessToken };
+    }
+
     this.setTokens(normalizedTokens);
     await this.persistSession(normalizedTokens);
   }
