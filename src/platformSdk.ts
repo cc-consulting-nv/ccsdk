@@ -1846,9 +1846,9 @@ export class CcPlatformSdk {
    */
   async fetchTrendingUsersFeed(
     cursor?: string | null,
-    cacheKey: string = "/v1/songs/feed/trending/users",
+    cacheKey: string = "/v1/posts/feed/trending/users",
   ): Promise<FeedPage> {
-    return this.fetchFeedPage(cursor, "/v1/songs/feed/trending/users", cacheKey);
+    return this.fetchFeedPage(cursor, "/v1/posts/feed/trending/users", cacheKey);
   }
 
   /**
@@ -6416,7 +6416,7 @@ export class CcPlatformSdk {
     }
     const queryString = queryParams.toString();
     const response = await this.client.get<ApiEnvelope<TrendingMusicUser[]>>(
-      `/v1/songs/feed/trending/users${queryString ? `?${queryString}` : ""}`,
+      `/v1/posts/feed/trending/users${queryString ? `?${queryString}` : ""}`,
     );
     return this.unwrap<TrendingMusicUser[]>(response);
   }

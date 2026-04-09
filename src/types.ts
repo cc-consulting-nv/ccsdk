@@ -1204,10 +1204,15 @@ export interface TrendingMusicUser {
   avatar?: string;
   trendingScore: number;
   percentage: number;
-  postCount: number;
-  songCount: number;
+  postCount?: number;
+  songCount?: number;
+  videoCount?: number;
   recentViews: number;
-  periodDays: number; 
+  periodDays: number;
+  rank?: number;
+  rankChange?: number;
+  previousRank?: number | null;
+  isNewToList?: boolean;
 }
 
 /** Trending hashtag from /v1/trending/hashtags */
