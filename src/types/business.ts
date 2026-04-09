@@ -145,6 +145,46 @@ export interface BusinessEvent {
 }
 
 /**
+ * User info embedded in a review
+ * @category Business Directory
+ */
+export interface BusinessReviewUser {
+  /** User ULID */
+  id: Ulid;
+  /** Username */
+  username: string;
+  /** Display name */
+  displayName: string;
+  /** Avatar URL */
+  avatar?: string | null;
+}
+
+/**
+ * Business info embedded in a review
+ * @category Business Directory
+ */
+export interface BusinessReviewBusiness {
+  /** Business ULID */
+  id: Ulid;
+  /** Business name */
+  name: string;
+  /** Business slug */
+  slug: string;
+}
+
+/**
+ * Review verification methods
+ * @category Business Directory
+ */
+export type BusinessReviewVerificationMethod = 'purchase' | 'visit' | 'owner_confirmed';
+
+/**
+ * Review status
+ * @category Business Directory
+ */
+export type BusinessReviewStatus = 'pending' | 'approved' | 'rejected' | 'flagged';
+
+/**
  * Business review
  * @category Business Directory
  */
@@ -155,28 +195,44 @@ export interface BusinessReview {
   ulid: Ulid;
   /** Business ULID */
   businessId: Ulid;
+  /** Business details (when loaded) */
+  business?: BusinessReviewBusiness;
   /** Reviewer user ULID */
   userId: Ulid;
-  /** Reviewer name */
-  userName?: string;
-  /** Reviewer avatar URL */
-  userAvatar?: string;
+  /** Reviewer details (when loaded) */
+  user?: BusinessReviewUser;
   /** Rating (1-5) */
   rating: number;
   /** Review title */
-  title?: string;
+  title?: string | null;
   /** Review content */
   content: string;
+  /** Photo URLs */
+  photos: string[];
+  /** Whether the review is verified */
+  isVerified: boolean;
+  /** How the review was verified */
+  verificationMethod?: BusinessReviewVerificationMethod | null;
   /** Number of helpful votes */
-  helpfulCount?: number;
+  helpfulCount: number;
+  /** Number of not helpful votes */
+  notHelpfulCount: number;
+  /** Percentage of helpful votes (0-100) */
+  helpfulPercentage: number;
   /** Whether current user marked as helpful */
   isHelpful?: boolean;
   /** Business owner response */
-  businessResponse?: string;
+  businessResponse?: string | null;
+  /** When the business responded */
+  businessRespondedAt?: string | null;
+  /** Who responded on behalf of the business */
+  respondedBy?: BusinessReviewUser | null;
+  /** Review status */
+  status: BusinessReviewStatus;
   /** Creation timestamp */
   createdAt: string;
   /** Last update timestamp */
-  updatedAt?: string;
+  updatedAt: string;
 }
 
 /**
@@ -269,9 +325,40 @@ export interface BusinessInput {
  * @category Business Directory
  */
 export interface BusinessReviewInput {
+  /** Rating (1-5) */
   rating: number;
+  /** Review title (optional) */
   title?: string;
+  /** Review content (min 10, max 5000 chars) */
   content: string;
+  /** Photo URLs (optional) */
+  photos?: string[];
+}
+
+/**
+ * Input for updating a review
+ * @category Business Directory
+ */
+export interface BusinessReviewUpdateInput {
+  /** Rating (1-5) */
+  rating?: number;
+  /** Review title */
+  title?: string | null;
+  /** Review content (min 10, max 5000 chars) */
+  content?: string;
+  /** Photo URLs */
+  photos?: string[];
+}
+
+/**
+ * Response from helpful/not-helpful actions
+ * @category Business Directory
+ */
+export interface BusinessReviewHelpfulResponse {
+  /** Updated helpful count */
+  helpful_count: number;
+  /** Updated not helpful count */
+  not_helpful_count: number;
 }
 
 /**
