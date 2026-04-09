@@ -1285,8 +1285,12 @@ export class CcPlatformSdk {
         }
       }
 
-      // Don't clearSession() here — let the caller (onUnauthorized) decide.
-      // Clearing prematurely makes recovery impossible if the caller retries.
+      // Clear session on definitive auth rejection (4xx) — the refresh token
+      // is invalid/expired/revoked and recovery is not possible.
+      // Don't clear on 5xx — those are transient and the caller may retry.
+      if (status && status >= 400 && status < 500) {
+        await this.clearSession();
+      }
       return null;
     }
   }
