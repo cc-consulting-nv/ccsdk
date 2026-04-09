@@ -8401,22 +8401,20 @@ export class CcPlatformSdk {
     if (options?.cursor) params.append("cursor", options.cursor);
     if (options?.sort) params.append("sort", options.sort);
     if (options?.rating) params.append("rating", String(options.rating));
-    if (options?.verifiedOnly) params.append("verified_only", "true");
+    if (options?.verifiedOnly) params.append("verified_only", "1");
 
     const queryString = params.toString();
     const url = `/v1/businesses/${businessUlid}/reviews${queryString ? `?${queryString}` : ""}`;
 
     const response = await this.client.get<{
-      data: {
-        data: import("./types/business").BusinessReview[];
-        pagination?: { nextCursor?: string | null; hasMore?: boolean };
-      };
+      data: import("./types/business").BusinessReview[];
+      pagination?: { nextCursor?: string | null; hasMore?: boolean };
     }>(url);
 
     return {
-      reviews: response.data?.data || [],
-      nextCursor: response.data?.pagination?.nextCursor || null,
-      hasMore: response.data?.pagination?.hasMore || false,
+      reviews: response.data || [],
+      nextCursor: response.pagination?.nextCursor || null,
+      hasMore: response.pagination?.hasMore || false,
       averageRating: 0, // Average rating comes from the business object, not this endpoint
     };
   }
@@ -8519,10 +8517,7 @@ export class CcPlatformSdk {
   async createBusiness(
     data: import("./types/business").BusinessInput
   ): Promise<import("./types/business").Business> {
-    const response = await this.client.post<{
-      data: import("./types/business").Business;
-    }>("/v1/businesses", { body: data });
-    return response.data;
+    return this.client.post<import("./types/business").Business>("/v1/businesses", { body: data });
   }
 
   /**
@@ -8539,10 +8534,10 @@ export class CcPlatformSdk {
     ulid: string,
     data: import("./types/business").BusinessInput
   ): Promise<import("./types/business").Business> {
-    const response = await this.client.put<{
-      data: import("./types/business").Business;
-    }>(`/v1/businesses/${ulid}`, { body: data });
-    return response.data;
+    return this.client.put<import("./types/business").Business>(
+      `/v1/businesses/${ulid}`,
+      { body: data }
+    );
   }
 
   /**
@@ -8575,10 +8570,10 @@ export class CcPlatformSdk {
     businessUlid: string,
     data: import("./types/business").BusinessReviewInput
   ): Promise<import("./types/business").BusinessReview> {
-    const response = await this.client.post<{
-      data: import("./types/business").BusinessReview;
-    }>(`/v1/businesses/${businessUlid}/reviews`, { body: data });
-    return response.data;
+    return this.client.post<import("./types/business").BusinessReview>(
+      `/v1/businesses/${businessUlid}/reviews`,
+      { body: data }
+    );
   }
 
   /**
@@ -8595,12 +8590,10 @@ export class CcPlatformSdk {
     businessUlid: string,
     reviewUlid: string
   ): Promise<import("./types/business").BusinessReviewHelpfulResponse> {
-    const response = await this.client.post<{
-      data: import("./types/business").BusinessReviewHelpfulResponse;
-    }>(`/v1/businesses/${businessUlid}/reviews/${reviewUlid}/helpful`, {
-      body: {},
-    });
-    return response.data;
+    return this.client.post<import("./types/business").BusinessReviewHelpfulResponse>(
+      `/v1/businesses/${businessUlid}/reviews/${reviewUlid}/helpful`,
+      { body: {} }
+    );
   }
 
   /**
@@ -8617,12 +8610,10 @@ export class CcPlatformSdk {
     businessUlid: string,
     reviewUlid: string
   ): Promise<import("./types/business").BusinessReviewHelpfulResponse> {
-    const response = await this.client.post<{
-      data: import("./types/business").BusinessReviewHelpfulResponse;
-    }>(`/v1/businesses/${businessUlid}/reviews/${reviewUlid}/not-helpful`, {
-      body: {},
-    });
-    return response.data;
+    return this.client.post<import("./types/business").BusinessReviewHelpfulResponse>(
+      `/v1/businesses/${businessUlid}/reviews/${reviewUlid}/not-helpful`,
+      { body: {} }
+    );
   }
 
   /**
@@ -8641,10 +8632,10 @@ export class CcPlatformSdk {
     reviewUlid: string,
     data: import("./types/business").BusinessReviewUpdateInput
   ): Promise<import("./types/business").BusinessReview> {
-    const response = await this.client.put<{
-      data: import("./types/business").BusinessReview;
-    }>(`/v1/businesses/${businessUlid}/reviews/${reviewUlid}`, { body: data });
-    return response.data;
+    return this.client.put<import("./types/business").BusinessReview>(
+      `/v1/businesses/${businessUlid}/reviews/${reviewUlid}`,
+      { body: data }
+    );
   }
 
   /**
@@ -8676,12 +8667,10 @@ export class CcPlatformSdk {
     reviewUlid: string,
     response: string
   ): Promise<import("./types/business").BusinessReview> {
-    const result = await this.client.post<{
-      data: import("./types/business").BusinessReview;
-    }>(`/v1/businesses/${businessUlid}/reviews/${reviewUlid}/respond`, {
-      body: { response },
-    });
-    return result.data;
+    return this.client.post<import("./types/business").BusinessReview>(
+      `/v1/businesses/${businessUlid}/reviews/${reviewUlid}/respond`,
+      { body: { response } }
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
