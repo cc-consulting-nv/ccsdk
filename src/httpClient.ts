@@ -74,6 +74,7 @@ export interface RequestOptions {
  */
 export class HttpClient {
   private isRefreshing = false;
+  private isLoggingOut = false;
   private refreshQueue: Array<{
     resolve: (tokens: AuthTokens) => void;
     reject: (error: unknown) => void;
@@ -230,7 +231,14 @@ export class HttpClient {
   }
 
   private async refreshTokens(): Promise<AuthTokens | null> {
+    // Guard: if we're already in the process of logging out, don't trigger
+    // another refresh or onUnauthorized cascade.
+    if (this.isLoggingOut) {
+      return null;
+    }
+
     if (!this.options.onRefreshTokens) {
+      this.isLoggingOut = true;
       await this.options.onUnauthorized?.();
       return null;
     }
@@ -251,7 +259,12 @@ export class HttpClient {
     } catch (error) {
       this.refreshQueue.forEach((item) => item.reject(error));
       this.refreshQueue = [];
-      await this.options.onUnauthorized?.();
+      // Only call onUnauthorized once — prevent multiple concurrent 401s
+      // from each triggering a separate logout cascade.
+      if (!this.isLoggingOut) {
+        this.isLoggingOut = true;
+        await this.options.onUnauthorized?.();
+      }
       return null;
     } finally {
       this.isRefreshing = false;

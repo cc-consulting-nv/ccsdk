@@ -1244,12 +1244,18 @@ export class CcPlatformSdk {
     const currentTokens = await this.restoreSession();
     if (!currentTokens?.refreshToken && !this.useRefreshCookie) return null;
 
+    // When using httpOnly refresh cookie, never send a refresh token in the body.
+    // The cookie is the sole source of the refresh token on web — sending a stale
+    // or already-rotated token in the body can cause the server to reject the
+    // request with 400 even though the cookie is valid.
+    const body = !this.useRefreshCookie && currentTokens?.refreshToken
+      ? { refresh_token: currentTokens.refreshToken }
+      : undefined;
+
     try {
       // Note: /auth/refresh endpoint doesn't have /v1 prefix in the API
       const response = await this.client.post<Record<string, unknown>>("/auth/refresh", {
-        body: currentTokens?.refreshToken
-          ? { refresh_token: currentTokens.refreshToken }
-          : undefined,
+        body,
         skipAuth: true,
         credentials: this.useRefreshCookie ? "include" : undefined,
       });
@@ -1260,7 +1266,27 @@ export class CcPlatformSdk {
       if (error instanceof InvalidAuthResponseError) {
         return null;
       }
-      await this.clearSession();
+
+      // Retry once on server errors (5xx) — transient failures shouldn't kill sessions
+      const status = (error as any)?.status;
+      if (status >= 500) {
+        try {
+          await new Promise((r) => setTimeout(r, 1000));
+          const retryResponse = await this.client.post<Record<string, unknown>>("/auth/refresh", {
+            body,
+            skipAuth: true,
+            credentials: this.useRefreshCookie ? "include" : undefined,
+          });
+          const tokens = this.extractAuthTokens(retryResponse, "/auth/refresh");
+          await this.updateSession(tokens);
+          return tokens;
+        } catch {
+          // Retry also failed — fall through to return null
+        }
+      }
+
+      // Don't clearSession() here — let the caller (onUnauthorized) decide.
+      // Clearing prematurely makes recovery impossible if the caller retries.
       return null;
     }
   }
