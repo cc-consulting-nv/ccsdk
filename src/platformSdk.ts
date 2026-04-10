@@ -8723,12 +8723,12 @@ export class CcPlatformSdk {
    * @category Business Directory
    */
   async reportBusinessReview(
-    businessUlid: string,
-    reviewUlid: string,
+    businessUlid: Ulid,
+    reviewUlid: Ulid,
     reason: string,
     details?: string
   ): Promise<void> {
-    await this.client.post(`/v1/businesses/${businessUlid}/reviews/${reviewUlid}/report`, {
+    await this.client.post(`/v1/businesses/${encodeURIComponent(businessUlid)}/reviews/${encodeURIComponent(reviewUlid)}/report`, {
       body: { reason, details },
     });
   }
