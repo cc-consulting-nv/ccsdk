@@ -8711,6 +8711,28 @@ export class CcPlatformSdk {
     );
   }
 
+  /**
+   * Report a business review for violating community guidelines.
+   * POST /v1/businesses/{ulid}/reviews/{reviewUlid}/report
+   *
+   * @param businessUlid - Business ULID
+   * @param reviewUlid - Review ULID to report
+   * @param reason - Reason for reporting (spam, harassment, hate, misinformation, inappropriate, other)
+   * @param details - Optional additional details about the report
+   *
+   * @category Business Directory
+   */
+  async reportBusinessReview(
+    businessUlid: string,
+    reviewUlid: string,
+    reason: string,
+    details?: string
+  ): Promise<void> {
+    await this.client.post(`/v1/businesses/${businessUlid}/reviews/${reviewUlid}/report`, {
+      body: { reason, details },
+    });
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Authenticated Routes - Analytics
   // ─────────────────────────────────────────────────────────────────────────────
