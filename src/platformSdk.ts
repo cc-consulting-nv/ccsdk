@@ -8620,7 +8620,7 @@ export class CcPlatformSdk {
    *
    * @param businessUlid - Business ULID
    * @param reviewUlid - Review ULID
-   * @returns Updated helpful counts
+   * @returns Updated helpful counts and user vote status
    *
    * @category Business Directory
    */
@@ -8635,12 +8635,31 @@ export class CcPlatformSdk {
   }
 
   /**
+   * Remove helpful vote from a review.
+   * DELETE /v1/businesses/{ulid}/reviews/{reviewUlid}/helpful
+   *
+   * @param businessUlid - Business ULID
+   * @param reviewUlid - Review ULID
+   * @returns Updated helpful counts and user vote status
+   *
+   * @category Business Directory
+   */
+  async removeBusinessReviewHelpful(
+    businessUlid: string,
+    reviewUlid: string
+  ): Promise<import("./types/business").BusinessReviewHelpfulResponse> {
+    return this.client.delete<import("./types/business").BusinessReviewHelpfulResponse>(
+      `/v1/businesses/${businessUlid}/reviews/${reviewUlid}/helpful`
+    );
+  }
+
+  /**
    * Mark a review as not helpful.
    * POST /v1/businesses/{ulid}/reviews/{reviewUlid}/not-helpful
    *
    * @param businessUlid - Business ULID
    * @param reviewUlid - Review ULID
-   * @returns Updated helpful counts
+   * @returns Updated helpful counts and user vote status
    *
    * @category Business Directory
    */
@@ -8651,6 +8670,25 @@ export class CcPlatformSdk {
     return this.client.post<import("./types/business").BusinessReviewHelpfulResponse>(
       `/v1/businesses/${businessUlid}/reviews/${reviewUlid}/not-helpful`,
       { body: {} }
+    );
+  }
+
+  /**
+   * Remove not helpful vote from a review.
+   * DELETE /v1/businesses/{ulid}/reviews/{reviewUlid}/not-helpful
+   *
+   * @param businessUlid - Business ULID
+   * @param reviewUlid - Review ULID
+   * @returns Updated helpful counts and user vote status
+   *
+   * @category Business Directory
+   */
+  async removeBusinessReviewNotHelpful(
+    businessUlid: string,
+    reviewUlid: string
+  ): Promise<import("./types/business").BusinessReviewHelpfulResponse> {
+    return this.client.delete<import("./types/business").BusinessReviewHelpfulResponse>(
+      `/v1/businesses/${businessUlid}/reviews/${reviewUlid}/not-helpful`
     );
   }
 
