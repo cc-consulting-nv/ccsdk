@@ -2441,10 +2441,12 @@ export class CcPlatformSdk {
    * Vote on a poll attached to a post.
    * Updates the post's poll data in the Dexie cache after voting.
    * @param postUlid - The ULID of the post containing the poll
-   * @param optionId - The ID of the poll option to vote for
+   * @param optionId - The ID of the poll option to vote for. Must be a
+   *                   string because option IDs are 64-bit snowflakes
+   *                   that exceed `Number.MAX_SAFE_INTEGER`.
    * @returns The updated poll data
    */
-  async votePoll(postUlid: Ulid, optionId: number): Promise<Poll> {
+  async votePoll(postUlid: Ulid, optionId: string): Promise<Poll> {
     const response = await this.client.post<ApiEnvelope<Record<string, unknown>>>(
       `/v1/posts/${encodeURIComponent(postUlid)}/polls/vote`,
       { body: { optionId } },
@@ -6673,9 +6675,11 @@ export class CcPlatformSdk {
   /**
    * Vote on a poll
    * @param postUlid Post ULID
-   * @param optionId Poll option ID to vote for
+   * @param optionId Poll option ID to vote for. Must be a string because
+   *                 option IDs are 64-bit snowflakes that exceed
+   *                 `Number.MAX_SAFE_INTEGER`.
    */
-  async pollVote(postUlid: string, optionId: number): Promise<Poll> {
+  async pollVote(postUlid: string, optionId: string): Promise<Poll> {
     const response = await this.client.post<{ poll: Poll }>(
       `/v1/posts/${postUlid}/polls/vote`,
       { body: { optionId } },

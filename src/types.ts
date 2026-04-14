@@ -75,8 +75,13 @@ export interface PostEngagement {
  * @category Posts
  */
 export interface PollOption {
-  /** Unique identifier for this option */
-  id: number;
+  /**
+   * Unique identifier for this option.
+   *
+   * Serialized as a string because poll option IDs are 64-bit snowflakes
+   * that exceed `Number.MAX_SAFE_INTEGER`.
+   */
+  id: string;
   /** The option text */
   text: string;
   /** Display position (0-indexed) */
@@ -92,8 +97,13 @@ export interface PollOption {
  * @category Posts
  */
 export interface Poll {
-  /** Unique identifier */
-  id: number;
+  /**
+   * Unique identifier.
+   *
+   * Serialized as a string because poll IDs are 64-bit snowflakes
+   * that exceed `Number.MAX_SAFE_INTEGER`.
+   */
+  id: string;
   /** The poll question */
   question: string;
   /** When the poll ends (null if no end date) */
@@ -108,7 +118,7 @@ export interface Poll {
   options: PollOption[];
   /** The current user's vote, if any */
   userVote: {
-    optionId: number;
+    optionId: string;
     votedAt: string;
   } | null;
   /** When the poll was created */
@@ -1748,7 +1758,11 @@ export interface PublicKeyCredentialRequestOptionsJSON {
 
 /** User's vote on a poll */
 export interface PollUserVote {
-  pollOptionId: number;
+  /**
+   * Poll option ID. Serialized as a string because option IDs are
+   * 64-bit snowflakes that exceed `Number.MAX_SAFE_INTEGER`.
+   */
+  pollOptionId: string;
   optionText: string;
   votedAt: string;
 }
