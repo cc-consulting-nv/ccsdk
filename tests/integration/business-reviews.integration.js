@@ -441,6 +441,7 @@ async function testMarkReviewHelpful(reviewUlid) {
     log("Updated counts:", {
       helpful_count: result.helpful_count,
       not_helpful_count: result.not_helpful_count,
+      user_vote: result.user_vote,
     });
 
     if (typeof result.helpful_count !== "number") {
@@ -449,9 +450,51 @@ async function testMarkReviewHelpful(reviewUlid) {
       success("Response has helpful_count");
     }
 
+    if (result.user_vote !== "helpful") {
+      fail(`Expected user_vote to be "helpful", got "${result.user_vote}"`);
+    } else {
+      success("user_vote is correctly set to helpful");
+    }
+
     return result;
   } catch (err) {
     fail("markBusinessReviewHelpful failed", err);
+    return null;
+  }
+}
+
+async function testRemoveReviewHelpful(reviewUlid) {
+  console.log("\n=== Testing removeBusinessReviewHelpful ===");
+
+  if (!testBusinessUlid || !reviewUlid) {
+    console.log("  Skipping - no test business or review available");
+    return null;
+  }
+
+  try {
+    const result = await sdk.removeBusinessReviewHelpful(testBusinessUlid, reviewUlid);
+
+    if (!result) {
+      fail("removeBusinessReviewHelpful returned null");
+      return null;
+    }
+
+    success("Removed helpful vote from review");
+    log("Updated counts:", {
+      helpful_count: result.helpful_count,
+      not_helpful_count: result.not_helpful_count,
+      user_vote: result.user_vote,
+    });
+
+    if (result.user_vote !== null) {
+      fail(`Expected user_vote to be null, got "${result.user_vote}"`);
+    } else {
+      success("user_vote is correctly null after removal");
+    }
+
+    return result;
+  } catch (err) {
+    fail("removeBusinessReviewHelpful failed", err);
     return null;
   }
 }
@@ -476,6 +519,7 @@ async function testMarkReviewNotHelpful(reviewUlid) {
     log("Updated counts:", {
       helpful_count: result.helpful_count,
       not_helpful_count: result.not_helpful_count,
+      user_vote: result.user_vote,
     });
 
     if (typeof result.not_helpful_count !== "number") {
@@ -484,10 +528,128 @@ async function testMarkReviewNotHelpful(reviewUlid) {
       success("Response has not_helpful_count");
     }
 
+    if (result.user_vote !== "not_helpful") {
+      fail(`Expected user_vote to be "not_helpful", got "${result.user_vote}"`);
+    } else {
+      success("user_vote is correctly set to not_helpful");
+    }
+
     return result;
   } catch (err) {
     fail("markBusinessReviewNotHelpful failed", err);
     return null;
+  }
+}
+
+async function testRemoveReviewNotHelpful(reviewUlid) {
+  console.log("\n=== Testing removeBusinessReviewNotHelpful ===");
+
+  if (!testBusinessUlid || !reviewUlid) {
+    console.log("  Skipping - no test business or review available");
+    return null;
+  }
+
+  try {
+    const result = await sdk.removeBusinessReviewNotHelpful(testBusinessUlid, reviewUlid);
+
+    if (!result) {
+      fail("removeBusinessReviewNotHelpful returned null");
+      return null;
+    }
+
+    success("Removed not helpful vote from review");
+    log("Updated counts:", {
+      helpful_count: result.helpful_count,
+      not_helpful_count: result.not_helpful_count,
+      user_vote: result.user_vote,
+    });
+
+    if (result.user_vote !== null) {
+      fail(`Expected user_vote to be null, got "${result.user_vote}"`);
+    } else {
+      success("user_vote is correctly null after removal");
+    }
+
+    return result;
+  } catch (err) {
+    fail("removeBusinessReviewNotHelpful failed", err);
+    return null;
+  }
+}
+
+async function testHelpfulVoteToggleWorkflow(reviewUlid) {
+  console.log("\n=== Testing Helpful Vote Toggle Workflow ===");
+
+  if (!testBusinessUlid || !reviewUlid) {
+    console.log("  Skipping - no test business or review available");
+    return;
+  }
+
+  try {
+    // 1. Mark as helpful
+    console.log("\n  Step 1: Mark as helpful");
+    let result = await sdk.markBusinessReviewHelpful(testBusinessUlid, reviewUlid);
+    if (result.user_vote !== "helpful") {
+      fail("Failed to mark as helpful");
+      return;
+    }
+    success(`Marked helpful - count: ${result.helpful_count}`);
+
+    await delay(TEST_DELAY_MS);
+
+    // 2. Try to mark as helpful again (should fail with 409)
+    console.log("\n  Step 2: Try duplicate helpful vote");
+    try {
+      await sdk.markBusinessReviewHelpful(testBusinessUlid, reviewUlid);
+      fail("Should have rejected duplicate helpful vote");
+    } catch (err) {
+      if (err.message?.includes("409") || err.message?.includes("already")) {
+        success("Correctly rejected duplicate helpful vote");
+      } else {
+        fail("Unexpected error on duplicate vote", err);
+      }
+    }
+
+    await delay(TEST_DELAY_MS);
+
+    // 3. Switch to not helpful (should work)
+    console.log("\n  Step 3: Switch to not helpful");
+    result = await sdk.markBusinessReviewNotHelpful(testBusinessUlid, reviewUlid);
+    if (result.user_vote !== "not_helpful") {
+      fail("Failed to switch to not helpful");
+      return;
+    }
+    success(`Switched to not helpful - helpful: ${result.helpful_count}, not_helpful: ${result.not_helpful_count}`);
+
+    await delay(TEST_DELAY_MS);
+
+    // 4. Remove not helpful vote
+    console.log("\n  Step 4: Remove not helpful vote");
+    result = await sdk.removeBusinessReviewNotHelpful(testBusinessUlid, reviewUlid);
+    if (result.user_vote !== null) {
+      fail("Failed to remove vote");
+      return;
+    }
+    success(`Removed vote - helpful: ${result.helpful_count}, not_helpful: ${result.not_helpful_count}`);
+
+    await delay(TEST_DELAY_MS);
+
+    // 5. Verify userVote in review listing
+    console.log("\n  Step 5: Verify userVote is null in listing");
+    const reviews = await sdk.fetchBusinessReviews(testBusinessUlid);
+    const review = reviews.reviews?.find(r => (r.id || r.ulid) === reviewUlid);
+    if (review) {
+      if (review.userVote === null || review.userVote === undefined) {
+        success("userVote is correctly null/undefined in listing");
+      } else {
+        fail(`Expected userVote null, got "${review.userVote}"`);
+      }
+    }
+
+    console.log("\n  ✓ Helpful vote toggle workflow completed!");
+  } catch (err) {
+    fail("Helpful vote toggle workflow failed", err);
+    console.error("Full error:", err);
   }
 }
 
