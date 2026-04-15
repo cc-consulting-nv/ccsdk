@@ -8461,6 +8461,60 @@ export class CcPlatformSdk {
     };
   }
 
+  /**
+   * Fetch business reviews authored by a given user.
+   * GET /v1/users/{userUlid}/reviews
+   *
+   * Returns only approved reviews when the requester is not the author.
+   *
+   * @param userUlid - Author user ULID
+   * @param options - Pagination options
+   * @returns Paginated list of reviews
+   *
+   * @category Business Directory
+   */
+  async fetchUserReviews(
+    userUlid: string,
+    options?: { cursor?: string | null; perPage?: number }
+  ): Promise<import("./types/business").BusinessReviewListResponse> {
+    const params = new URLSearchParams();
+    if (options?.perPage) params.append("per_page", String(options.perPage));
+    if (options?.cursor) params.append("cursor", options.cursor);
+
+    const queryString = params.toString();
+    const url = `/v1/users/${encodeURIComponent(userUlid)}/reviews${queryString ? `?${queryString}` : ""}`;
+
+    const response = await this.client.get<{
+      data: import("./types/business").BusinessReview[];
+      pagination?: { nextCursor?: string | null; hasMore?: boolean };
+    }>(url);
+
+    return {
+      reviews: response.data || [],
+      nextCursor: response.pagination?.nextCursor || null,
+      hasMore: response.pagination?.hasMore || false,
+      averageRating: 0,
+    };
+  }
+
+  /**
+   * Fetch business collections published publicly by another user.
+   * GET /v1/users/{userUlid}/business-collections
+   *
+   * @param userUlid - Owner user ULID
+   * @returns Public collections owned by that user
+   *
+   * @category Business Directory
+   */
+  async fetchUserBusinessCollections(
+    userUlid: string
+  ): Promise<import("./types/business").BusinessCollection[]> {
+    const response = await this.client.get<{
+      data: import("./types/business").BusinessCollection[];
+    }>(`/v1/users/${encodeURIComponent(userUlid)}/business-collections`);
+    return response.data || [];
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Authenticated Routes - Collections
   // ─────────────────────────────────────────────────────────────────────────────
@@ -8492,10 +8546,56 @@ export class CcPlatformSdk {
   async createBusinessCollection(
     data: import("./types/business").BusinessCollectionInput
   ): Promise<import("./types/business").BusinessCollection> {
-    const response = await this.client.post<{
-      data: import("./types/business").BusinessCollection;
-    }>("/v1/users/me/business-collections", { body: data });
-    return response.data;
+    return this.client.post<import("./types/business").BusinessCollection>(
+      "/v1/users/me/business-collections",
+      { body: this.serializeCollectionPayload(data) }
+    );
+  }
+
+  /**
+   * Update an existing business collection.
+   * PUT /v1/users/me/business-collections/{id}
+   *
+   * @param collectionId - Collection ULID
+   * @param data - Fields to update
+   * @returns Updated collection
+   *
+   * @category Business Directory
+   */
+  async updateBusinessCollection(
+    collectionId: string,
+    data: Partial<import("./types/business").BusinessCollectionInput>
+  ): Promise<import("./types/business").BusinessCollection> {
+    return this.client.put<import("./types/business").BusinessCollection>(
+      `/v1/users/me/business-collections/${encodeURIComponent(collectionId)}`,
+      { body: this.serializeCollectionPayload(data) }
+    );
+  }
+
+  /**
+   * Delete a business collection. The default Favorites collection cannot be deleted.
+   * DELETE /v1/users/me/business-collections/{id}
+   *
+   * @param collectionId - Collection ULID
+   *
+   * @category Business Directory
+   */
+  async deleteBusinessCollection(collectionId: string): Promise<void> {
+    await this.client.delete(
+      `/v1/users/me/business-collections/${encodeURIComponent(collectionId)}`
+    );
+  }
+
+  private serializeCollectionPayload(
+    data: Partial<import("./types/business").BusinessCollectionInput>
+  ): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    if (data.name !== undefined) out.name = data.name;
+    if (data.description !== undefined) out.description = data.description;
+    if (data.icon !== undefined) out.icon = data.icon;
+    if (data.color !== undefined) out.color = data.color;
+    if (data.isPublic !== undefined) out.is_public = data.isPublic;
+    return out;
   }
 
   /**
@@ -8541,6 +8641,40 @@ export class CcPlatformSdk {
       data: import("./types/business").RecentlyViewedBusiness[];
     }>("/v1/users/me/recently-viewed-businesses");
     return response.data || [];
+  }
+
+  /**
+   * Fetch business reviews authored by the currently authenticated user.
+   * GET /v1/users/me/reviews
+   *
+   * Includes reviews of any status (pending, approved, rejected, flagged).
+   *
+   * @param options - Pagination options
+   * @returns Paginated list of the current user's reviews
+   *
+   * @category Business Directory
+   */
+  async fetchMyReviews(
+    options?: { cursor?: string | null; perPage?: number }
+  ): Promise<import("./types/business").BusinessReviewListResponse> {
+    const params = new URLSearchParams();
+    if (options?.perPage) params.append("per_page", String(options.perPage));
+    if (options?.cursor) params.append("cursor", options.cursor);
+
+    const queryString = params.toString();
+    const url = `/v1/users/me/reviews${queryString ? `?${queryString}` : ""}`;
+
+    const response = await this.client.get<{
+      data: import("./types/business").BusinessReview[];
+      pagination?: { nextCursor?: string | null; hasMore?: boolean };
+    }>(url);
+
+    return {
+      reviews: response.data || [],
+      nextCursor: response.pagination?.nextCursor || null,
+      hasMore: response.pagination?.hasMore || false,
+      averageRating: 0,
+    };
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
