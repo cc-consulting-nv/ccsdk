@@ -14,6 +14,7 @@
  *   - createBusiness (setup)
  *   - submitBusinessReview
  *   - fetchBusinessReviews (with filters/sorting)
+ *   - fetchUserReviews / fetchMyReviews
  *   - updateBusinessReview
  *   - markBusinessReviewHelpful
  *   - markBusinessReviewNotHelpful
@@ -357,6 +358,113 @@ async function testFetchReviewsWithFilters() {
     success(`Filter verifiedOnly: ${response.reviews?.length || 0} reviews`);
   } catch (err) {
     fail("Filter verifiedOnly failed", err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// fetchMyReviews / fetchUserReviews Tests
+// ---------------------------------------------------------------------------
+
+async function testFetchMyReviews(expectedReviewUlid) {
+  console.log("\n=== Testing fetchMyReviews ===");
+
+  try {
+    const response = await sdk.fetchMyReviews({ perPage: 25 });
+
+    if (!response) {
+      fail("fetchMyReviews returned null");
+      return null;
+    }
+
+    success(`Fetched ${response.reviews?.length || 0} of my reviews`);
+    log("Response shape:", {
+      reviewCount: response.reviews?.length,
+      hasMore: response.hasMore,
+      nextCursor: response.nextCursor ? "(present)" : null,
+    });
+
+    if (expectedReviewUlid) {
+      const found = response.reviews?.find(
+        (r) => (r.id || r.ulid) === expectedReviewUlid
+      );
+      if (found) {
+        success("Newly created review appears in /me/reviews");
+      } else {
+        fail(`Expected review ${expectedReviewUlid} not present in /me/reviews`);
+      }
+    }
+
+    // Confirm business is eager-loaded for profile-card rendering
+    const sample = response.reviews?.[0];
+    if (sample && (sample.business?.name || sample.business?.id)) {
+      success("Reviews include eager-loaded business payload");
+    } else if (sample) {
+      fail("Review missing business payload (expected for profile cards)", {
+        keys: Object.keys(sample),
+      });
+    }
+
+    return response;
+  } catch (err) {
+    fail("fetchMyReviews failed", err);
+    return null;
+  }
+}
+
+async function testFetchUserReviews(expectedReviewUlid) {
+  console.log("\n=== Testing fetchUserReviews (own ULID) ===");
+
+  try {
+    // Resolve current user's ULID
+    const me = await sdk.getCurrentUser();
+    const userUlid = me?.ulid || me?.id;
+
+    if (!userUlid) {
+      fail("Could not resolve current user ULID for fetchUserReviews test", { me });
+      return null;
+    }
+
+    log(`Fetching reviews for user: ${userUlid}`);
+    const response = await sdk.fetchUserReviews(userUlid, { perPage: 25 });
+
+    if (!response) {
+      fail("fetchUserReviews returned null");
+      return null;
+    }
+
+    success(`Fetched ${response.reviews?.length || 0} reviews for user`);
+
+    if (expectedReviewUlid) {
+      const found = response.reviews?.find(
+        (r) => (r.id || r.ulid) === expectedReviewUlid
+      );
+      if (found) {
+        success("Created review visible via fetchUserReviews");
+      } else {
+        fail(`Expected review ${expectedReviewUlid} not present in fetchUserReviews`);
+      }
+    }
+
+    return response;
+  } catch (err) {
+    fail("fetchUserReviews failed", err);
+    return null;
+  }
+}
+
+async function testFetchUserReviewsUnknownUlid() {
+  console.log("\n=== Testing fetchUserReviews with non-existent user (should 404) ===");
+
+  try {
+    await sdk.fetchUserReviews("01H000000000000000000NOPE00");
+    fail("Expected 404 but call succeeded");
+  } catch (err) {
+    const msg = (err.message || "").toLowerCase();
+    if (msg.includes("404") || msg.includes("not found")) {
+      success("Correctly returned 404 for unknown user");
+    } else {
+      fail("Unexpected error for invalid user ULID", err);
+    }
   }
 }
 
@@ -954,6 +1062,16 @@ async function main() {
 
     // Test fetchBusinessReviews with filters
     await testFetchReviewsWithFilters();
+    await delay(TEST_DELAY_MS);
+
+    // Test fetchMyReviews / fetchUserReviews — used by directory profile pages
+    await testFetchMyReviews(reviewUlid);
+    await delay(TEST_DELAY_MS);
+
+    await testFetchUserReviews(reviewUlid);
+    await delay(TEST_DELAY_MS);
+
+    await testFetchUserReviewsUnknownUlid();
     await delay(TEST_DELAY_MS);
 
     // Test updateBusinessReview
