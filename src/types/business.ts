@@ -219,8 +219,8 @@ export interface BusinessReview {
   notHelpfulCount: number;
   /** Percentage of helpful votes (0-100) */
   helpfulPercentage: number;
-  /** Whether current user marked as helpful */
-  isHelpful?: boolean;
+  /** Current user's vote on this review ('helpful', 'not_helpful', or null if not voted) */
+  userVote?: 'helpful' | 'not_helpful' | null;
   /** Business owner response */
   businessResponse?: string | null;
   /** When the business responded */
@@ -359,6 +359,8 @@ export interface BusinessReviewHelpfulResponse {
   helpful_count: number;
   /** Updated not helpful count */
   not_helpful_count: number;
+  /** Current user's vote after the action */
+  user_vote: 'helpful' | 'not_helpful' | null;
 }
 
 /**
