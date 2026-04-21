@@ -256,10 +256,16 @@ export interface BusinessCollection {
   color?: string;
   /** Whether this is the default collection */
   isDefault?: boolean;
+  /** Whether this collection is visible to other users */
+  isPublic?: boolean;
   /** Number of businesses in collection */
   businessCount?: number;
   /** Businesses in the collection */
   businesses?: Business[];
+  /** Creation timestamp */
+  createdAt?: string;
+  /** Last update timestamp */
+  updatedAt?: string;
 }
 
 /**
@@ -376,6 +382,8 @@ export interface BusinessCollectionInput {
   description?: string;
   icon?: string;
   color?: string;
+  /** Whether the collection is visible to other users (default true) */
+  isPublic?: boolean;
 }
 
 /**
