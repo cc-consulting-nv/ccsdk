@@ -70,6 +70,10 @@ export interface Business {
   };
   /** Whether business is verified */
   isVerified?: boolean;
+  /** Whether business has been claimed by an owner */
+  isClaimed?: boolean;
+  /** When the business was claimed (ISO 8601) */
+  claimedAt?: string;
   /** Whether business is featured */
   isFeatured?: boolean;
   /** Creation timestamp */
