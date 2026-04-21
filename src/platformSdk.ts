@@ -8457,7 +8457,6 @@ export class CcPlatformSdk {
       reviews: response.data || [],
       nextCursor: response.pagination?.nextCursor || null,
       hasMore: response.pagination?.hasMore || false,
-      averageRating: 0, // Average rating comes from the business object, not this endpoint
     };
   }
 

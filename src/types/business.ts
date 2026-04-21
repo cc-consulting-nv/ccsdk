@@ -402,5 +402,6 @@ export interface BusinessReviewListResponse {
   reviews: BusinessReview[];
   nextCursor: string | null;
   hasMore: boolean;
-  averageRating: number;
+  /** Aggregate average rating. Only returned for per-business listings; omitted for per-user lists where it is not meaningful. */
+  averageRating?: number;
 }
