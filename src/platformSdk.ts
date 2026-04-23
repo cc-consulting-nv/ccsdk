@@ -8165,8 +8165,8 @@ export class CcPlatformSdk {
     if (filters?.city) params.append("city", filters.city);
     if (filters?.search) params.append("search", filters.search);
     if (filters?.featured) params.append("featured", "true");
-    if (filters?.perPage) params.append("per_page", String(filters.perPage));
-    if (filters?.cursor) params.append("cursor", filters.cursor);
+    if (filters?.perPage != null) params.append("per_page", String(filters.perPage));
+    if (filters?.cursor != null && filters.cursor !== "") params.append("cursor", filters.cursor);
 
     const queryString = params.toString();
     const url = `/v1/businesses${queryString ? `?${queryString}` : ""}`;
@@ -8204,9 +8204,28 @@ export class CcPlatformSdk {
    * Search businesses.
    * GET /v1/businesses/search
    *
+   * Uses offset pagination (page / per_page). The returned `nextCursor` is a
+   * synthetic string containing the next page number so callers can pass it
+   * back uniformly with the cursor-based list methods on this SDK.
+   *
    * @param query - Search query
    * @param filters - Optional filters (city, category, region, perPage, page)
    * @returns Paginated list of matching businesses
+   *
+   * @example
+   * ```typescript
+   * const result = await sdk.searchBusinesses("pizza", {
+   *   city: "Port of Spain",
+   *   perPage: 20,
+   *   page: 1,
+   * });
+   * console.log(result.businesses, result.hasMore, result.nextCursor);
+   * ```
+   *
+   * @remarks
+   * BREAKING CHANGE (v1.0.53): previously returned `Business[]`. Now returns
+   * `BusinessListResponse` to expose pagination. Callers that treated the
+   * result as an array must be updated to read `.businesses`.
    *
    * @category Business Directory
    */
@@ -8218,8 +8237,8 @@ export class CcPlatformSdk {
     if (filters?.city) params.append("city", filters.city);
     if (filters?.category) params.append("category", filters.category);
     if (filters?.region) params.append("region", filters.region);
-    if (filters?.perPage) params.append("per_page", String(filters.perPage));
-    if (filters?.page) params.append("page", String(filters.page));
+    if (filters?.perPage != null) params.append("per_page", String(filters.perPage));
+    if (filters?.page != null) params.append("page", String(filters.page));
 
     const response = await this.client.get<{
       data: import("./types/business").Business[];
@@ -8229,14 +8248,20 @@ export class CcPlatformSdk {
     }>(`/v1/businesses/search?${params.toString()}`);
 
     const data = response.data || [];
-    const found = response.found ?? data.length;
-    const page = response.page ?? 1;
-    const perPage = response.per_page ?? (filters?.perPage ?? 20);
-    const hasMore = page * perPage < found;
+    const page = response.page ?? filters?.page ?? 1;
+    const perPage = response.per_page ?? filters?.perPage ?? 20;
+
+    // Prefer server-provided `found` for an exact hasMore. When the server
+    // omits `found` (older API, or cc-social#582 not yet deployed), fall back
+    // to a full-page heuristic: if we got a full page, assume there's more.
+    const hasMore =
+      response.found != null
+        ? page * perPage < response.found
+        : data.length >= perPage;
 
     return {
       businesses: data,
-      nextCursor: null,
+      nextCursor: hasMore ? String(page + 1) : null,
       hasMore,
     };
   }
@@ -8358,8 +8383,8 @@ export class CcPlatformSdk {
     if (filters?.city) params.append("city", filters.city);
     if (filters?.region) params.append("region", filters.region);
     if (filters?.subcategory) params.append("subcategory", filters.subcategory);
-    if (filters?.perPage) params.append("per_page", String(filters.perPage));
-    if (filters?.cursor) params.append("cursor", filters.cursor);
+    if (filters?.perPage != null) params.append("per_page", String(filters.perPage));
+    if (filters?.cursor != null && filters.cursor !== "") params.append("cursor", filters.cursor);
 
     const queryString = params.toString();
     const url = `/v1/business-categories/${slug}/businesses${queryString ? `?${queryString}` : ""}`;
