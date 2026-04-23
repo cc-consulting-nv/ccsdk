@@ -1,6 +1,6 @@
 {
   "name": "@cc-consulting-nv/ccsdk",
-  "version": "1.0.52",
+  "version": "1.0.53",
   "description": "Cache-aware CC API SDK using Dexie and TanStack Query core.",
   "type": "module",
   "main": "dist/index.js",
@@ -20,7 +20,7 @@
     "clean": "rimraf dist",
     "prepublishOnly": "npm run clean && npm run build",
     "lint": "echo \"lint not configured for sdk\"",
-    "test": "pnpm build && node --loader ./tests/extension-loader.mjs --test tests/httpClient.test.js tests/stories.test.js tests/platformSdk.cache.test.js tests/auth.test.js",
+    "test": "pnpm build && node --loader ./tests/extension-loader.mjs --test tests/httpClient.test.js tests/stories.test.js tests/platformSdk.cache.test.js tests/auth.test.js tests/businesses.test.js",
     "test:integration": "node ./tests/integration.js",
     "docs": "typedoc --options typedoc.html.json",
     "docs:html": "typedoc --options typedoc.html.json",
