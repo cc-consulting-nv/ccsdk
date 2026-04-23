@@ -8205,19 +8205,40 @@ export class CcPlatformSdk {
    * GET /v1/businesses/search
    *
    * @param query - Search query
-   * @param city - Optional city filter
-   * @returns List of matching businesses
+   * @param filters - Optional filters (city, category, region, perPage, page)
+   * @returns Paginated list of matching businesses
    *
    * @category Business Directory
    */
-  async searchBusinesses(query: string, city?: string): Promise<import("./types/business").Business[]> {
+  async searchBusinesses(
+    query: string,
+    filters?: { city?: string; category?: string; region?: string; perPage?: number; page?: number }
+  ): Promise<import("./types/business").BusinessListResponse> {
     const params = new URLSearchParams({ q: query });
-    if (city) params.append("city", city);
+    if (filters?.city) params.append("city", filters.city);
+    if (filters?.category) params.append("category", filters.category);
+    if (filters?.region) params.append("region", filters.region);
+    if (filters?.perPage) params.append("per_page", String(filters.perPage));
+    if (filters?.page) params.append("page", String(filters.page));
 
     const response = await this.client.get<{
       data: import("./types/business").Business[];
+      found?: number;
+      page?: number;
+      per_page?: number;
     }>(`/v1/businesses/search?${params.toString()}`);
-    return response.data || [];
+
+    const data = response.data || [];
+    const found = response.found ?? data.length;
+    const page = response.page ?? 1;
+    const perPage = response.per_page ?? (filters?.perPage ?? 20);
+    const hasMore = page * perPage < found;
+
+    return {
+      businesses: data,
+      nextCursor: null,
+      hasMore,
+    };
   }
 
   /**
