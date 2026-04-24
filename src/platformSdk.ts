@@ -3203,19 +3203,18 @@ export class CcPlatformSdk {
     };
   }
 
-  async createComment(data: {
-    parentId: Ulid;
-    title?: string;
-    body?: string;
-    images?: unknown;
-  }): Promise<Post> {
+  /**
+   * Create a comment on a post.
+   *
+   * @param payload - Fields accepted by {@code PUT /v1/comments} (for example {@code parentId}, {@code body},
+   *   {@code images}, {@code openGraph}, {@code embedUrl}, {@code title}). The body is forwarded as-is, like
+   *   {@link createPost}.
+   *
+   * @category Comments
+   */
+  async createComment(payload: Record<string, unknown>): Promise<Post> {
     const response = await this.client.put<ApiEnvelope<Post>>("/v1/comments", {
-      body: {
-        parentId: data.parentId,
-        title: data.title,
-        body: data.body,
-        images: data.images,
-      },
+      body: payload,
     });
 
     const comment = this.unwrap<Post>(response);
@@ -3227,7 +3226,10 @@ export class CcPlatformSdk {
       fullComment = await this.getPostByUlid(commentId, true);
     }
 
-    await this.refreshPostEngagement(data.parentId);
+    const parentId = payload.parentId;
+    if (typeof parentId === "string" && parentId.length > 0) {
+      await this.refreshPostEngagement(parentId);
+    }
 
     if (fullComment) {
       return fullComment;

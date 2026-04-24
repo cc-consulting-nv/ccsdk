@@ -326,6 +326,51 @@ test("createComment refreshes parent engagement exactly once when reread succeed
   assert.equal(engagementCalls, 1);
 });
 
+test("createComment forwards full request body (openGraph, embedUrl, etc.)", async () => {
+  let capturedBody;
+  const { sdk } = createSdk(async (url, init) => {
+    if (url === `${baseUrl}/v1/comments`) {
+      capturedBody = JSON.parse(init.body);
+      return new Response(JSON.stringify({
+        data: {
+          id: "comment-og",
+          parentId: "parent-og",
+          content: "with link preview",
+        },
+      }), { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/posts`) {
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/posts/engagement`) {
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, new MockCache());
+
+  const openGraph = { title: "Example", url: "https://example.com" };
+  await sdk.createComment({
+    parentId: "parent-og",
+    body: "check this",
+    images: ["img-1"],
+    embedUrl: "https://example.com/page",
+    openGraph,
+    title: "optional title",
+  });
+
+  assert.deepEqual(capturedBody, {
+    parentId: "parent-og",
+    body: "check this",
+    images: ["img-1"],
+    embedUrl: "https://example.com/page",
+    openGraph,
+    title: "optional title",
+  });
+});
+
 test("repost refreshes original engagement exactly once when reread succeeds", async () => {
   let engagementCalls = 0;
   const cache = new MockCache();
