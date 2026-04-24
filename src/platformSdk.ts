@@ -6706,7 +6706,7 @@ export class CcPlatformSdk {
   async pollBatchGet(postUlids: string[]): Promise<BatchPollsResponse> {
     const response = await this.client.post<BatchPollsResponse>(
       "/v1/posts/polls/batch",
-      { body: { postUlids } },
+      { body: { ulids: postUlids } },
     );
     return this.unwrap(response);
   }
