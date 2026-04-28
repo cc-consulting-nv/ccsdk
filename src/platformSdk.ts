@@ -39,6 +39,11 @@ import {
   type DashboardListeningDistribution,
   type DashboardHourlyActiveUsers,
   type AudioAd,
+  type AdSlot,
+  type AdClickResponse,
+  type AdImpressionInput,
+  type BoostPostInput,
+  type FeedMixOptions,
   type ModerationQueuePost,
   type ModerationQueueResponse,
   type ModerationActionResponse,
@@ -7614,6 +7619,88 @@ export class CcPlatformSdk {
   async getAudioAds(): Promise<AudioAd[]> {
     const response = await this.client.get<ApiEnvelope<AudioAd[]>>("/v1/ads/audio");
     return response?.data ?? [];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Creator Boost Ads (PRD_ADS.md §6 / §11)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Boost an existing post.
+   *
+   * When `amountCents` is provided the server runs the v1 paid boost
+   * flow (Stripe PaymentIntent + trust-based auto-approve from PRD §10).
+   * When omitted, the legacy draft-boost flow runs unchanged so the
+   * cutover is incremental.
+   *
+   * POST /v1/ads/boosted
+   *
+   * @param input Boost parameters (post ULID, dates, optional amount)
+   * @returns Raw boost response payload (shape matches AdResourceCollection)
+   */
+  async boostPost(input: BoostPostInput): Promise<unknown> {
+    return this.client.post<unknown>("/v1/ads/boosted", { body: input });
+  }
+
+  /**
+   * Fire-and-forget impression beacon for a served ad.
+   *
+   * Per PRD_ADS.md §11 — increments ad_metadata.impressions, writes a
+   * post_impressions row tagged is_ad=true, and bumps the per-user
+   * frequency cap (auth users only).
+   *
+   * Failures are swallowed — impression accounting must never break
+   * ad rendering. Uses keepalive so beacons fired during page unload
+   * still complete.
+   *
+   * POST /v1/posts/ads/{ulid}/impression
+   */
+  recordAdImpression(postUlid: string, options: AdImpressionInput = {}): void {
+    if (!postUlid) {
+      return;
+    }
+
+    void this.client
+      .post<unknown>(`/v1/posts/ads/${postUlid}/impression`, {
+        body: {
+          slot: options.slot ?? "feed",
+          context: options.context ?? "feed",
+        },
+      })
+      .catch(() => {
+        // Swallow — beacon failures are non-fatal.
+      });
+  }
+
+  /**
+   * Record an ad click and resolve the click-through target URL.
+   *
+   * Per PRD_ADS.md §11 — increments ad_metadata.clicks, recomputes CTR
+   * server-side, and returns where the client should navigate. Boost
+   * ads point at the parent organic post; pure ads point at the ad
+   * post page itself.
+   *
+   * POST /v1/posts/ads/{ulid}/click
+   */
+  async recordAdClick(postUlid: string): Promise<AdClickResponse> {
+    return this.client.post<AdClickResponse>(`/v1/posts/ads/${postUlid}/click`);
+  }
+
+  /**
+   * Fetch a small set of eligible boost ads to interleave into a feed.
+   *
+   * Per PRD_ADS.md §9 — server applies tenant + approved + window
+   * scopes plus the per-user frequency cap (auth users only).
+   *
+   * GET /v1/posts/ads/feed-mix
+   *
+   * @param options Optional count (1-5, default 2) + slot (default 'feed')
+   * @returns Raw feed-mix payload (shape matches AdResourceCollection)
+   */
+  async getAdFeedMix(options: FeedMixOptions = {}): Promise<unknown> {
+    return this.client.get<unknown>("/v1/posts/ads/feed-mix", {
+      query: options as Record<string, unknown>,
+    });
   }
 
   // ---------------------------------------------------------------------------

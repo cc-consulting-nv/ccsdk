@@ -1663,6 +1663,55 @@ export interface AudioAd {
 }
 
 // ---------------------------------------------------------------------------
+// Creator Boost Ads (PRD_ADS.md §6 / §11)
+// ---------------------------------------------------------------------------
+
+/** Slot key for ad selection + frequency-cap accounting. */
+export type AdSlot = "feed" | "video_preroll" | "video_midroll" | "banner";
+
+/** Body for POST /v1/ads/boosted. */
+export interface BoostPostInput {
+  /** ULID of the post to boost. */
+  id: string;
+  /** ISO date string for boost start. */
+  startDate: string;
+  /** ISO date string for boost end (must be after startDate). */
+  endDate: string;
+  /**
+   * Charge amount in cents. When provided, runs the v1 paid boost flow
+   * (Stripe charge + trust-based auto-approve). When omitted, the
+   * legacy draft-boost flow runs unchanged.
+   */
+  amountCents?: number;
+}
+
+/** Body for POST /v1/posts/ads/{ulid}/impression. */
+export interface AdImpressionInput {
+  /** Slot the ad rendered in. Default 'feed'. */
+  slot?: AdSlot;
+  /** Free-form context tag for analytics. Default 'feed'. */
+  context?: string;
+}
+
+/** Response shape for POST /v1/posts/ads/{ulid}/click. */
+export interface AdClickResponse {
+  /** Where the client should navigate after the click. */
+  target_url: string;
+  /** Total clicks on this ad after the increment. */
+  clicks: number;
+  /** Recomputed CTR percent (clicks/impressions*100, 2dp). */
+  ctr: number;
+}
+
+/** Query options for GET /v1/posts/ads/feed-mix. */
+export interface FeedMixOptions {
+  /** Number of ads to return (1-5). Default 2. */
+  count?: number;
+  /** Slot key the caller will render the ads in. Default 'feed'. */
+  slot?: AdSlot;
+}
+
+// ---------------------------------------------------------------------------
 // Passkey (WebAuthn) Types
 // ---------------------------------------------------------------------------
 
