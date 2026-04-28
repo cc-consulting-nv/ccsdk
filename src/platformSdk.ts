@@ -7628,6 +7628,23 @@ export class CcPlatformSdk {
   // ---------------------------------------------------------------------------
 
   /**
+   * List the authenticated creator's own boosts (every status).
+   *
+   * Per ADS_ROADMAP.md §1.FE-7 — companion to the public feed-mix
+   * endpoint which only returns approved + in-window ads. This call
+   * shows the creator their own boosts regardless of status so they
+   * can spot a PENDING boost waiting on review or a finished one
+   * whose performance they want to inspect.
+   *
+   * GET /v1/ads/my-boosts
+   *
+   * @returns Raw response payload (AdResourceCollection-shaped).
+   */
+  async listMyBoosts(): Promise<unknown> {
+    return this.client.get<unknown>("/v1/ads/my-boosts");
+  }
+
+  /**
    * Boost an existing post.
    *
    * When `amountCents` is provided the server runs the v1 paid boost
