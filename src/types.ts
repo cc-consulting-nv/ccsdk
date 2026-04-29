@@ -378,6 +378,149 @@ export interface ProfileEngagement {
 }
 
 /**
+ * Derived follow/button state from the two booleans
+ * (isFollowing / isFollowingYou).
+ *
+ * @enum {string}
+ * @category Users
+ */
+export type FollowingState = "not-following" | "following" | "follows-you" | "mutual";
+
+/**
+ * Resolve a follow-button state from two booleans.
+ *
+ * | State | you → other | other → you | button text |
+ * |---|---|---|---|
+ * | `not-following` | no | no | Follow |
+ * | `following` | yes | no | Following |
+ * | `follows-you` | no | yes | Follow Back |
+ * | `mutual` | yes | yes | Friends |
+ *
+ * @param isFollowing - Whether the current user follows the target
+ * @param isFollowingYou - Whether the target follows the current user
+ * @returns The resolved following state
+ * @category Users
+ */
+export function getFollowingState(
+  isFollowing: boolean | undefined,
+  isFollowingYou: boolean | undefined,
+): FollowingState {
+  const following = !!isFollowing;
+  const followingYou = !!isFollowingYou;
+  if (following && followingYou) return "mutual";
+  if (following) return "following";
+  if (followingYou) return "follows-you";
+  return "not-following";
+}
+
+/**
+ * Button text for a given following state.
+ *
+ * @param state - The resolved FollowingState
+ * @returns The display text to use on a follow button
+ * @category Users
+ */
+export function followingText(state: FollowingState): string {
+  switch (state) {
+    case "mutual":
+      return "Friends";
+    case "following":
+      return "Following";
+    case "follows-you":
+      return "Follow Back";
+    case "not-following":
+      return "Follow";
+  }
+}
+
+/**
+ * Icon name (mdi) for a given following state.
+ *
+ * @param state - The resolved FollowingState
+ * @returns The Material Design icon identifier
+ * @category Users
+ */
+export function followingIcon(state: FollowingState): string {
+  switch (state) {
+    case "mutual":
+      return "mdi-account-multiple-check";
+    case "following":
+      return "mdi-account-check";
+    case "follows-you":
+      return "mdi-account-arrow-left";
+    case "not-following":
+      return "mdi-account-plus-outline";
+  }
+}
+
+/**
+ * Whether the relationship is mutual ("Friends").
+ *
+ * @category Users
+ */
+export function isFriend(
+  isFollowing: boolean | undefined,
+  isFollowingYou: boolean | undefined,
+): boolean {
+  return !!isFollowing && !!isFollowingYou;
+}
+
+/**
+ * Canonical relationship label for a state.
+ *
+ * Use for profile chrome / list rows (NOT button text — use `followingText`).
+ *
+ * | State | label (singular) | label (plural) |
+ * |---|---|---|
+ * | `mutual` | Friend | Friends |
+ * | `following` | Following | Following |
+ * | `follows-you` | Follower | Followers |
+ * | `not-following` | null | null |
+ *
+ * @category Users
+ */
+export function connectionLabel(state: FollowingState, plural = false): string | null {
+  switch (state) {
+    case "mutual":
+      return plural ? "Friends" : "Friend";
+    case "following":
+      return "Following";
+    case "follows-you":
+      return plural ? "Followers" : "Follower";
+    case "not-following":
+      return null;
+  }
+}
+
+/**
+ * Resolve follow-button variants from ProfileEngagement.
+ * Convenience function that pulls isFollowing from engagement
+ * and delegates to getFollowingState() / followingText() / followingIcon().
+ *
+ * @param engagement - A ProfileEngagement (or partial/undefined)
+ * @returns Object with state, text, icon, isFriend, and relationshipLabel
+ * @category Users
+ */
+export function followButton(
+  engagement?: Partial<Pick<ProfileEngagement, "isFollowing" | "isFollowingYou">>,
+): {
+  state: FollowingState;
+  text: string;
+  icon: string;
+  isFriend: boolean;
+  relationshipLabel: string | null;
+} {
+  const state = getFollowingState(engagement?.isFollowing, engagement?.isFollowingYou);
+  return {
+    state,
+    text: followingText(state),
+    icon: followingIcon(state),
+    isFriend: state === "mutual",
+    relationshipLabel: connectionLabel(state),
+  };
+}
+
+/**
  * A user's public profile.
  *
  * @example
