@@ -8397,8 +8397,14 @@ export class CcPlatformSdk {
       };
     }>(url);
 
+    // This endpoint returns snake_case keys unlike /v1/businesses (camelCase).
+    // Normalize to camelCase so consumers get a consistent Business shape.
+    const businesses = (response?.businesses?.data || []).map(
+      (b) => snakeToCamelObject(b)
+    );
+
     return {
-      businesses: response?.businesses?.data || [],
+      businesses,
       nextCursor: response?.businesses?.next_cursor || null,
       hasMore: !!response?.businesses?.next_cursor,
     };
