@@ -2175,6 +2175,9 @@ export class CcPlatformSdk {
         if (file.size > MAX_SIZE_DEFAULT) {
           return "File exceeds the 100MB upload limit";
         }
+        if (!file.type || file.type === "application/octet-stream") {
+          return "Please select a file with a valid MIME type";
+        }
         return null;
     }
   }
