@@ -29,14 +29,7 @@
  * @category Uploads
  */
 import type { HttpClient } from "./httpClient";
-
-/**
- * Sanitize a file name for safe use in an S3 key path.
- * Replaces path separators and other suspicious characters with underscores.
- */
-function sanitizeFileName(name: string): string {
-  return name.replace(/[\\/]/g, "_").slice(0, 200);
-}
+import { sanitizeFileName } from "./utils/s3Key";
 
 /**
  * Configuration options for multipart uploads.
