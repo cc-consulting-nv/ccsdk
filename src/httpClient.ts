@@ -186,11 +186,31 @@ export class HttpClient {
     const contentType = response.headers.get("Content-Type") || "";
     const isMsgpack = contentType.includes("msgpack");
 
+    // Reject oversized responses before allocating the body to prevent OOM
+    // from malicious or runaway payloads. Header check is best-effort
+    // (Content-Length may be missing under chunked encoding); post-allocation
+    // check below is the authoritative gate.
+    const MAX_RESPONSE_BYTES = 50 * 1024 * 1024;
+    const declaredLength = response.headers.get("Content-Length");
+    if (declaredLength) {
+      const n = parseInt(declaredLength, 10);
+      if (Number.isFinite(n) && n > MAX_RESPONSE_BYTES) {
+        throw new TypeError(
+          `Response body too large: declared ${n} bytes (max ${MAX_RESPONSE_BYTES})`
+        );
+      }
+    }
+
     let parsed: unknown = null;
 
     if (isMsgpack) {
       // Parse MessagePack binary response
       const buffer = await response.arrayBuffer();
+      if (buffer.byteLength > MAX_RESPONSE_BYTES) {
+        throw new TypeError(
+          `MessagePack response too large: ${buffer.byteLength} bytes (max ${MAX_RESPONSE_BYTES})`
+        );
+      }
       if (buffer.byteLength > 0) {
         try {
           parsed = msgpackDecode(new Uint8Array(buffer));
@@ -202,6 +222,11 @@ export class HttpClient {
     } else {
       // Parse JSON response
       const text = await response.text();
+      if (text.length > MAX_RESPONSE_BYTES) {
+        throw new TypeError(
+          `JSON response too large: ${text.length} bytes (max ${MAX_RESPONSE_BYTES})`
+        );
+      }
       if (text) {
         try {
           parsed = JSON.parse(text);
