@@ -31,6 +31,14 @@
 import type { HttpClient } from "./httpClient";
 
 /**
+ * Sanitize a file name for safe use in an S3 key path.
+ * Replaces path separators and other suspicious characters with underscores.
+ */
+function sanitizeFileName(name: string): string {
+  return name.replace(/[\\/]/g, "_").slice(0, 200);
+}
+
+/**
  * Configuration options for multipart uploads.
  *
  * @category Uploads
@@ -197,7 +205,7 @@ export class MultipartUpload {
         "/v1/media/multipart/initialize",
         {
           body: {
-            key: this.key || `media/uploads/${Date.now()}-${this.file.name}`,
+            key: this.key || `media/uploads/${Date.now()}-${sanitizeFileName(this.file.name)}`,
             content_type: this.file.type,
             file_size: this.file.size,
           },
