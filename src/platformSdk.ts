@@ -2,6 +2,7 @@ import { CacheDB, createCache } from "./cache/cacheDB";
 import { HttpClient, type HttpClientOptions } from "./httpClient";
 import { HybridTokenProvider, RefreshCoordinator, type SessionStore, type TokenProvider } from "./auth";
 import { MultipartUpload, type MultipartUploadOptions, type UploadResult } from "./multipartUpload";
+import { sanitizeFileName } from "./utils/s3Key";
 import {
   type ApiEnvelope,
   type AuthTokens,
@@ -2091,7 +2092,7 @@ export class CcPlatformSdk {
     }
 
     const timestamp = Date.now();
-    const sanitizedFilename = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+    const sanitizedFilename = sanitizeFileName(file.name);
     const key = `tmp/${options.userUlid}/${timestamp}-${sanitizedFilename}`;
 
     // Use direct upload for files < 10MB (faster and simpler)
