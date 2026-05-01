@@ -467,3 +467,356 @@ test("quotePost refreshes original engagement exactly once when reread succeeds"
   assert.equal(quote.content, "hydrated quote");
   assert.equal(engagementCalls, 1);
 });
+
+// Helper: a MockCache that tracks users like the real CacheDB does
+class MockCacheWithUsers extends MockCache {
+  users = new Map();
+
+  async setUser(id, user) {
+    this.users.set(id, this.clone(user));
+  }
+
+  async getUser(id) {
+    return this.users.get(id) ?? null;
+  }
+
+  async getUserByUsername(username) {
+    const lower = username.toLowerCase();
+    for (const [, user] of this.users) {
+      if (user?.username?.toLowerCase() === lower) return this.clone(user);
+    }
+    return null;
+  }
+
+  async deleteUser(id) {
+    this.users.delete(id);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// follow / unfollow — read-after-write on /v1/users/me
+// ─────────────────────────────────────────────────────────────────────────
+
+test("followUser calls GET /v1/users/me after following and caches the response", async () => {
+  const calls = [];
+  const mockCache = new MockCacheWithUsers();
+  const { sdk } = createSdk(async (url, init) => {
+    calls.push({ url, method: init.method || "GET" });
+
+    if (url === `${baseUrl}/v1/profile/johndoe/follow`) {
+      return new Response({ ok: true }, { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/users/me`) {
+      return new Response(JSON.stringify({
+        data: {
+          ulid: "meUid",
+          followingCount: 42,
+        },
+      }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, mockCache);
+
+  await sdk.followUser("johndoe");
+
+  // verify the read-after-write call happened
+  const meCalls = calls.filter((c) => c.url === `${baseUrl}/v1/users/me`);
+  assert.equal(meCalls.length, 1, "should fetch /v1/users/me after follow");
+
+  // verify the response is cached with incremented followingCount
+  const cached = await mockCache.users.get("meUid");
+  assert.ok(cached, "me profile should be cached");
+  assert.equal(cached.followingCount, 42);
+});
+
+test("followUser refreshes the acting profile cache via /v1/profile/ulid/{managedUserUlid}", async () => {
+  const calls = [];
+  const mockCache = new MockCacheWithUsers();
+  const managedUserUlid = "01hx9876543210fedcba";
+  const actingProfileUrl = `${baseUrl}/v1/profile/ulid/${managedUserUlid}`;
+  const { sdk } = createSdk(async (url, init) => {
+    calls.push({ url, method: init.method || "GET" });
+
+    if (url === `${baseUrl}/v1/profile/johndoe/follow`) {
+      return new Response({ ok: true }, { status: 200 });
+    }
+
+    if (url === actingProfileUrl) {
+      return new Response(JSON.stringify({
+        data: {
+          ulid: managedUserUlid,
+          followingCount: 42,
+        },
+      }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, mockCache);
+
+  sdk.setActingContext({
+    token: "acting-token-123",
+    managedUserUlid,
+    managedUserName: "Managed User",
+    managedUserUsername: "manageduser",
+    managedUserAvatar: "avatars/managed.jpg",
+    expiresAt: new Date(Date.now() + 300000).toISOString(),
+    grantedScopes: ["edit_profile", "view_content"],
+  });
+
+  await sdk.followUser("johndoe");
+
+  const actingProfileCalls = calls.filter((c) => c.url === actingProfileUrl);
+  const meCalls = calls.filter((c) => c.url === `${baseUrl}/v1/users/me`);
+  assert.equal(actingProfileCalls.length, 1, "should fetch acting profile after follow");
+  assert.equal(meCalls.length, 0, "should not fetch /v1/users/me when acting context is set");
+
+  const cached = await mockCache.users.get(managedUserUlid);
+  assert.ok(cached, "acting profile should be cached");
+  assert.equal(cached.followingCount, 42);
+});
+
+test("unfollowUser calls GET /v1/users/me after unfollowing and caches the response", async () => {
+  const calls = [];
+  const mockCache = new MockCacheWithUsers();
+  const { sdk } = createSdk(async (url, init) => {
+    calls.push({ url, method: init.method || "GET" });
+
+    if (url === `${baseUrl}/v1/profile/johndoe/follow`) {
+      assert.equal(init.method, "DELETE");
+      return new Response({ ok: true }, { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/users/me`) {
+      return new Response(JSON.stringify({
+        data: {
+          ulid: "meUid",
+          followingCount: 41,
+        },
+      }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, mockCache);
+
+  await sdk.unfollowUser("johndoe");
+
+  const meCalls = calls.filter((c) => c.url === `${baseUrl}/v1/users/me`);
+  assert.equal(meCalls.length, 1, "should fetch /v1/users/me after unfollow");
+
+  const cached = await mockCache.users.get("meUid");
+  assert.ok(cached, "me profile should be cached");
+  assert.equal(cached.followingCount, 41);
+});
+
+test("follow then unfollow yields decremented followingCount", async () => {
+  const calls = [];
+  let meCallCount = 0;
+  const mockCache = new MockCacheWithUsers();
+  const { sdk } = createSdk(async (url, init) => {
+    calls.push({ url, method: init.method || "GET" });
+
+    if (url === `${baseUrl}/v1/profile/johndoe/follow`) {
+      return new Response({ ok: true }, { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/users/me`) {
+      meCallCount += 1;
+      // The first /v1/users/me call (after follow) returns incremented,
+      // the second (after unfollow call — which returns decremented)
+      return new Response(JSON.stringify({
+        data: {
+          ulid: "meUid",
+          followingCount: meCallCount === 1 ? 42 : 41,
+        },
+      }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, mockCache);
+
+  await sdk.followUser("johndoe");
+  assert.equal((await mockCache.users.get("meUid")).followingCount, 42);
+
+  await sdk.unfollowUser("johndoe");
+  assert.equal((await mockCache.users.get("meUid")).followingCount, 41);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// block / unblock — read-after-write on /v1/users/me
+// ─────────────────────────────────────────────────────────────────────────
+
+test("blockUser calls GET /v1/users/me after blocking", async () => {
+  const calls = [];
+  const mockCache = new MockCacheWithUsers();
+  const { sdk } = createSdk(async (url, init) => {
+    calls.push({ url, method: init.method || "GET" });
+
+    if (url === `${baseUrl}/v1/users/blockedUid/block`) {
+      return new Response({ ok: true }, { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/users/me`) {
+      return new Response(JSON.stringify({
+        data: {
+          ulid: "meUid",
+          blockedCount: 1,
+        },
+      }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, mockCache);
+
+  await sdk.blockUser("blockedUid");
+
+  const meCalls = calls.filter((c) => c.url === `${baseUrl}/v1/users/me`);
+  assert.equal(meCalls.length, 1, "should fetch /v1/users/me after block");
+
+  const cached = await mockCache.getUser("meUid");
+  assert.ok(cached, "me profile should be cached");
+  assert.equal(cached.blockedCount, 1);
+});
+
+test("block then unblock yields incremented then decremented blockedCount", async () => {
+  const meCallCount = { n: 0 };
+  const mockCache = new MockCacheWithUsers();
+  const { sdk } = createSdk(async (url, init) => {
+    if (url === `${baseUrl}/v1/users/blockedUid/block`) {
+      if (init.method === "POST") {
+        return new Response({ ok: true }, { status: 200 });
+      }
+      if (init.method === "DELETE") {
+        return new Response({ ok: true }, { status: 200 });
+      }
+    }
+
+    if (url === `${baseUrl}/v1/users/me`) {
+      meCallCount.n += 1;
+      return new Response(JSON.stringify({
+        data: {
+          ulid: "meUid",
+          blockedCount: meCallCount.n === 1 ? 1 : 0,
+        },
+      }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, mockCache);
+
+  await sdk.blockUser("blockedUid");
+  assert.equal((await mockCache.getUser("meUid")).blockedCount, 1, "blockedCount should increment after block");
+
+  await sdk.unblockUser("blockedUid");
+  const cached = await mockCache.getUser("meUid");
+  assert.equal(cached.blockedCount, 0, "blockedCount should decrement after unblock");
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// mute / unmute — read-after-write on /v1/users/me
+// ─────────────────────────────────────────────────────────────────────────
+
+test("muteUser calls GET /v1/users/me and muting increments mutedCount", async () => {
+  const calls = [];
+  const mockCache = new MockCacheWithUsers();
+  const { sdk } = createSdk(async (url, init) => {
+    calls.push({ url, method: init.method || "GET" });
+
+    if (url === `${baseUrl}/v1/users/spammerUid/mute`) {
+      return new Response({ ok: true }, { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/users/me`) {
+      return new Response(JSON.stringify({
+        data: {
+          ulid: "meUid",
+          mutedCount: 1,
+        },
+      }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, mockCache);
+
+  await sdk.muteUser("spammerUid");
+
+  const meCalls = calls.filter((c) => c.url === `${baseUrl}/v1/users/me`);
+  assert.equal(meCalls.length, 1, "should fetch /v1/users/me after mute");
+
+  const cached = await mockCache.getUser("meUid");
+  assert.ok(cached, "me profile should be cached");
+  assert.equal(cached.mutedCount, 1, "mutedCount should increment after mute");
+});
+
+test("unmuteUser calls GET /v1/users/me and unmuting decrements mutedCount", async () => {
+  const meCallCount = { n: 0 };
+  const mockCache = new MockCacheWithUsers();
+  const { sdk } = createSdk(async (url, init) => {
+    if (url === `${baseUrl}/v1/users/spammerUid/mute`) {
+      if (init.method === "POST") {
+        return new Response({ ok: true }, { status: 200 });
+      }
+      if (init.method === "DELETE") {
+        return new Response({ ok: true }, { status: 200 });
+      }
+    }
+
+    if (url === `${baseUrl}/v1/users/me`) {
+      meCallCount.n += 1;
+      return new Response(JSON.stringify({
+        data: {
+          ulid: "meUid",
+          mutedCount: meCallCount.n === 1 ? 1 : 0,
+        },
+      }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, mockCache);
+
+  await sdk.muteUser("spammerUid");
+  assert.equal((await mockCache.getUser("meUid")).mutedCount, 1, "mutedCount should increment after mute");
+
+  await sdk.unmuteUser("spammerUid");
+  const cached = await mockCache.getUser("meUid");
+  assert.equal(cached.mutedCount, 0, "mutedCount should decrement after unmute");
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// followersCount — we verify that /v1/users/me is called after follow and that all
+// profile fields (followersCount, followingCount, displayName) are cached
+// ─────────────────────────────────────────────────────────────────────────
+
+test("followUser caches full profile with both followersCount and followingCount", async () => {
+  const calls = [];
+  const mockCache = new MockCacheWithUsers();
+  const { sdk } = createSdk(async (url, init) => {
+    calls.push({ url, method: init.method || "GET" });
+
+    if (url === `${baseUrl}/v1/profile/johndoe/follow`) {
+      return new Response({ ok: true }, { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/users/me`) {
+      return new Response(JSON.stringify({
+        data: {
+          ulid: "meUid",
+          displayName: "Me",
+          followersCount: 7,
+          followingCount: 42,
+        },
+      }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, mockCache);
+
+  await sdk.followUser("johndoe");
+
+  const cached = await mockCache.getUser("meUid");
+  assert.ok(cached, "me profile should be cached");
+  assert.equal(cached.followersCount, 7, "followersCount should be present");
+  assert.equal(cached.followingCount, 42, "followingCount should be present");
+  assert.equal(cached.displayName, "Me", "displayName should be cached");
+});
