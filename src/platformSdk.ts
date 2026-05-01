@@ -4466,6 +4466,7 @@ export class CcPlatformSdk {
 
     // Invalidate cached profile so next fetch gets updated ProfileEngagement
     await this.invalidateUserCacheByUsername(username);
+    await this.refreshCurrentUserCache();
   }
 
   /**
@@ -4480,6 +4481,7 @@ export class CcPlatformSdk {
 
     // Invalidate cached profile so next fetch gets updated ProfileEngagement
     await this.invalidateUserCacheByUsername(username);
+    await this.refreshCurrentUserCache();
   }
 
   /**
@@ -4571,6 +4573,39 @@ export class CcPlatformSdk {
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
+   * Refresh current user profile from the API and cache it.
+   * Used after profile-affecting mutations (follow, unfollow, block, unblock, mute, unmute)
+   * to keep the cached `getCurrentUser` response up to date.
+   *
+   * @internal
+   */
+  private async refreshCurrentUserCache(): Promise<void> {
+    const tokens = this.tokens.getTokens();
+    if (!tokens?.accessToken) {
+      return;
+    }
+
+    const cache = await this.cachePromise;
+
+    try {
+      const url = this.actingContext
+        ? `/v1/profile/ulid/${encodeURIComponent(this.actingContext.managedUserUlid)}`
+        : "/v1/users/me";
+      const apiResponse = await this.client.get<ApiEnvelope<UserProfile>>(url);
+      const unwrapped = this.unwrap<UserProfile>(apiResponse);
+
+      if (unwrapped?.ulid) {
+        const rawData = JSON.parse(JSON.stringify(unwrapped)) as Record<string, unknown>;
+        const normalized = this.normalizeUserProfile(rawData);
+        await cache.setUser(normalized.ulid, normalized);
+      }
+    } catch (error) {
+      // Best-effort: don't throw if the API is temporarily unavailable
+      this.log('⚠️ SDK: Failed to refresh current user cache:', error);
+    }
+  }
+
+  /**
    * Block a user.
    *
    * Blocked users cannot see your content or interact with you.
@@ -4581,6 +4616,7 @@ export class CcPlatformSdk {
    */
   async blockUser(userId: Ulid): Promise<void> {
     await this.client.post(`/v1/users/${encodeURIComponent(userId)}/block`);
+    await this.refreshCurrentUserCache();
   }
 
   /**
@@ -4592,6 +4628,7 @@ export class CcPlatformSdk {
    */
   async unblockUser(userId: Ulid): Promise<void> {
     await this.client.delete(`/v1/users/${encodeURIComponent(userId)}/block`);
+    await this.refreshCurrentUserCache();
   }
 
   /**
@@ -4619,6 +4656,7 @@ export class CcPlatformSdk {
    */
   async muteUser(userId: Ulid): Promise<void> {
     await this.client.post(`/v1/users/${encodeURIComponent(userId)}/mute`);
+    await this.refreshCurrentUserCache();
   }
 
   /**
@@ -4630,6 +4668,7 @@ export class CcPlatformSdk {
    */
   async unmuteUser(userId: Ulid): Promise<void> {
     await this.client.delete(`/v1/users/${encodeURIComponent(userId)}/mute`);
+    await this.refreshCurrentUserCache();
   }
 
   /**
