@@ -160,8 +160,9 @@ export class CacheDB {
    *
    * @param ttlMs - Time-to-live in milliseconds (default: 24 hours)
    * @param dbName - Optional custom database name
+   * @param maxCapacity - Optional max entries per CacheEntry store (for LRU eviction)
    */
-  constructor(ttlMs: number = 24 * 60 * 60 * 1000, dbName?: string) {
+  constructor(ttlMs: number = 24 * 60 * 60 * 1000, dbName?: string, private readonly maxCapacity?: number) {
     this.ttlMs = ttlMs;
     this.db = new PlatformCacheDB(dbName);
   }
@@ -619,18 +620,90 @@ export class CacheDB {
   }
 
   /**
-   * Clear all cached data from all stores.
-   * Use with caution - this removes all offline data.
+    * Clear all cached data from all stores.
+    * Use with caution - this removes all offline data.
+    */
+   async clearAll(): Promise<void> {
+     await Promise.all([
+       this.db.posts.clear(),
+       this.db.users.clear(),
+       this.db.feedResources.clear(),
+       this.db.notifications.clear(),
+       this.db.notificationFeeds.clear(),
+       this.db.metadata.clear(),
+     ]);
+   }
+
+  /**
+   * Trim expired and overflow entries from CacheEntry-type stores.
+   *
+   * Performs two cleanup operations across posts, users, and notifications
+   * (the stores that hold `CacheEntry<T>` records):
+   * 1. Removes entries whose `cachedAt` is past TTL (the same staleness
+   *    semantic that read paths apply, so trim and read agree).
+   * 2. If maxCapacity is set and a store exceeds it after stale removal,
+   *    evicts the N entries with the lowest accessCount (LRU by frequency).
+   *
+   * `feedResources` is also trimmed by cachedAt TTL, but does not participate
+   * in capacity-based eviction because it lacks an accessCount field.
+   * `notificationFeeds` has no cachedAt and is not trimmed here.
+   *
+   * Should be called periodically by the application (e.g., on app activation
+   * or periodically via setInterval) to prevent the cache from growing unbounded.
+   *
+   * @returns Total number of entries removed across all stores
    */
-  async clearAll(): Promise<void> {
-    await Promise.all([
-      this.db.posts.clear(),
-      this.db.feedResources.clear(),
-      this.db.notifications.clear(),
-      this.db.notificationFeeds.clear(),
-      this.db.metadata.clear(),
-    ]);
-  }
+   async trimCache(): Promise<number> {
+     const entryStores: EntityTable<CacheEntry<any>, "id">[] = [
+       this.db.posts,
+       this.db.users,
+       this.db.notifications,
+     ];
+     let totalRemoved = 0;
+
+     for (const store of entryStores) {
+       if (!store) continue;
+
+       const entries = await store.toArray();
+       const nonStaleEntries: CacheEntry<any>[] = [];
+       const staleIds: string[] = [];
+
+       for (const entry of entries) {
+         if (this.isExpired(entry.cachedAt)) {
+           staleIds.push(entry.id);
+         } else {
+           nonStaleEntries.push(entry);
+         }
+       }
+
+       const toRemove = [...staleIds];
+
+       if (this.maxCapacity && nonStaleEntries.length > this.maxCapacity) {
+         const sorted = [...nonStaleEntries].sort((a, b) => a.accessCount - b.accessCount);
+         const excess = sorted.length - this.maxCapacity;
+         toRemove.push(...sorted.slice(0, excess).map(e => e.id));
+       }
+
+       if (toRemove.length > 0) {
+         await store.bulkDelete(toRemove);
+         totalRemoved += toRemove.length;
+       }
+     }
+
+     // feedResources: TTL-only trim (no LRU since no accessCount).
+     if (this.db.feedResources) {
+       const feeds = await this.db.feedResources.toArray();
+       const staleRoutes = feeds
+         .filter((f) => this.isExpired(f.cachedAt))
+         .map((f) => f.route);
+       if (staleRoutes.length > 0) {
+         await this.db.feedResources.bulkDelete(staleRoutes);
+         totalRemoved += staleRoutes.length;
+       }
+     }
+
+     return totalRemoved;
+   }
 
   // ========================================================================
   // Notifications
@@ -725,11 +798,16 @@ export class CacheDB {
    * @param value - The value to store
    */
   async setMetadata(key: string, value: any): Promise<void> {
-    await this.db.metadata.put({
-      key,
-      value,
-      updatedAt: Date.now(),
-    });
+    try {
+      const sanitized = this.sanitizeForStorage(value);
+      await this.db.metadata.put({
+        key,
+        value: sanitized,
+        updatedAt: Date.now(),
+      });
+    } catch (error) {
+      console.warn(`[CacheDB] Failed to store metadata key '${key}' in IndexedDB:`, error);
+    }
   }
 
   /**
@@ -760,8 +838,8 @@ export class CacheDB {
  *
  * @category Cache
  */
-export async function createCache(ttlMs?: number, dbName?: string): Promise<CacheDB> {
-  const cache = new CacheDB(ttlMs, dbName);
+export async function createCache(ttlMs?: number, dbName?: string, maxCapacity?: number): Promise<CacheDB> {
+  const cache = new CacheDB(ttlMs, dbName, maxCapacity);
   await cache.open();
   return cache;
 }
