@@ -193,7 +193,10 @@ export class HttpClient {
       const buffer = await response.arrayBuffer();
       if (buffer.byteLength > 0) {
         try {
-          parsed = msgpackDecode(new Uint8Array(buffer));
+          // Cap buffer at 50MB to prevent OOM from malicious payloads
+          const maxBuffer = Math.min(buffer.byteLength, 50 * 1024 * 1024);
+          const input = new Uint8Array(buffer, 0, maxBuffer);
+          parsed = msgpackDecode(input);
         } catch (err) {
           console.error("Failed to decode MessagePack response:", err);
           parsed = null;
