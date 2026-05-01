@@ -1383,16 +1383,15 @@ export class CcPlatformSdk {
     const uniqueIds = Array.from(new Set(postUlids));
     const results: Record<Ulid, Post> = {};
 
-    this.log(`[SDK] 📥 fetchPostsBatch called with ${uniqueIds.length} IDs`, uniqueIds.slice(0, 3));
-    console.log(`[SDK] 📥 fetchPostsBatch called with ${uniqueIds.length} IDs`, uniqueIds.slice(0, 5));
+    this.log(`[SDK] 📥 fetchPostsBatch called with ${uniqueIds.length} IDs`, uniqueIds.slice(0, 5));
 
     // 1) Cache hits
     const cached = await cache.getPosts(uniqueIds);
     Object.assign(results, cached);
-    console.log(`[SDK] 💾 Cache hits: ${Object.keys(cached).length}/${uniqueIds.length}`);
+    this.log(`[SDK] 💾 Cache hits: ${Object.keys(cached).length}/${uniqueIds.length}`);
     if (Object.keys(cached).length > 0) {
       const firstCached = Object.values(cached)[0] as any;
-      console.log(`[SDK] 💾 First cached post:`, {
+      this.log(`[SDK] 💾 First cached post:`, {
         ulid: firstCached?.ulid,
         hasTitle: !!firstCached?.title,
         hasAudio: !!firstCached?.audio,
@@ -1404,9 +1403,9 @@ export class CcPlatformSdk {
 
     // 2) Fetch remaining via API
     const missing = uniqueIds.filter((id) => !results[id]);
-    console.log(`[SDK] 🔍 Missing from cache: ${missing.length}`, missing.slice(0, 5));
+    this.log(`[SDK] 🔍 Missing from cache: ${missing.length}`, missing.slice(0, 5));
     if (missing.length === 0) {
-      console.log(`[SDK] ⏩ All posts found in cache, skipping API call`);
+      this.log(`[SDK] ⏩ All posts found in cache, skipping API call`);
       return results;
     }
 
@@ -3811,7 +3810,7 @@ export class CcPlatformSdk {
         const needsHydration = hasOnlyFeedFields && !hasContentFields;
         
         this.log(`[SDK] getRadioStation: tracksData.length=${tracksData.length}, needsHydration=${needsHydration}, hasOnlyFeedFields=${hasOnlyFeedFields}, hasContentFields=${hasContentFields}, firstItem keys=${firstItem ? Object.keys(firstItem).join(',') : 'null'}`);
-        console.log(`[SDK] getRadioStation: First item analysis:`, {
+        this.log(`[SDK] getRadioStation: First item analysis:`, {
           ulid: firstItem?.ulid,
           hasOnlyFeedFields,
           hasContentFields,
@@ -3821,24 +3820,22 @@ export class CcPlatformSdk {
         
         if (needsHydration) {
           // Tracks are feed items (just ULIDs + metadata) - need to hydrate
-          console.log(`[SDK] getRadioStation: 🔥 HYDRATION NEEDED - calling fetchPostsBatch...`);
+          this.log(`[SDK] getRadioStation: 🔥 HYDRATION NEEDED - calling fetchPostsBatch...`);
           const ulids = tracksData.map((item: any) => item.ulid).filter(Boolean);
           this.log(`[SDK] getRadioStation: Detected feed items, extracting ${ulids.length} ULIDs for hydration`);
           
           if (ulids.length > 0) {
             try {
               this.log(`[SDK] getRadioStation: Calling fetchPostsBatch with ${ulids.length} ULIDs...`);
-              console.log(`[SDK] getRadioStation: Calling fetchPostsBatch with ${ulids.length} ULIDs...`);
               const hydrated = await this.fetchPostsBatch(ulids);
               this.log(`[SDK] getRadioStation: fetchPostsBatch returned ${Object.keys(hydrated).length} posts`);
-              console.log(`[SDK] getRadioStation: fetchPostsBatch returned ${Object.keys(hydrated).length} posts`);
 
               const hydratedTracks = ulids
                 .map((id: string) => hydrated[id])
                 .filter(Boolean) as Post[];
 
               this.log(`[SDK] getRadioStation: Mapped ${hydratedTracks.length} hydrated tracks from ${ulids.length} ULIDs`);
-              console.log(`[SDK] getRadioStation: Mapped ${hydratedTracks.length} hydrated tracks`, {
+              this.log(`[SDK] getRadioStation: Mapped ${hydratedTracks.length} hydrated tracks`, {
                 firstTrack: hydratedTracks[0] ? {
                   ulid: hydratedTracks[0].ulid,
                   title: hydratedTracks[0].title,
