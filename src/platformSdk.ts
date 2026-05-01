@@ -5044,20 +5044,39 @@ export class CcPlatformSdk {
    *
    * @category Search
    */
-  async searchHashtags(query: string): Promise<ApiEnvelope<SearchResult<{ name: string }>>> {
+  async searchHashtags(query: string): Promise<ApiEnvelope<SearchResult<{ name: string; sensitive?: boolean }>>> {
     // Remove leading # if present and sanitize to only word characters
     // API validates with regex /^[\w]+$/ so we must sanitize before sending
     let hashtag = query.startsWith('#') ? query.slice(1) : query;
     hashtag = hashtag.replace(/[^\w]/g, ''); // Remove non-word characters
 
+    type HashtagItem = { name: string; sensitive?: boolean };
+    type RawHashtagResponse = {
+      hashtags?: HashtagItem[];
+      items?: HashtagItem[];
+      data?: { hashtags?: HashtagItem[]; items?: HashtagItem[] };
+    };
+
     // Return empty results if hashtag is empty or too short after sanitization
     if (!hashtag || hashtag.length < 1) {
-      return { data: { items: [] } } as ApiEnvelope<SearchResult<{ name: string }>>;
+      return { data: { items: [] } } as ApiEnvelope<SearchResult<HashtagItem>>;
     }
 
-    return this.client.post<ApiEnvelope<SearchResult<{ name: string }>>>("/v1/search/autocomplete/hashtag", {
-      body: { hashtag },
-    });
+    // API returns flat shape `{ hashtags: [...] }` (no envelope) when records exist,
+    // and HTTP 204 No Content (parsed as null) when empty. Normalize to ApiEnvelope<SearchResult>.
+    const raw = (await this.client.post<RawHashtagResponse | null>(
+      "/v1/search/autocomplete/hashtag",
+      { body: { hashtag } },
+    )) ?? {};
+
+    const items: HashtagItem[] =
+      raw.hashtags ??
+      raw.items ??
+      raw.data?.hashtags ??
+      raw.data?.items ??
+      [];
+
+    return { data: { items } };
   }
 
   /**
