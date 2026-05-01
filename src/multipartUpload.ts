@@ -29,6 +29,7 @@
  * @category Uploads
  */
 import type { HttpClient } from "./httpClient";
+import { sanitizeFileName } from "./utils/s3Key";
 
 /**
  * Configuration options for multipart uploads.
@@ -197,7 +198,7 @@ export class MultipartUpload {
         "/v1/media/multipart/initialize",
         {
           body: {
-            key: this.key || `media/uploads/${Date.now()}-${this.file.name}`,
+            key: this.key || `media/uploads/${Date.now()}-${sanitizeFileName(this.file.name)}`,
             content_type: this.file.type,
             file_size: this.file.size,
           },
