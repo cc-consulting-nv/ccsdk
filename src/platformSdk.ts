@@ -2083,9 +2083,15 @@ export class CcPlatformSdk {
       userUlid: string;
       onProgress?: (percentage: number) => void;
       mediaType?: "audio" | "image" | "video" | "file";
+      /**
+       * Per-call override for max upload size in bytes for the given mediaType.
+       * Use this to honor server-driven limits (e.g. /v1/settings.maxVideoSize)
+       * instead of the SDK's hardcoded defaults.
+       */
+      maxBytes?: number;
     }
   ): Promise<UploadResult> {
-    const validationError = this.validateMediaFile(file, options.mediaType);
+    const validationError = this.validateMediaFile(file, options.mediaType, options.maxBytes);
     if (validationError) {
       throw new Error(validationError);
     }
@@ -2140,42 +2146,66 @@ export class CcPlatformSdk {
     return new MultipartUpload(this.client, options);
   }
 
-  private validateMediaFile(file: File, mediaType?: "audio" | "image" | "video" | "file"): string | null {
+  private validateMediaFile(
+    file: File,
+    mediaType?: "audio" | "image" | "video" | "file",
+    maxBytesOverride?: number
+  ): string | null {
     const MAX_SIZE_AUDIO = 100 * 1024 * 1024; // 100MB
     const MAX_SIZE_IMAGE = 20 * 1024 * 1024;  // 20MB
     const MAX_SIZE_VIDEO = 500 * 1024 * 1024; // 500MB
     const MAX_SIZE_DEFAULT = 100 * 1024 * 1024; // 100MB
 
+    const formatBytes = (bytes: number): string => {
+      const gb = bytes / (1024 * 1024 * 1024);
+      if (gb >= 1) return `${gb.toFixed(gb >= 10 ? 0 : 1)}GB`;
+      const mb = bytes / (1024 * 1024);
+      return `${Math.round(mb)}MB`;
+    };
+
+    const effectiveMax = (defaultMax: number): number =>
+      typeof maxBytesOverride === "number" && maxBytesOverride > 0
+        ? maxBytesOverride
+        : defaultMax;
+
     switch (mediaType) {
-      case "audio":
-        if (file.size > MAX_SIZE_AUDIO) {
-          return "Audio file exceeds the 100MB upload limit";
+      case "audio": {
+        const max = effectiveMax(MAX_SIZE_AUDIO);
+        if (file.size > max) {
+          return `Audio file exceeds the ${formatBytes(max)} upload limit`;
         }
         if (!file.type.startsWith("audio/")) {
           return "Please select a valid audio file";
         }
         return null;
-      case "image":
-        if (file.size > MAX_SIZE_IMAGE) {
-          return "Image exceeds the 20MB upload limit";
+      }
+      case "image": {
+        const max = effectiveMax(MAX_SIZE_IMAGE);
+        if (file.size > max) {
+          return `Image exceeds the ${formatBytes(max)} upload limit`;
         }
         if (!file.type.startsWith("image/")) {
           return "Please select a valid image file";
         }
         return null;
-      case "video":
-        if (file.size > MAX_SIZE_VIDEO) {
-          return "Video exceeds the 500MB upload limit";
+      }
+      case "video": {
+        const max = effectiveMax(MAX_SIZE_VIDEO);
+        if (file.size > max) {
+          return `Video exceeds the ${formatBytes(max)} upload limit`;
         }
         if (!file.type.startsWith("video/")) {
           return "Please select a valid video file";
         }
         return null;
-      default:
-        if (file.size > MAX_SIZE_DEFAULT) {
-          return "File exceeds the 100MB upload limit";
+      }
+      default: {
+        const max = effectiveMax(MAX_SIZE_DEFAULT);
+        if (file.size > max) {
+          return `File exceeds the ${formatBytes(max)} upload limit`;
         }
         return null;
+      }
     }
   }
 
