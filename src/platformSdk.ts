@@ -2,6 +2,11 @@ import { CacheDB, createCache } from "./cache/cacheDB";
 import { HttpClient, type HttpClientOptions } from "./httpClient";
 import { HybridTokenProvider, RefreshCoordinator, type SessionStore, type TokenProvider } from "./auth";
 import { MultipartUpload, type MultipartUploadOptions, type UploadResult } from "./multipartUpload";
+import {
+  watchPostProcessing,
+  type PostProcessingWatcher,
+  type WatchPostProcessingOptions,
+} from "./postProcessing";
 import { sanitizeFileName } from "./utils/s3Key";
 import {
   type ApiEnvelope,
@@ -2144,6 +2149,21 @@ export class CcPlatformSdk {
    */
   createMultipartUpload(options: Omit<MultipartUploadOptions, "client">): MultipartUpload {
     return new MultipartUpload(this.client, options);
+  }
+
+  /**
+   * Watch a post until backend processing finishes (isProcessing flips
+   * false). Races backoff polling against an external completion signal —
+   * call `markComplete()` on the returned handle from your realtime layer
+   * to fast-clear before the next poll tick.
+   *
+   * @see {@link watchPostProcessing}
+   */
+  watchPostProcessing(
+    ulid: string,
+    options: WatchPostProcessingOptions = {}
+  ): PostProcessingWatcher {
+    return watchPostProcessing(this, ulid, options);
   }
 
   private validateMediaFile(

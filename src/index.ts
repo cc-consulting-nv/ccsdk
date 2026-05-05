@@ -43,3 +43,4 @@ export * from "./auth";
 export * from "./persister";
 export * from "./multipartUpload";
 export * from "./blobStore";
+export * from "./postProcessing";
