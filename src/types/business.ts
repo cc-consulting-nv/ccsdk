@@ -417,3 +417,21 @@ export interface BusinessReviewListResponse {
   /** Aggregate average rating. Only returned for per-business listings; omitted for per-user lists where it is not meaningful. */
   averageRating?: number;
 }
+
+/**
+ * Response wrapper for paginated collection business lists
+ * @category Business Directory
+ */
+export interface BusinessCollectionBusinessesResponse {
+  businesses: Business[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+/**
+ * Response wrapper for checking which collections contain a business
+ * @category Business Directory
+ */
+export interface BusinessSavedCheckResponse {
+  collectionIds: string[];
+}

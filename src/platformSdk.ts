@@ -8892,6 +8892,92 @@ export class CcPlatformSdk {
   }
 
   /**
+   * Fetch paginated businesses in an authenticated user's collection.
+   * GET /v1/users/me/business-collections/{id}/businesses
+   *
+   * @param collectionId - Collection ULID
+   * @param options - Pagination options
+   * @returns Paginated list of businesses
+   *
+   * @category Business Directory
+   */
+  async fetchCollectionBusinesses(
+    collectionId: string,
+    options?: { cursor?: string | null; perPage?: number }
+  ): Promise<import("./types/business").BusinessCollectionBusinessesResponse> {
+    const params = new URLSearchParams();
+    if (options?.perPage) params.append("per_page", String(options.perPage));
+    if (options?.cursor) params.append("cursor", options.cursor);
+
+    const queryString = params.toString();
+    const url = `/v1/users/me/business-collections/${encodeURIComponent(collectionId)}/businesses${queryString ? `?${queryString}` : ""}`;
+
+    const response = await this.client.get<{
+      data: import("./types/business").Business[];
+      pagination?: { nextCursor?: string | null; hasMore?: boolean };
+    }>(url);
+
+    return {
+      businesses: response.data || [],
+      nextCursor: response.pagination?.nextCursor || null,
+      hasMore: response.pagination?.hasMore || false,
+    };
+  }
+
+  /**
+   * Fetch paginated businesses in a public user's collection.
+   * GET /v1/users/{userUlid}/business-collections/{collectionId}/businesses
+   *
+   * @param userUlid - User ULID
+   * @param collectionId - Collection ULID
+   * @param options - Pagination options
+   * @returns Paginated list of businesses
+   *
+   * @category Business Directory
+   */
+  async fetchUserCollectionBusinesses(
+    userUlid: string,
+    collectionId: string,
+    options?: { cursor?: string | null; perPage?: number }
+  ): Promise<import("./types/business").BusinessCollectionBusinessesResponse> {
+    const params = new URLSearchParams();
+    if (options?.perPage) params.append("per_page", String(options.perPage));
+    if (options?.cursor) params.append("cursor", options.cursor);
+
+    const queryString = params.toString();
+    const url = `/v1/users/${encodeURIComponent(userUlid)}/business-collections/${encodeURIComponent(collectionId)}/businesses${queryString ? `?${queryString}` : ""}`;
+
+    const response = await this.client.get<{
+      data: import("./types/business").Business[];
+      pagination?: { nextCursor?: string | null; hasMore?: boolean };
+    }>(url);
+
+    return {
+      businesses: response.data || [],
+      nextCursor: response.pagination?.nextCursor || null,
+      hasMore: response.pagination?.hasMore || false,
+    };
+  }
+
+  /**
+   * Check which of the authenticated user's collections contain a business.
+   * GET /v1/users/me/business-collections/check/{businessId}
+   *
+   * @param businessId - Business ULID
+   * @returns List of collection IDs containing this business
+   *
+   * @category Business Directory
+   */
+  async checkBusinessSaved(
+    businessId: string
+  ): Promise<import("./types/business").BusinessSavedCheckResponse> {
+    const response = await this.client.get<{ collectionIds: string[] }>(
+      `/v1/users/me/business-collections/check/${encodeURIComponent(businessId)}`
+    );
+    return { collectionIds: response.collectionIds || [] };
+  }
+
+  /**
    * Fetch recently viewed businesses.
    * GET /v1/users/me/recently-viewed-businesses
    *
