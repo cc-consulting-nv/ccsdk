@@ -60,33 +60,18 @@ export class MemoryTokenProvider implements TokenProvider {
    */
   constructor(initialTokens?: AuthTokens | null) {
     this.tokens = initialTokens ?? null;
-    if (this.tokens) {
-      console.log('🔑 TokenProvider: Initialized with tokens');
-    } else {
-      console.log('🔑 TokenProvider: Initialized without tokens');
-    }
   }
 
   getTokens(): AuthTokens | null {
-    const hasToken = !!this.tokens?.accessToken;
-    if (!hasToken) {
-      console.warn('🔑 TokenProvider: getTokens() called but no token available');
-    }
     return this.tokens;
   }
 
   setTokens(tokens: AuthTokens | null): void {
     this.tokens = tokens;
-    if (tokens) {
-      console.log('🔑 TokenProvider: Tokens set successfully');
-    } else {
-      console.log('🔑 TokenProvider: Tokens cleared');
-    }
   }
 
   clearTokens(): void {
     this.tokens = null;
-    console.log('🔑 TokenProvider: Tokens cleared via clearTokens()');
   }
 }
 
@@ -234,22 +219,12 @@ export class HybridTokenProvider implements TokenProvider {
     this.storage = storage;
     this.refreshTokenKey = refreshTokenKey;
 
-    // Set initial access token in memory if provided
     if (initialTokens?.accessToken) {
       this.accessToken = initialTokens.accessToken;
-      console.log('🔑 HybridTokenProvider: Initialized with access token in memory');
     }
 
-    // Store refresh token in localStorage if provided
     if (initialTokens?.refreshToken) {
       this.storage.setItem(this.refreshTokenKey, initialTokens.refreshToken);
-      console.log('🔑 HybridTokenProvider: Stored refresh token in localStorage');
-    }
-
-    // Log if we have a persisted refresh token
-    const hasPersistedRefresh = !!this.storage.getItem(this.refreshTokenKey);
-    if (hasPersistedRefresh) {
-      console.log('🔑 HybridTokenProvider: Found persisted refresh token');
     }
   }
 
@@ -274,26 +249,20 @@ export class HybridTokenProvider implements TokenProvider {
     if (!tokens) {
       this.accessToken = null;
       this.storage.removeItem(this.refreshTokenKey);
-      console.log('🔑 HybridTokenProvider: Cleared all tokens');
       return;
     }
 
-    // Store access token in memory
     if (tokens.accessToken) {
       this.accessToken = tokens.accessToken;
-      console.log('🔑 HybridTokenProvider: Set access token in memory');
     }
 
-    // Store refresh token in localStorage
     if (tokens.refreshToken) {
       this.storage.setItem(this.refreshTokenKey, tokens.refreshToken);
-      console.log('🔑 HybridTokenProvider: Stored refresh token in localStorage');
     }
   }
 
   clearTokens(): void {
     this.accessToken = null;
     this.storage.removeItem(this.refreshTokenKey);
-    console.log('🔑 HybridTokenProvider: Cleared all tokens via clearTokens()');
   }
 }
