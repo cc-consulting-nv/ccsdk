@@ -1,7 +1,7 @@
 {
   "name": "@cc-consulting-nv/ccsdk",
   "version": "1.0.67",
-  "description": "Cache-aware CC API SDK using Dexie and TanStack Query core.",
+  "description": "Closed Circuit platform SDK — typed client, caching, paginated APIs.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
