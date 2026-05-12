@@ -619,15 +619,13 @@ export class CcPlatformSdk {
   }
 
   private async updateSession(tokens: AuthTokens | null): Promise<void> {
-    let normalizedTokens = this.hasAuthTokens(tokens) ? tokens : null;
+    const normalizedTokens = this.hasAuthTokens(tokens) ? tokens : null;
 
-    // When using httpOnly refresh cookie, strip the refresh token from in-memory
-    // storage so it only lives in the cookie. This prevents duplicate refresh
-    // tokens being sent (one in the body, one via cookie).
-    if (normalizedTokens && this.useRefreshCookie) {
-      normalizedTokens = { accessToken: normalizedTokens.accessToken };
-    }
-
+    // Keep the refresh token in memory + sessionStore even when an httpOnly
+    // refresh cookie is in use. Multi-tenant API hosts (e.g. customer-owned
+    // parent domains) now refuse the cookie-only refresh path for cross-tenant
+    // safety, so the SDK must be able to send `refresh_token` in the body on
+    // reload. The companion sessionStore decides where (or whether) to persist.
     this.setTokens(normalizedTokens);
     await this.persistSession(normalizedTokens);
   }
@@ -1276,11 +1274,12 @@ export class CcPlatformSdk {
     const currentTokens = await this.restoreSession();
     if (!currentTokens?.refreshToken && !this.useRefreshCookie) return null;
 
-    // When using httpOnly refresh cookie, never send a refresh token in the body.
-    // The cookie is the sole source of the refresh token on web — sending a stale
-    // or already-rotated token in the body can cause the server to reject the
-    // request with 400 even though the cookie is valid.
-    const body = !this.useRefreshCookie && currentTokens?.refreshToken
+    // Always send the refresh token in the body when we have one, even with
+    // useRefreshCookie. Server-side multi-tenant guards on customer-owned
+    // parent domains refuse the cookie-only path (cross-tenant cookie safety),
+    // so the body is the reliable carrier. The httpOnly cookie still rides
+    // along via credentials: 'include' for back-compat with cookie-only hosts.
+    const body = currentTokens?.refreshToken
       ? { refresh_token: currentTokens.refreshToken }
       : undefined;
 

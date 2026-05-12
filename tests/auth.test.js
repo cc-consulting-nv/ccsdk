@@ -542,6 +542,46 @@ test("refreshToken supports cookie-backed refresh without a persisted refresh to
   assert.equal(tokens.refreshToken, "cookie-refresh-token");
 });
 
+test("refreshToken sends refresh_token in body even when useRefreshCookie is enabled", async () => {
+  // Multi-tenant API hosts (e.g. customer-owned parent domains) refuse the
+  // cookie-only refresh path for cross-tenant safety. The SDK must send the
+  // refresh_token in the body whenever it has one, regardless of cookie mode.
+  const { fetchImpl, calls } = createMockFetch({
+    token_type: "Bearer",
+    expires_in: 3600,
+    access_token: "new-access-token",
+    refresh_token: "new-refresh-token",
+  });
+
+  const storage = createMockStorage();
+  const tokenProvider = new HybridTokenProvider(
+    storage,
+    { accessToken: "old-token", refreshToken: "old-refresh-token" }
+  );
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    tokenProvider,
+    fetchImpl,
+    useRefreshCookie: true,
+  });
+
+  const tokens = await sdk.refreshToken();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].init.credentials, "include");
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.refresh_token, "old-refresh-token");
+
+  assert.equal(tokens.accessToken, "new-access-token");
+  assert.equal(tokens.refreshToken, "new-refresh-token");
+
+  // After refresh, the new refresh token should still be available in storage
+  // (no longer stripped under useRefreshCookie). This is what lets a subsequent
+  // page reload restore the refresh token and call /auth/refresh again.
+  assert.equal(sdk.getTokens().refreshToken, "new-refresh-token");
+});
+
 test("refreshToken dedupes concurrent refresh calls", async () => {
   let resolveRefresh;
   const calls = [];
