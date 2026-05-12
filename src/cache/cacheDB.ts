@@ -129,7 +129,35 @@ class PlatformCacheDB extends Dexie {
     this.on("versionchange", () => {
       this.close();
     });
+
+    // iOS Safari / WKWebView occasionally drops IndexedDB connections under
+    // memory pressure or backgrounding. Auto-reopen so subsequent reads succeed.
+    this.on("close", () => {
+      // Best-effort reopen; safeOp() will also retry on next access.
+      this.open().catch(() => {
+        /* swallow - safeOp handles fallback */
+      });
+    });
   }
+}
+
+/**
+ * Detect Dexie "connection lost" / closed-database errors that we can recover
+ * from by reopening the database (typical on iOS WKWebView).
+ * @internal
+ */
+function isDexieConnectionLost(err: unknown): boolean {
+  if (!err) return false;
+  const e = err as { name?: string; message?: string };
+  const msg = String(e.message ?? "");
+  return (
+    e.name === "UnknownError" ||
+    e.name === "DatabaseClosedError" ||
+    e.name === "InvalidStateError" ||
+    msg.includes("Connection to Indexed Database server lost") ||
+    msg.includes("database connection is closing") ||
+    msg.includes("DatabaseClosedError")
+  );
 }
 
 /**
@@ -173,6 +201,73 @@ export class CacheDB {
    */
   async open(): Promise<void> {
     await this.db.open();
+  }
+
+  /**
+   * Force-reopen the underlying IndexedDB connection. Call this when the
+   * app returns from background (iOS Safari/WKWebView can silently drop the
+   * connection) to recover before the next cache read.
+   */
+  async reopen(): Promise<void> {
+    try {
+      if (this.db.isOpen()) {
+        this.db.close();
+      }
+    } catch {
+      /* ignore - we'll attempt open regardless */
+    }
+    await this.db.open();
+  }
+
+  /**
+   * Wrap a cache read with one-shot reopen-on-connection-lost recovery.
+   * If the second attempt also fails, returns the supplied fallback value
+   * (cache miss) rather than throwing - cache failures must never break
+   * the consuming app, only force a network fetch.
+   *
+   * @internal
+   */
+  private async safeRead<T>(op: () => Promise<T>, fallback: T): Promise<T> {
+    try {
+      return await op();
+    } catch (err) {
+      if (!isDexieConnectionLost(err)) throw err;
+      try {
+        await this.reopen();
+        return await op();
+      } catch (retryErr) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[CacheDB] IndexedDB unavailable after reopen, falling back to network:",
+          retryErr,
+        );
+        return fallback;
+      }
+    }
+  }
+
+  /**
+   * Wrap a cache write with reopen-on-connection-lost recovery. Swallows
+   * the error on second failure - writes are best-effort cache updates.
+   *
+   * @internal
+   */
+  private async safeWrite(op: () => Promise<void>): Promise<void> {
+    try {
+      await op();
+    } catch (err) {
+      if (!isDexieConnectionLost(err)) throw err;
+      try {
+        await this.reopen();
+        await op();
+      } catch (retryErr) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "[CacheDB] IndexedDB write failed after reopen, dropping write:",
+          retryErr,
+        );
+      }
+    }
   }
 
   private isExpired(timestamp: number): boolean {
@@ -231,13 +326,15 @@ export class CacheDB {
    * @returns The cached post or null if not found/expired
    */
   async getPost(id: Ulid): Promise<Post | null> {
-    const entry = await this.db.posts.get(id);
-    if (!entry || this.isExpired(entry.cachedAt)) {
-      return null;
-    }
+    return this.safeRead(async () => {
+      const entry = await this.db.posts.get(id);
+      if (!entry || this.isExpired(entry.cachedAt)) {
+        return null;
+      }
 
-    await this.db.posts.put(this.touch(entry));
-    return entry.data;
+      await this.db.posts.put(this.touch(entry));
+      return entry.data;
+    }, null);
   }
 
   /**
@@ -247,19 +344,21 @@ export class CacheDB {
    * @returns Record mapping ULID to Post for found entries
    */
   async getPosts(ids: Ulid[]): Promise<Record<Ulid, Post>> {
-    const entries = await this.db.posts.bulkGet(ids);
-    const result: Record<Ulid, Post> = {};
+    return this.safeRead(async () => {
+      const entries = await this.db.posts.bulkGet(ids);
+      const result: Record<Ulid, Post> = {};
 
-    const validEntries = entries
-      .filter(Boolean)
-      .filter((entry) => !!entry && !this.isExpired(entry!.cachedAt)) as CacheEntry<Post>[];
+      const validEntries = entries
+        .filter(Boolean)
+        .filter((entry) => !!entry && !this.isExpired(entry!.cachedAt)) as CacheEntry<Post>[];
 
-    for (const entry of validEntries) {
-      result[entry.id] = entry.data;
-      await this.db.posts.put(this.touch(entry));
-    }
+      for (const entry of validEntries) {
+        result[entry.id] = entry.data;
+        await this.db.posts.put(this.touch(entry));
+      }
 
-    return result;
+      return result;
+    }, {});
   }
 
   /**
@@ -269,7 +368,7 @@ export class CacheDB {
    * @param post - The post data to cache
    */
   async setPost(id: Ulid, post: Post): Promise<void> {
-    await this.db.posts.put(this.createEntry(id, post));
+    await this.safeWrite(() => this.db.posts.put(this.createEntry(id, post)).then(() => undefined));
   }
 
   /**
@@ -281,7 +380,7 @@ export class CacheDB {
     const entries = Object.entries(posts).map(([id, data]) =>
       this.createEntry(id, data as Post),
     );
-    await this.db.posts.bulkPut(entries);
+    await this.safeWrite(() => this.db.posts.bulkPut(entries).then(() => undefined));
   }
 
   /**
@@ -292,7 +391,7 @@ export class CacheDB {
    * @param id - The post ULID
    */
   async invalidatePost(id: Ulid): Promise<void> {
-    await this.db.posts.delete(id);
+    await this.safeWrite(() => this.db.posts.delete(id).then(() => undefined));
   }
 
   // ========================================================================
@@ -306,12 +405,14 @@ export class CacheDB {
    * @returns The cached user profile or null if not found/expired
    */
   async getUser(id: Ulid): Promise<UserProfile | null> {
-    const entry = await this.db.users?.get(id);
-    if (!entry || this.isExpired(entry.cachedAt)) {
-      return null;
-    }
-    await this.db.users?.put(this.touch(entry));
-    return entry.data;
+    return this.safeRead(async () => {
+      const entry = await this.db.users?.get(id);
+      if (!entry || this.isExpired(entry.cachedAt)) {
+        return null;
+      }
+      await this.db.users?.put(this.touch(entry));
+      return entry.data;
+    }, null);
   }
 
   /**
@@ -338,24 +439,26 @@ export class CacheDB {
    * Note: This uses a filter since username is optional and can't be indexed
    */
   async getUserByUsername(username: string): Promise<UserProfile | null> {
-    if (!this.db.users) return null;
+    return this.safeRead(async () => {
+      if (!this.db.users) return null;
 
-    const lowerUsername = username.toLowerCase();
+      const lowerUsername = username.toLowerCase();
 
-    // Filter by username (case-insensitive) - scans all entries
-    const entry = await this.db.users
-      .filter(entry => {
-        const entryUsername = entry.data.username?.toLowerCase();
-        return entryUsername === lowerUsername && !this.isExpired(entry.cachedAt);
-      })
-      .first();
+      // Filter by username (case-insensitive) - scans all entries
+      const entry = await this.db.users
+        .filter(entry => {
+          const entryUsername = entry.data.username?.toLowerCase();
+          return entryUsername === lowerUsername && !this.isExpired(entry.cachedAt);
+        })
+        .first();
 
-    if (!entry) {
-      return null;
-    }
+      if (!entry) {
+        return null;
+      }
 
-    await this.db.users.put(this.touch(entry));
-    return entry.data;
+      await this.db.users.put(this.touch(entry));
+      return entry.data;
+    }, null);
   }
 
   /**
@@ -364,21 +467,23 @@ export class CacheDB {
    * @returns Map of ULID to UserProfile for cached, non-expired entries
    */
   async getUsers(ids: Ulid[]): Promise<Map<Ulid, UserProfile>> {
-    if (!this.db.users) return new Map();
+    return this.safeRead(async () => {
+      if (!this.db.users) return new Map<Ulid, UserProfile>();
 
-    const entries = await this.db.users.bulkGet(ids);
-    const result = new Map<Ulid, UserProfile>();
+      const entries = await this.db.users.bulkGet(ids);
+      const result = new Map<Ulid, UserProfile>();
 
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      if (entry && !this.isExpired(entry.cachedAt)) {
-        result.set(ids[i], entry.data);
-        // Touch the entry to update access stats
-        await this.db.users.put(this.touch(entry));
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        if (entry && !this.isExpired(entry.cachedAt)) {
+          result.set(ids[i], entry.data);
+          // Touch the entry to update access stats
+          await this.db.users.put(this.touch(entry));
+        }
       }
-    }
 
-    return result;
+      return result;
+    }, new Map<Ulid, UserProfile>());
   }
 
   /**
@@ -534,15 +639,17 @@ export class CacheDB {
    * @returns The cached feed resource or null if not found/expired
    */
   async getFeedResource(route: string): Promise<FeedResource | null> {
-    const resource = await this.db.feedResources.get(route);
-    if (!resource) return null;
-    if (this.isExpired(resource.cachedAt)) {
-      await this.db.feedResources.delete(route);
-      return null;
-    }
+    return this.safeRead(async () => {
+      const resource = await this.db.feedResources.get(route);
+      if (!resource) return null;
+      if (this.isExpired(resource.cachedAt)) {
+        await this.db.feedResources.delete(route);
+        return null;
+      }
 
-    await this.db.feedResources.update(route, { lastAccessed: Date.now() });
-    return resource;
+      await this.db.feedResources.update(route, { lastAccessed: Date.now() });
+      return resource;
+    }, null);
   }
 
   /**
@@ -727,10 +834,12 @@ export class CacheDB {
    * @returns The cached notification or null if not found/expired
    */
   async getNotification(id: Ulid): Promise<Notification | null> {
-    const entry = await this.db.notifications.get(id);
-    if (!entry || this.isExpired(entry.cachedAt)) return null;
-    await this.db.notifications.put(this.touch(entry));
-    return entry.data as Notification;
+    return this.safeRead(async () => {
+      const entry = await this.db.notifications.get(id);
+      if (!entry || this.isExpired(entry.cachedAt)) return null;
+      await this.db.notifications.put(this.touch(entry));
+      return entry.data as Notification;
+    }, null);
   }
 
   /**
@@ -770,14 +879,16 @@ export class CacheDB {
     route: string,
     userId: string,
   ): Promise<NotificationFeedResource | null> {
-    const key = `${userId}:${route}`;
-    const feed = await this.db.notificationFeeds.get(key);
-    if (!feed) return null;
-    if (Date.now() - feed.updatedAt > 30_000) {
-      await this.db.notificationFeeds.delete(key);
-      return null;
-    }
-    return feed;
+    return this.safeRead(async () => {
+      const key = `${userId}:${route}`;
+      const feed = await this.db.notificationFeeds.get(key);
+      if (!feed) return null;
+      if (Date.now() - feed.updatedAt > 30_000) {
+        await this.db.notificationFeeds.delete(key);
+        return null;
+      }
+      return feed;
+    }, null);
   }
 
   /**
@@ -818,8 +929,10 @@ export class CacheDB {
    * @returns The stored value or null if not found
    */
   async getMetadata<T = any>(key: string): Promise<T | null> {
-    const entry = await this.db.metadata.get(key);
-    return entry ? (entry.value as T) : null;
+    return this.safeRead(async () => {
+      const entry = await this.db.metadata.get(key);
+      return entry ? (entry.value as T) : null;
+    }, null);
   }
 }
 

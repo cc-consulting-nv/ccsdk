@@ -582,6 +582,27 @@ export class CcPlatformSdk {
     this.tokens.setTokens(tokens);
   }
 
+  /**
+   * Force-reopen the underlying IndexedDB cache connection.
+   *
+   * iOS Safari/WKWebView occasionally drops IndexedDB connections under memory
+   * pressure or when the app is backgrounded. The cache layer auto-recovers on
+   * the next read, but callers can invoke this proactively (e.g. on a
+   * `visibilitychange` -> visible event) to avoid the first post-resume read
+   * surfacing an error.
+   *
+   * Safe to call repeatedly; no-op when the connection is healthy.
+   */
+  async reopenCache(): Promise<void> {
+    try {
+      const cache = await this.cachePromise;
+      await cache.reopen();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("[CcPlatformSdk] reopenCache failed:", err);
+    }
+  }
+
   private hasAuthTokens(tokens: AuthTokens | null | undefined): tokens is AuthTokens {
     return Boolean(tokens?.accessToken || tokens?.refreshToken);
   }
