@@ -2071,6 +2071,10 @@ export interface CreateGroupRequest {
   name: string;
   description?: string;
   visibility?: GroupVisibility;
+  /** Avatar URL (e.g. from uploadMediaFile). Server normalises and moves from tmp/ on create. */
+  avatar?: string | null;
+  /** Cover/background URL (e.g. from uploadMediaFile). Server normalises and moves from tmp/ on create. */
+  background?: string | null;
 }
 
 /** Request to join a group */
