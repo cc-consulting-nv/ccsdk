@@ -1,6 +1,6 @@
 {
   "name": "@cc-consulting-nv/ccsdk",
-  "version": "1.0.73",
+  "version": "1.0.74",
   "description": "Closed Circuit platform SDK — typed client, caching, paginated APIs.",
   "type": "module",
   "main": "dist/index.js",
