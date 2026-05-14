@@ -410,3 +410,111 @@ test("setUser stamps lastCheckedAt so refreshes reset the TTL clock", async () =
   assert.ok(after.lastCheckedAt > 0);
   assert.ok(after.lastCheckedAt >= before.lastCheckedAt);
 });
+
+// ---- v6: notifications store removed ----------------------------------
+
+test("v6 upgrade drops the notifications store", async () => {
+  const dbName = `v6-drop-${++dbCounter}-${Date.now()}`;
+
+  // Stand up a v5-shaped DB with a notifications row.
+  const v5 = new Dexie(dbName);
+  v5.version(5).stores({
+    posts: "id, cachedAt, lastAccessed, lastCheckedAt",
+    feedResources: "route, cachedAt, lastAccessed",
+    users: "id, cachedAt, lastAccessed, lastCheckedAt",
+    groups: "id, cachedAt, lastAccessed, lastCheckedAt",
+    notifications: "id, cachedAt, lastAccessed",
+    notificationFeeds: "route, userId, updatedAt",
+    metadata: "key, updatedAt",
+  });
+  await v5.open();
+  await v5.table("notifications").put({
+    id: "01NOTIF1",
+    data: { message: "hi" },
+    cachedAt: Date.now(),
+    lastAccessed: Date.now(),
+    accessCount: 1,
+  });
+  v5.close();
+
+  // Reopen via CacheDB (which now declares v6) — store should be removed.
+  const cache = new CacheDB(HOUR, dbName);
+  await cache.open();
+
+  const tableNames = cache.db.tables.map((t) => t.name);
+  assert.equal(tableNames.includes("notifications"), false, "notifications store dropped in v6");
+  assert.equal(tableNames.includes("notificationFeeds"), true, "notificationFeeds preserved");
+
+  cache.stopTrimSchedule();
+});
+
+// ---- B: periodic trim scheduler ---------------------------------------
+
+test("trim scheduler runs trimCache on the configured interval", async () => {
+  // 50ms trim interval keeps the test fast.
+  const dbName = `trim-${++dbCounter}-${Date.now()}`;
+  const cache = new CacheDB(HOUR, dbName, undefined, undefined, 50);
+  await cache.open();
+
+  // Seed a stale post directly (cachedAt before the hard TTL window).
+  const stale = Date.now() - HOUR - 1000;
+  await cache.db.posts.put({
+    id: "01TRIMPOST",
+    data: { ulid: "01TRIMPOST" },
+    cachedAt: stale,
+    lastAccessed: stale,
+    accessCount: 1,
+    lastCheckedAt: stale,
+  });
+
+  // Wait for the scheduled trim to fire (give it ~150ms).
+  await new Promise((r) => setTimeout(r, 150));
+
+  const remaining = await cache.db.posts.toArray();
+  assert.equal(remaining.length, 0, "stale post evicted by scheduled trim");
+
+  cache.stopTrimSchedule();
+});
+
+test("trim scheduler is disabled when trimIntervalMs=0", async () => {
+  const dbName = `trim-off-${++dbCounter}-${Date.now()}`;
+  const cache = new CacheDB(HOUR, dbName, undefined, undefined, 0);
+  await cache.open();
+
+  // Seed a stale entry; without the scheduler it should survive.
+  const stale = Date.now() - HOUR - 1000;
+  await cache.db.posts.put({
+    id: "01TRIMOFF",
+    data: { ulid: "01TRIMOFF" },
+    cachedAt: stale,
+    lastAccessed: stale,
+    accessCount: 1,
+    lastCheckedAt: stale,
+  });
+
+  await new Promise((r) => setTimeout(r, 100));
+
+  const remaining = await cache.db.posts.toArray();
+  assert.equal(remaining.length, 1, "no auto-trim when interval is 0");
+});
+
+test("stopTrimSchedule prevents further auto-trims", async () => {
+  const dbName = `trim-stop-${++dbCounter}-${Date.now()}`;
+  const cache = new CacheDB(HOUR, dbName, undefined, undefined, 50);
+  await cache.open();
+  cache.stopTrimSchedule();
+
+  const stale = Date.now() - HOUR - 1000;
+  await cache.db.posts.put({
+    id: "01TRIMSTOP",
+    data: { ulid: "01TRIMSTOP" },
+    cachedAt: stale,
+    lastAccessed: stale,
+    accessCount: 1,
+    lastCheckedAt: stale,
+  });
+
+  await new Promise((r) => setTimeout(r, 150));
+  const remaining = await cache.db.posts.toArray();
+  assert.equal(remaining.length, 1, "stop kills the interval before it fires");
+});
