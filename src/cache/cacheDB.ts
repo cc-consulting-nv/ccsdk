@@ -7,8 +7,15 @@
  * @category Cache
  */
 import Dexie, { type EntityTable, liveQuery, type Observable } from "dexie";
-import { type FeedPage, type Post, type Ulid, type UserProfile } from "../types";
+import { type FeedPage, type Group, type Post, type Ulid, type UserProfile } from "../types";
 import { type Notification } from "../types";
+
+/**
+ * Default soft-refresh TTL (30 minutes). Entries older than this are still
+ * returned from cache, but trigger a background refresh in the SDK layer.
+ * Distinct from the hard TTL (default 24h) which removes the entry entirely.
+ */
+export const DEFAULT_REFRESH_TTL_MS = 30 * 60 * 1000;
 
 // Re-export liveQuery for external use
 export { liveQuery, type Observable };
@@ -29,6 +36,14 @@ interface CacheEntry<T> {
   lastAccessed: number;
   /** Number of times this entry has been accessed */
   accessCount: number;
+  /**
+   * Timestamp of the last successful refresh from the network.
+   * Used by callers to decide whether to fire a background refresh while
+   * still returning the cached value (stale-while-revalidate). Backfilled
+   * from `cachedAt` on v5 migration; updated whenever the entry is
+   * (re)written from a fresh network response.
+   */
+  lastCheckedAt?: number;
 }
 
 /**
@@ -73,6 +88,7 @@ class PlatformCacheDB extends Dexie {
   posts!: EntityTable<CacheEntry<Post>, "id">;
   feedResources!: EntityTable<FeedResource, "route">;
   users!: EntityTable<CacheEntry<UserProfile>, "id">;
+  groups!: EntityTable<CacheEntry<Group>, "id">;
   notifications!: EntityTable<CacheEntry<any>, "id">;
   notificationFeeds!: EntityTable<{
     route: string;
@@ -125,6 +141,34 @@ class PlatformCacheDB extends Dexie {
       notificationFeeds: "route, userId, updatedAt",
       metadata: "key, updatedAt",
     });
+
+    // Version 5 adds:
+    //  - `groups` store (per-ULID group cache for stale-while-revalidate)
+    //  - `lastCheckedAt` index on users/posts/groups for refresh-TTL queries
+    // Existing users/posts rows get `lastCheckedAt` backfilled from `cachedAt`
+    // so they don't all become "due for refresh" simultaneously after upgrade.
+    this.version(5)
+      .stores({
+        posts: "id, cachedAt, lastAccessed, lastCheckedAt",
+        feedResources: "route, cachedAt, lastAccessed",
+        users: "id, cachedAt, lastAccessed, lastCheckedAt",
+        groups: "id, cachedAt, lastAccessed, lastCheckedAt",
+        notifications: "id, cachedAt, lastAccessed",
+        notificationFeeds: "route, userId, updatedAt",
+        metadata: "key, updatedAt",
+      })
+      .upgrade(async (tx) => {
+        const stamp = (table: string) =>
+          tx
+            .table(table)
+            .toCollection()
+            .modify((entry: CacheEntry<unknown>) => {
+              if (typeof entry.lastCheckedAt !== "number") {
+                entry.lastCheckedAt = entry.cachedAt;
+              }
+            });
+        await Promise.all([stamp("posts"), stamp("users")]);
+      });
 
     this.on("versionchange", () => {
       this.close();
@@ -180,27 +224,87 @@ function isDexieConnectionLost(err: unknown): boolean {
  * @category Cache
  */
 export class CacheDB {
-  private readonly db: PlatformCacheDB;
+  private db: PlatformCacheDB;
+  private readonly dbName?: string;
   private readonly ttlMs: number;
+  private readonly refreshTtlMs: number;
 
   /**
    * Create a new cache instance.
    *
-   * @param ttlMs - Time-to-live in milliseconds (default: 24 hours)
+   * @param ttlMs - Hard TTL in milliseconds; entries older than this are
+   *   treated as cache misses (default: 24 hours).
    * @param dbName - Optional custom database name
    * @param maxCapacity - Optional max entries per CacheEntry store (for LRU eviction)
+   * @param refreshTtlMs - Soft refresh TTL; entries older than this are still
+   *   returned, but `isPastRefreshTTL()` returns true so the SDK can fire a
+   *   background refresh (default: 30 minutes).
    */
-  constructor(ttlMs: number = 24 * 60 * 60 * 1000, dbName?: string, private readonly maxCapacity?: number) {
+  constructor(
+    ttlMs: number = 24 * 60 * 60 * 1000,
+    dbName?: string,
+    private readonly maxCapacity?: number,
+    refreshTtlMs: number = DEFAULT_REFRESH_TTL_MS,
+  ) {
     this.ttlMs = ttlMs;
+    this.refreshTtlMs = refreshTtlMs;
+    this.dbName = dbName;
     this.db = new PlatformCacheDB(dbName);
+  }
+
+  /**
+   * Soft-refresh TTL in milliseconds.
+   * Returned for callers that want to apply the same threshold elsewhere.
+   */
+  getRefreshTtlMs(): number {
+    return this.refreshTtlMs;
+  }
+
+  /**
+   * Whether a CacheEntry is past the soft refresh TTL and should be
+   * refreshed in the background. Treats entries with no `lastCheckedAt`
+   * (legacy rows that weren't backfilled) as past TTL.
+   */
+  isPastRefreshTTL<T>(entry: CacheEntry<T> | null | undefined): boolean {
+    if (!entry) return true;
+    const stamp = entry.lastCheckedAt ?? entry.cachedAt;
+    return Date.now() - stamp > this.refreshTtlMs;
   }
 
   /**
    * Open the IndexedDB database connection.
    * Must be called before using any cache methods.
+   *
+   * If the open fails (typically because a Dexie schema upgrade threw on a
+   * corrupted row, or browser storage is in a wedged state), the entire
+   * IndexedDB database is deleted and recreated at the current schema.
+   * The cache loses its contents — but the cache is rebuildable from the
+   * network, so this is strictly better than leaving the SDK bricked. Without
+   * this fallback, a failed upgrade survives `logout()` (which only calls
+   * `clearAll`, not `db.delete`) so the user has no in-app way to recover.
    */
   async open(): Promise<void> {
-    await this.db.open();
+    try {
+      await this.db.open();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[CacheDB] open failed, deleting and recreating database:",
+        err,
+      );
+      try {
+        await this.db.delete();
+      } catch (deleteErr) {
+        // eslint-disable-next-line no-console
+        console.error(
+          "[CacheDB] delete also failed; cache will remain unavailable:",
+          deleteErr,
+        );
+        throw deleteErr;
+      }
+      this.db = new PlatformCacheDB(this.dbName);
+      await this.db.open();
+    }
   }
 
   /**
@@ -282,6 +386,7 @@ export class CacheDB {
       cachedAt: now,
       lastAccessed: now,
       accessCount: 1,
+      lastCheckedAt: now,
     };
   }
 
@@ -608,6 +713,96 @@ export class CacheDB {
   }
 
   /**
+   * Read the raw user CacheEntry (without touching lastAccessed).
+   * Returns null if the entry is missing or past the hard TTL.
+   * Used by the SDK to inspect `lastCheckedAt` for refresh decisions.
+   */
+  async getUserEntry(id: Ulid): Promise<CacheEntry<UserProfile> | null> {
+    return this.safeRead(async () => {
+      const entry = await this.db.users?.get(id);
+      if (!entry || this.isExpired(entry.cachedAt)) return null;
+      return entry;
+    }, null);
+  }
+
+  // ========================================================================
+  // Groups
+  // ========================================================================
+
+  /**
+   * Get a group from cache by ULID.
+   * @param id - The group ULID
+   * @returns The cached group or null if not found / past hard TTL
+   */
+  async getGroup(id: Ulid): Promise<Group | null> {
+    return this.safeRead(async () => {
+      const entry = await this.db.groups?.get(id);
+      if (!entry || this.isExpired(entry.cachedAt)) return null;
+      await this.db.groups?.put(this.touch(entry));
+      return entry.data;
+    }, null);
+  }
+
+  /**
+   * Read the raw group CacheEntry. Used by the SDK to inspect
+   * `lastCheckedAt` when deciding whether to fire a background refresh.
+   */
+  async getGroupEntry(id: Ulid): Promise<CacheEntry<Group> | null> {
+    return this.safeRead(async () => {
+      const entry = await this.db.groups?.get(id);
+      if (!entry || this.isExpired(entry.cachedAt)) return null;
+      return entry;
+    }, null);
+  }
+
+  /**
+   * Store a group in the cache. Stamps `lastCheckedAt = now`.
+   */
+  async setGroup(id: Ulid, group: Group): Promise<void> {
+    if (!this.db.groups) return;
+    if (!id || typeof id !== "string") return;
+    await this.safeWrite(() =>
+      this.db.groups.put(this.createEntry(id, this.sanitizeForStorage(group))).then(() => undefined),
+    );
+  }
+
+  /**
+   * Bulk-store groups. Skips entries without a ULID.
+   */
+  async setGroups(groups: Group[]): Promise<void> {
+    if (!this.db.groups) return;
+    const entries = groups
+      .map((g) => {
+        const id = (g.ulid || g.id) as Ulid | undefined;
+        if (!id) return null;
+        return this.createEntry(id, this.sanitizeForStorage(g));
+      })
+      .filter((e): e is CacheEntry<Group> => e !== null);
+    if (entries.length === 0) return;
+    await this.safeWrite(() => this.db.groups.bulkPut(entries).then(() => undefined));
+  }
+
+  /**
+   * Delete a group from cache by ULID.
+   */
+  async deleteGroup(id: Ulid): Promise<void> {
+    if (!this.db.groups) return;
+    await this.safeWrite(() => this.db.groups.delete(id).then(() => undefined));
+  }
+
+  /**
+   * Reactive observable for a group by ID.
+   */
+  observeGroup(id: Ulid): Observable<Group | null> {
+    return liveQuery(async () => {
+      if (!this.db.groups) return null;
+      const entry = await this.db.groups.get(id);
+      if (!entry || this.isExpired(entry.cachedAt)) return null;
+      return entry.data;
+    });
+  }
+
+  /**
    * Delete a post from cache and remove from all feeds.
    *
    * @param id - The post ULID to delete
@@ -734,6 +929,7 @@ export class CacheDB {
      await Promise.all([
        this.db.posts.clear(),
        this.db.users.clear(),
+       this.db.groups?.clear() ?? Promise.resolve(),
        this.db.feedResources.clear(),
        this.db.notifications.clear(),
        this.db.notificationFeeds.clear(),
@@ -764,6 +960,7 @@ export class CacheDB {
      const entryStores: EntityTable<CacheEntry<any>, "id">[] = [
        this.db.posts,
        this.db.users,
+       this.db.groups,
        this.db.notifications,
      ];
      let totalRemoved = 0;
@@ -951,8 +1148,13 @@ export class CacheDB {
  *
  * @category Cache
  */
-export async function createCache(ttlMs?: number, dbName?: string, maxCapacity?: number): Promise<CacheDB> {
-  const cache = new CacheDB(ttlMs, dbName, maxCapacity);
+export async function createCache(
+  ttlMs?: number,
+  dbName?: string,
+  maxCapacity?: number,
+  refreshTtlMs?: number,
+): Promise<CacheDB> {
+  const cache = new CacheDB(ttlMs, dbName, maxCapacity, refreshTtlMs);
   await cache.open();
   return cache;
 }

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import "fake-indexeddb/auto";
+import Dexie from "dexie";
 import { CacheDB } from "../dist/cache/cacheDB.js";
 
 let dbCounter = 0;
@@ -198,4 +199,214 @@ test("trimCache handles many stale entries without per-row overhead errors", asy
   assert.equal(removed, 50);
   const remaining = await inner.toArray();
   assert.equal(remaining.length, 0);
+});
+
+// ---- groups store ------------------------------------------------------
+
+test("setGroup / getGroup roundtrip", async () => {
+  const cache = freshDb(HOUR);
+  await cache.open();
+
+  await cache.setGroup("01GROUP1", {
+    ulid: "01GROUP1",
+    name: "Group One",
+    membersCount: 3,
+  });
+
+  const got = await cache.getGroup("01GROUP1");
+  assert.ok(got);
+  assert.equal(got.name, "Group One");
+  assert.equal(got.membersCount, 3);
+});
+
+test("setGroups bulk write skips entries without a ULID", async () => {
+  const cache = freshDb(HOUR);
+  await cache.open();
+
+  await cache.setGroups([
+    { ulid: "01GROUPB1", name: "B1" },
+    { name: "no-id" },
+    { ulid: "01GROUPB2", name: "B2" },
+  ]);
+
+  const b1 = await cache.getGroup("01GROUPB1");
+  const b2 = await cache.getGroup("01GROUPB2");
+  assert.ok(b1);
+  assert.ok(b2);
+  assert.equal(b1.name, "B1");
+  assert.equal(b2.name, "B2");
+});
+
+test("deleteGroup removes the entry", async () => {
+  const cache = freshDb(HOUR);
+  await cache.open();
+
+  await cache.setGroup("01GROUPDEL", { ulid: "01GROUPDEL", name: "Doomed" });
+  assert.ok(await cache.getGroup("01GROUPDEL"));
+
+  await cache.deleteGroup("01GROUPDEL");
+  assert.equal(await cache.getGroup("01GROUPDEL"), null);
+});
+
+test("clearAll wipes the groups store", async () => {
+  const cache = freshDb(HOUR);
+  await cache.open();
+
+  await cache.setGroup("01GROUPCLR", { ulid: "01GROUPCLR", name: "Bye" });
+  await cache.clearAll();
+  assert.equal(await cache.getGroup("01GROUPCLR"), null);
+});
+
+// ---- refresh TTL -------------------------------------------------------
+
+test("isPastRefreshTTL is false right after write", async () => {
+  const cache = freshDb(HOUR);
+  await cache.open();
+
+  await cache.setUser("01TTLUSER", { ulid: "01TTLUSER", username: "fresh" });
+  const entry = await cache.getUserEntry("01TTLUSER");
+  assert.ok(entry);
+  assert.equal(cache.isPastRefreshTTL(entry), false);
+});
+
+test("isPastRefreshTTL is true once lastCheckedAt is older than refresh TTL", async () => {
+  // 1-second refresh TTL keeps the test fast.
+  const cache = new CacheDB(HOUR, `test-cache-${++dbCounter}-${Date.now()}`, undefined, 1000);
+  await cache.open();
+
+  await cache.setUser("01TTLOLD", { ulid: "01TTLOLD", username: "old" });
+
+  const inner = cache.db.users;
+  const stored = await inner.get("01TTLOLD");
+  stored.lastCheckedAt = Date.now() - 5000; // 5s ago
+  await inner.put(stored);
+
+  const entry = await cache.getUserEntry("01TTLOLD");
+  assert.ok(entry);
+  assert.equal(cache.isPastRefreshTTL(entry), true);
+});
+
+test("isPastRefreshTTL treats a missing entry as past TTL", async () => {
+  const cache = freshDb(HOUR);
+  await cache.open();
+  assert.equal(cache.isPastRefreshTTL(null), true);
+  assert.equal(cache.isPastRefreshTTL(undefined), true);
+});
+
+// ---- v4 → v5 migration ------------------------------------------------
+
+test("v4 → v5 upgrade backfills lastCheckedAt from cachedAt and adds groups store", async () => {
+  const dbName = `migrate-test-${++dbCounter}-${Date.now()}`;
+
+  // Stand up a v4-shaped DB and seed a user row WITHOUT lastCheckedAt
+  // (mirrors what shipped before this PR).
+  const v4 = new Dexie(dbName);
+  v4.version(4).stores({
+    posts: "id, cachedAt, lastAccessed",
+    feedResources: "route, cachedAt, lastAccessed",
+    users: "id, cachedAt, lastAccessed",
+    notifications: "id, cachedAt, lastAccessed",
+    notificationFeeds: "route, userId, updatedAt",
+    metadata: "key, updatedAt",
+  });
+  await v4.open();
+  const oldCachedAt = Date.now() - 10_000;
+  await v4.table("users").put({
+    id: "01MIGRUSER",
+    data: { ulid: "01MIGRUSER", username: "legacy" },
+    cachedAt: oldCachedAt,
+    lastAccessed: oldCachedAt,
+    accessCount: 1,
+    // no lastCheckedAt
+  });
+  await v4.table("posts").put({
+    id: "01MIGRPOST",
+    data: { ulid: "01MIGRPOST", title: "old" },
+    cachedAt: oldCachedAt,
+    lastAccessed: oldCachedAt,
+    accessCount: 1,
+  });
+  v4.close();
+
+  // Reopen at v5 via CacheDB — triggers .upgrade() backfill.
+  const cache = new CacheDB(60 * 60 * 1000, dbName);
+  await cache.open();
+
+  const userEntry = await cache.getUserEntry("01MIGRUSER");
+  assert.ok(userEntry, "user row preserved through upgrade");
+  assert.equal(userEntry.lastCheckedAt, oldCachedAt, "lastCheckedAt backfilled from cachedAt");
+
+  const postRow = await cache.db.posts.get("01MIGRPOST");
+  assert.equal(postRow.lastCheckedAt, oldCachedAt, "post lastCheckedAt backfilled");
+
+  // groups store now exists and is writable.
+  await cache.setGroup("01MIGRGROUP", { ulid: "01MIGRGROUP", name: "Post-upgrade" });
+  const g = await cache.getGroup("01MIGRGROUP");
+  assert.equal(g.name, "Post-upgrade");
+});
+
+test("open() recovers when initial db.open() throws by deleting + recreating", async () => {
+  const dbName = `recover-test-${++dbCounter}-${Date.now()}`;
+
+  const cache = new CacheDB(60 * 60 * 1000, dbName);
+
+  // Monkey-patch underlying db.open to throw once, then delegate.
+  const realOpen = cache.db.open.bind(cache.db);
+  let openCalls = 0;
+  cache.db.open = async function patchedOpen() {
+    openCalls += 1;
+    if (openCalls === 1) {
+      throw new Error("simulated upgrade failure");
+    }
+    return realOpen();
+  };
+
+  // Spy on db.delete to confirm recovery path runs.
+  let deleteCalled = false;
+  const realDelete = cache.db.delete.bind(cache.db);
+  cache.db.delete = async function patchedDelete() {
+    deleteCalled = true;
+    return realDelete();
+  };
+
+  await cache.open();
+
+  assert.equal(deleteCalled, true, "db.delete should have been called");
+  // The recovery path constructs a fresh PlatformCacheDB; it should be open
+  // and accept writes at the current schema (groups store available).
+  await cache.setGroup("01RECOVER01", { ulid: "01RECOVER01", name: "Recovered" });
+  const got = await cache.getGroup("01RECOVER01");
+  assert.equal(got.name, "Recovered");
+});
+
+test("open() rethrows if both initial open AND delete fail", async () => {
+  const dbName = `recover-fail-${++dbCounter}-${Date.now()}`;
+  const cache = new CacheDB(60 * 60 * 1000, dbName);
+  cache.db.open = async () => {
+    throw new Error("open boom");
+  };
+  cache.db.delete = async () => {
+    throw new Error("delete boom");
+  };
+
+  await assert.rejects(() => cache.open(), /delete boom/);
+});
+
+test("setUser stamps lastCheckedAt so refreshes reset the TTL clock", async () => {
+  const cache = freshDb(HOUR);
+  await cache.open();
+
+  await cache.setUser("01STAMP", { ulid: "01STAMP", username: "v1" });
+  const before = await cache.getUserEntry("01STAMP");
+  // Backdate.
+  const inner = cache.db.users;
+  const row = await inner.get("01STAMP");
+  row.lastCheckedAt = 0;
+  await inner.put(row);
+
+  // Re-write should refresh the stamp to ~now.
+  await cache.setUser("01STAMP", { ulid: "01STAMP", username: "v2" });
+  const after = await cache.getUserEntry("01STAMP");
+  assert.ok(after.lastCheckedAt > 0);
+  assert.ok(after.lastCheckedAt >= before.lastCheckedAt);
 });

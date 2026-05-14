@@ -67,12 +67,19 @@ function createSequentialMockFetch(responses) {
   return { fetchImpl, calls };
 }
 
+let groupsDbCounter = 0;
+function uniqueGroupsDbName() {
+  groupsDbCounter += 1;
+  return `groups-test-${groupsDbCounter}-${Date.now()}-${Math.random()}`;
+}
+
 function createAuthenticatedSequentialSdk(responses) {
   const { fetchImpl, calls } = createSequentialMockFetch(responses);
   const sdk = new CcPlatformSdk({
     baseUrl,
     tokens: { accessToken: "test-token" },
     fetchImpl,
+    dbName: uniqueGroupsDbName(),
   });
   return { sdk, calls };
 }
@@ -328,4 +335,289 @@ test("updateGroup sends only fields that were provided", async () => {
   assert.equal("avatar" in body, false);
   assert.equal("background" in body, false);
   assert.equal("visibility" in body, false);
+});
+
+// ---------------------------------------------------------------------------
+// getGroup cache + 30-min refresh TTL
+// ---------------------------------------------------------------------------
+
+function waitForBackgroundRefresh(predicate, timeoutMs = 1000) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const check = async () => {
+      try {
+        if (await predicate()) return resolve();
+      } catch (err) {
+        return reject(err);
+      }
+      if (Date.now() - start > timeoutMs) {
+        return reject(new Error("background refresh did not occur in time"));
+      }
+      setTimeout(check, 10);
+    };
+    check();
+  });
+}
+
+test("getGroup serves second call from cache (no second GET)", async () => {
+  const groupResponse = createSampleGroupResponse({ ulid: "01hxgroupcache01" });
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: groupResponse } },
+  ]);
+
+  const first = await sdk.getGroup("01hxgroupcache01");
+  const second = await sdk.getGroup("01hxgroupcache01");
+
+  assert.equal(first.ulid, "01hxgroupcache01");
+  assert.equal(second.ulid, "01hxgroupcache01");
+  assert.equal(calls.length, 1, "second getGroup should hit cache, not network");
+});
+
+test("getGroup past refresh TTL returns cached value AND fires background refresh", async () => {
+  const original = createSampleGroupResponse({ ulid: "01hxgroupswr0001", name: "Original" });
+  const refreshed = createSampleGroupResponse({ ulid: "01hxgroupswr0001", name: "Refreshed" });
+
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: original } },
+    { data: { data: refreshed } },
+  ]);
+
+  // Prime cache
+  const first = await sdk.getGroup("01hxgroupswr0001");
+  assert.equal(first.name, "Original");
+  assert.equal(calls.length, 1);
+
+  // Force the cached entry past the soft refresh TTL by rewriting it with
+  // a backdated lastCheckedAt directly via cache internals.
+  const cache = await sdk.cachePromise;
+  const entry = await cache.db.groups.get("01hxgroupswr0001");
+  entry.lastCheckedAt = Date.now() - 31 * 60 * 1000; // 31 min ago
+  await cache.db.groups.put(entry);
+
+  // Second call returns the cached (stale) value immediately, but triggers
+  // a background refresh.
+  const second = await sdk.getGroup("01hxgroupswr0001");
+  assert.equal(second.name, "Original", "stale cached value returned synchronously");
+
+  await waitForBackgroundRefresh(() => calls.length === 2);
+  assert.equal(calls.length, 2, "background refresh should have fired");
+
+  // Wait until the refreshed value lands in IndexedDB (network fetch resolves
+  // before the cache write completes).
+  await waitForBackgroundRefresh(async () => {
+    const row = await cache.db.groups.get("01hxgroupswr0001");
+    return row?.data?.name === "Refreshed";
+  });
+
+  // Subsequent call sees the refreshed value.
+  const third = await sdk.getGroup("01hxgroupswr0001");
+  assert.equal(third.name, "Refreshed");
+});
+
+test("getGroups warms per-group cache so getGroup hits IndexedDB", async () => {
+  const list = [
+    createSampleGroupResponse({ ulid: "01hxgrouplist001", name: "G1" }),
+    createSampleGroupResponse({ ulid: "01hxgrouplist002", name: "G2" }),
+  ];
+
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: list },
+  ]);
+
+  await sdk.getGroups();
+  assert.equal(calls.length, 1);
+
+  const fetched = await sdk.getGroup("01hxgrouplist001");
+  assert.equal(fetched.name, "G1");
+  assert.equal(calls.length, 1, "getGroup should hit warmed cache, no extra network");
+});
+
+test("joinGroup invalidates cached group", async () => {
+  const before = createSampleGroupResponse({
+    ulid: "01hxgroupjoin001",
+    isJoined: false,
+    membersCount: 5,
+  });
+  const after = createSampleGroupResponse({
+    ulid: "01hxgroupjoin001",
+    isJoined: true,
+    membersCount: 6,
+  });
+
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: before } }, // initial getGroup
+    { data: { data: { success: true } } }, // joinGroup
+    { data: { data: after } }, // post-join getGroup
+  ]);
+
+  const first = await sdk.getGroup("01hxgroupjoin001");
+  assert.equal(first.isJoined, false);
+
+  await sdk.joinGroup("01hxgroupjoin001");
+
+  const second = await sdk.getGroup("01hxgroupjoin001");
+  assert.equal(second.isJoined, true);
+  assert.equal(second.membersCount, 6);
+  assert.equal(calls.length, 3, "join should invalidate cache and force refetch");
+});
+
+test("leaveGroup invalidates cached group", async () => {
+  const joined = createSampleGroupResponse({
+    ulid: "01hxgroupleave01",
+    isJoined: true,
+  });
+  const left = createSampleGroupResponse({
+    ulid: "01hxgroupleave01",
+    isJoined: false,
+  });
+
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: joined } },
+    { data: { data: { success: true } } },
+    { data: { data: left } },
+  ]);
+
+  await sdk.getGroup("01hxgroupleave01");
+  await sdk.leaveGroup("01hxgroupleave01");
+  const after = await sdk.getGroup("01hxgroupleave01");
+
+  assert.equal(after.isJoined, false);
+  assert.equal(calls.length, 3);
+});
+
+test("createGroup writes through to cache", async () => {
+  const created = createSampleGroupResponse({
+    ulid: "01hxgroupcreate1",
+    name: "Brand New",
+  });
+
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: { group: created } } },
+  ]);
+
+  const result = await sdk.createGroup({ name: "Brand New" });
+  assert.equal(result.ulid, "01hxgroupcreate1");
+
+  // Subsequent getGroup should not hit the network.
+  const cached = await sdk.getGroup("01hxgroupcreate1");
+  assert.equal(cached.name, "Brand New");
+  assert.equal(calls.length, 1, "createGroup should warm cache, no follow-up GET");
+});
+
+test("updateGroup invalidates cache and serves fresh data", async () => {
+  const before = createSampleGroupResponse({
+    ulid: "01hxgroupupd001",
+    name: "Old Name",
+  });
+  const after = createSampleGroupResponse({
+    ulid: "01hxgroupupd001",
+    name: "New Name",
+  });
+
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: before } }, // initial getGroup
+    { data: { data: { success: true } } }, // PATCH
+    { data: { data: after } }, // read-after-write GET
+  ]);
+
+  const first = await sdk.getGroup("01hxgroupupd001");
+  assert.equal(first.name, "Old Name");
+
+  const result = await sdk.updateGroup({ groupId: "01hxgroupupd001", name: "New Name" });
+  assert.equal(result.name, "New Name");
+
+  // Cache should now hold the refreshed value.
+  const fromCache = await sdk.getGroup("01hxgroupupd001");
+  assert.equal(fromCache.name, "New Name");
+  assert.equal(calls.length, 3, "no extra network call after read-after-write");
+});
+
+// ---------------------------------------------------------------------------
+// fetchUserProfileById SWR (mirror of getGroup SWR test)
+// ---------------------------------------------------------------------------
+
+function userProfileBatchResponse(users) {
+  return { data: { data: users } };
+}
+
+test("fetchUserProfileById past refresh TTL returns cached AND fires background batch refresh", async () => {
+  const original = { ulid: "01hxuserttl00001", username: "v1", name: "Original" };
+  const refreshed = { ulid: "01hxuserttl00001", username: "v1", name: "Refreshed" };
+
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    userProfileBatchResponse([original]), // initial fetch (cache miss)
+    userProfileBatchResponse([refreshed]), // background refresh
+  ]);
+
+  // Cache miss → batched POST to /v1/profile
+  const first = await sdk.fetchUserProfileById("01hxuserttl00001");
+  assert.equal(first.name, "Original");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${baseUrl}/v1/profile`);
+
+  // Backdate the cache row past the soft TTL.
+  const cache = await sdk.cachePromise;
+  const row = await cache.db.users.get("01hxuserttl00001");
+  row.lastCheckedAt = Date.now() - 31 * 60 * 1000;
+  await cache.db.users.put(row);
+
+  // Stale value returned synchronously, refresh fires in background.
+  const second = await sdk.fetchUserProfileById("01hxuserttl00001");
+  assert.equal(second.name, "Original", "stale cached value returned without awaiting network");
+
+  await waitForBackgroundRefresh(() => calls.length === 2);
+  await waitForBackgroundRefresh(async () => {
+    const r = await cache.db.users.get("01hxuserttl00001");
+    return r?.data?.name === "Refreshed";
+  });
+
+  const third = await sdk.fetchUserProfileById("01hxuserttl00001");
+  assert.equal(third.name, "Refreshed");
+});
+
+test("fetchUserProfileById in-flight Set clears after background refresh completes", async () => {
+  const u = { ulid: "01hxuserlock0001", username: "lock" };
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    userProfileBatchResponse([u]),
+    userProfileBatchResponse([u]),
+  ]);
+
+  await sdk.fetchUserProfileById("01hxuserlock0001");
+  const cache = await sdk.cachePromise;
+  const row = await cache.db.users.get("01hxuserlock0001");
+  row.lastCheckedAt = Date.now() - 31 * 60 * 1000;
+  await cache.db.users.put(row);
+
+  await sdk.fetchUserProfileById("01hxuserlock0001"); // triggers background refresh
+  await waitForBackgroundRefresh(() => calls.length === 2);
+  await waitForBackgroundRefresh(() => sdk.userRefreshInFlight.size === 0);
+  assert.equal(sdk.userRefreshInFlight.size, 0, "in-flight Set should be empty once refresh settles");
+});
+
+test("getGroup deduplicates concurrent past-TTL refreshes into single GET", async () => {
+  const original = createSampleGroupResponse({ ulid: "01hxgroupdedup01", name: "Original" });
+  const refreshed = createSampleGroupResponse({ ulid: "01hxgroupdedup01", name: "Refreshed" });
+
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: original } },
+    { data: { data: refreshed } },
+  ]);
+
+  await sdk.getGroup("01hxgroupdedup01"); // prime
+  const cache = await sdk.cachePromise;
+  const row = await cache.db.groups.get("01hxgroupdedup01");
+  row.lastCheckedAt = Date.now() - 31 * 60 * 1000;
+  await cache.db.groups.put(row);
+
+  // Fire 3 concurrent reads — only ONE background GET should land.
+  await Promise.all([
+    sdk.getGroup("01hxgroupdedup01"),
+    sdk.getGroup("01hxgroupdedup01"),
+    sdk.getGroup("01hxgroupdedup01"),
+  ]);
+
+  await waitForBackgroundRefresh(() => calls.length === 2);
+  // Wait a tick to let any duplicate refreshes resolve (they shouldn't exist).
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(calls.length, 2, "concurrent refreshes deduped to single GET");
 });
