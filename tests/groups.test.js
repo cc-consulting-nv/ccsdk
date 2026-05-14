@@ -699,3 +699,70 @@ test("fetchUserProfileById negative cache: missing-from-batch tombstoned, then s
   assert.equal(second, null);
   assert.equal(calls.length, 1, "tombstone prevents re-fetch");
 });
+
+// ---------------------------------------------------------------------------
+// 404 evicts cached entry (server-side delete caught by SWR refresh)
+// ---------------------------------------------------------------------------
+
+test("getGroup background refresh that returns 404 evicts the cached row", async () => {
+  const original = createSampleGroupResponse({ ulid: "01hxgroupdel001", name: "Original" });
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: original } },        // initial cold read
+    { status: 404, data: { message: "Gone" } }, // background SWR refresh
+  ]);
+
+  // Prime cache.
+  await sdk.getGroup("01hxgroupdel001");
+  assert.equal(calls.length, 1);
+
+  // Backdate past the soft TTL so next read fires the background refresh.
+  const cache = await sdk.cachePromise;
+  const row = await cache.db.groups.get("01hxgroupdel001");
+  row.lastCheckedAt = Date.now() - 31 * 60 * 1000;
+  await cache.db.groups.put(row);
+
+  // Stale read returns the cached value synchronously, refresh fires async.
+  const stale = await sdk.getGroup("01hxgroupdel001");
+  assert.equal(stale.name, "Original");
+
+  // Wait for the refresh to land + the cache row to be evicted.
+  await waitForBackgroundRefresh(() => calls.length === 2);
+  await waitForBackgroundRefresh(async () => {
+    const r = await cache.db.groups.get("01hxgroupdel001");
+    return r === undefined;
+  });
+
+  // Tombstone present, cached row gone.
+  assert.ok(sdk.groupNotFound.has("01hxgroupdel001"));
+  // Next read short-circuits via the tombstone (no third network call).
+  await assert.rejects(() => sdk.getGroup("01hxgroupdel001"));
+  assert.equal(calls.length, 2);
+});
+
+test("fetchUserProfileById batch missing-id evicts cached profile", async () => {
+  const profile = { ulid: "01hxuserdel0001", username: "ghost", name: "Ghost" };
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    userProfileBatchResponse([profile]), // initial fetch
+    userProfileBatchResponse([]),         // background refresh — server says gone
+  ]);
+
+  await sdk.fetchUserProfileById("01hxuserdel0001");
+  assert.equal(calls.length, 1);
+
+  const cache = await sdk.cachePromise;
+  const row = await cache.db.users.get("01hxuserdel0001");
+  row.lastCheckedAt = Date.now() - 31 * 60 * 1000;
+  await cache.db.users.put(row);
+
+  // Stale read returns cached profile, fires background refresh.
+  const stale = await sdk.fetchUserProfileById("01hxuserdel0001");
+  assert.equal(stale.name, "Ghost");
+
+  await waitForBackgroundRefresh(() => calls.length === 2);
+  await waitForBackgroundRefresh(async () => {
+    const r = await cache.db.users.get("01hxuserdel0001");
+    return r === undefined;
+  });
+
+  assert.ok(sdk.userNotFound.has("01hxuserdel0001"));
+});

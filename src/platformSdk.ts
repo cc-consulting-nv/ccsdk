@@ -4993,8 +4993,11 @@ export class CcPlatformSdk {
 
       // Resolve all pending promises. Any id requested but not returned by
       // the batch endpoint is treated as a 404 — write a 60s tombstone so
-      // we don't immediately re-request it on the next read.
+      // we don't immediately re-request it on the next read. Also evict the
+      // cached row so an SWR refresh that catches a server-side delete
+      // doesn't keep serving the stale profile until the hard TTL expires.
       const ttl = Date.now() + this.negativeCacheTtlMs;
+      const missingIds: Ulid[] = [];
       for (const userId of userIds) {
         const resolvers = resolversSnapshot.get(userId) || [];
         const user = userMap.get(userId) || null;
@@ -5002,9 +5005,20 @@ export class CcPlatformSdk {
           this.userNotFound.delete(userId);
         } else {
           this.userNotFound.set(userId, ttl);
+          missingIds.push(userId);
         }
         for (const { resolve } of resolvers) {
           resolve(user);
+        }
+      }
+      if (missingIds.length > 0) {
+        try {
+          const c = await this.cachePromise;
+          for (const id of missingIds) {
+            await c.deleteUser(id);
+          }
+        } catch (cacheErr) {
+          this.log("[SDK] cache delete after batch 404 failed:", cacheErr);
         }
       }
     } catch (err) {
@@ -8117,9 +8131,18 @@ export class CcPlatformSdk {
     } catch (err) {
       // Tombstone 404s so subsequent reads short-circuit for 60s instead of
       // pounding the API for a group the server has already said is gone.
+      // Also evict the cached row if present — without this, an SWR refresh
+      // that catches a server-side delete would keep serving the stale group
+      // for up to 24h (until the hard TTL expires).
       const status = (err as { status?: number })?.status;
       if (status === 404) {
         this.groupNotFound.set(groupUlid, Date.now() + this.negativeCacheTtlMs);
+        try {
+          const cache = await this.cachePromise;
+          await cache.deleteGroup(groupUlid);
+        } catch (cacheErr) {
+          this.log("[SDK] cache delete after 404 failed:", cacheErr);
+        }
       }
       throw err;
     }
