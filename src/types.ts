@@ -593,6 +593,13 @@ export interface UserProfile {
   pinnedPostUlids?: string[];
   /** ULIDs of the user's pinned regular posts (type='POST') */
   pinnedRegularPostUlids?: string[];
+  /** Privacy settings visible to the viewer */
+  privacy?: {
+    isProfilePrivate?: boolean;
+    showFavorites?: boolean;
+    showReviews?: boolean;
+    showActivityStatus?: boolean;
+  };
   /** Additional properties from API */
   [key: string]: unknown;
 }
