@@ -224,7 +224,8 @@ function isDexieConnectionLost(err: unknown): boolean {
  * @category Cache
  */
 export class CacheDB {
-  private readonly db: PlatformCacheDB;
+  private db: PlatformCacheDB;
+  private readonly dbName?: string;
   private readonly ttlMs: number;
   private readonly refreshTtlMs: number;
 
@@ -247,6 +248,7 @@ export class CacheDB {
   ) {
     this.ttlMs = ttlMs;
     this.refreshTtlMs = refreshTtlMs;
+    this.dbName = dbName;
     this.db = new PlatformCacheDB(dbName);
   }
 
@@ -272,9 +274,37 @@ export class CacheDB {
   /**
    * Open the IndexedDB database connection.
    * Must be called before using any cache methods.
+   *
+   * If the open fails (typically because a Dexie schema upgrade threw on a
+   * corrupted row, or browser storage is in a wedged state), the entire
+   * IndexedDB database is deleted and recreated at the current schema.
+   * The cache loses its contents — but the cache is rebuildable from the
+   * network, so this is strictly better than leaving the SDK bricked. Without
+   * this fallback, a failed upgrade survives `logout()` (which only calls
+   * `clearAll`, not `db.delete`) so the user has no in-app way to recover.
    */
   async open(): Promise<void> {
-    await this.db.open();
+    try {
+      await this.db.open();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[CacheDB] open failed, deleting and recreating database:",
+        err,
+      );
+      try {
+        await this.db.delete();
+      } catch (deleteErr) {
+        // eslint-disable-next-line no-console
+        console.error(
+          "[CacheDB] delete also failed; cache will remain unavailable:",
+          deleteErr,
+        );
+        throw deleteErr;
+      }
+      this.db = new PlatformCacheDB(this.dbName);
+      await this.db.open();
+    }
   }
 
   /**

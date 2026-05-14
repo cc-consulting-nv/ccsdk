@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import "fake-indexeddb/auto";
+import Dexie from "dexie";
 import { CacheDB } from "../dist/cache/cacheDB.js";
 
 let dbCounter = 0;
@@ -290,6 +291,105 @@ test("isPastRefreshTTL treats a missing entry as past TTL", async () => {
   await cache.open();
   assert.equal(cache.isPastRefreshTTL(null), true);
   assert.equal(cache.isPastRefreshTTL(undefined), true);
+});
+
+// ---- v4 → v5 migration ------------------------------------------------
+
+test("v4 → v5 upgrade backfills lastCheckedAt from cachedAt and adds groups store", async () => {
+  const dbName = `migrate-test-${++dbCounter}-${Date.now()}`;
+
+  // Stand up a v4-shaped DB and seed a user row WITHOUT lastCheckedAt
+  // (mirrors what shipped before this PR).
+  const v4 = new Dexie(dbName);
+  v4.version(4).stores({
+    posts: "id, cachedAt, lastAccessed",
+    feedResources: "route, cachedAt, lastAccessed",
+    users: "id, cachedAt, lastAccessed",
+    notifications: "id, cachedAt, lastAccessed",
+    notificationFeeds: "route, userId, updatedAt",
+    metadata: "key, updatedAt",
+  });
+  await v4.open();
+  const oldCachedAt = Date.now() - 10_000;
+  await v4.table("users").put({
+    id: "01MIGRUSER",
+    data: { ulid: "01MIGRUSER", username: "legacy" },
+    cachedAt: oldCachedAt,
+    lastAccessed: oldCachedAt,
+    accessCount: 1,
+    // no lastCheckedAt
+  });
+  await v4.table("posts").put({
+    id: "01MIGRPOST",
+    data: { ulid: "01MIGRPOST", title: "old" },
+    cachedAt: oldCachedAt,
+    lastAccessed: oldCachedAt,
+    accessCount: 1,
+  });
+  v4.close();
+
+  // Reopen at v5 via CacheDB — triggers .upgrade() backfill.
+  const cache = new CacheDB(60 * 60 * 1000, dbName);
+  await cache.open();
+
+  const userEntry = await cache.getUserEntry("01MIGRUSER");
+  assert.ok(userEntry, "user row preserved through upgrade");
+  assert.equal(userEntry.lastCheckedAt, oldCachedAt, "lastCheckedAt backfilled from cachedAt");
+
+  const postRow = await cache.db.posts.get("01MIGRPOST");
+  assert.equal(postRow.lastCheckedAt, oldCachedAt, "post lastCheckedAt backfilled");
+
+  // groups store now exists and is writable.
+  await cache.setGroup("01MIGRGROUP", { ulid: "01MIGRGROUP", name: "Post-upgrade" });
+  const g = await cache.getGroup("01MIGRGROUP");
+  assert.equal(g.name, "Post-upgrade");
+});
+
+test("open() recovers when initial db.open() throws by deleting + recreating", async () => {
+  const dbName = `recover-test-${++dbCounter}-${Date.now()}`;
+
+  const cache = new CacheDB(60 * 60 * 1000, dbName);
+
+  // Monkey-patch underlying db.open to throw once, then delegate.
+  const realOpen = cache.db.open.bind(cache.db);
+  let openCalls = 0;
+  cache.db.open = async function patchedOpen() {
+    openCalls += 1;
+    if (openCalls === 1) {
+      throw new Error("simulated upgrade failure");
+    }
+    return realOpen();
+  };
+
+  // Spy on db.delete to confirm recovery path runs.
+  let deleteCalled = false;
+  const realDelete = cache.db.delete.bind(cache.db);
+  cache.db.delete = async function patchedDelete() {
+    deleteCalled = true;
+    return realDelete();
+  };
+
+  await cache.open();
+
+  assert.equal(deleteCalled, true, "db.delete should have been called");
+  // The recovery path constructs a fresh PlatformCacheDB; it should be open
+  // and accept writes at the current schema (groups store available).
+  await cache.setGroup("01RECOVER01", { ulid: "01RECOVER01", name: "Recovered" });
+  const got = await cache.getGroup("01RECOVER01");
+  assert.equal(got.name, "Recovered");
+});
+
+test("open() rethrows if both initial open AND delete fail", async () => {
+  const dbName = `recover-fail-${++dbCounter}-${Date.now()}`;
+  const cache = new CacheDB(60 * 60 * 1000, dbName);
+  cache.db.open = async () => {
+    throw new Error("open boom");
+  };
+  cache.db.delete = async () => {
+    throw new Error("delete boom");
+  };
+
+  await assert.rejects(() => cache.open(), /delete boom/);
 });
 
 test("setUser stamps lastCheckedAt so refreshes reset the TTL clock", async () => {
