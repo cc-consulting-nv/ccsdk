@@ -4992,9 +4992,23 @@ export class CcPlatformSdk {
 
     if (staleOrMissing.length === 0) return;
 
-    // Queue all fetches in parallel - they will be batched automatically (up to 20 per request)
+    // Queue all fetches in parallel - they will be batched automatically (up to 20 per request).
+    // Profile hydration is a non-critical enrichment: feed items already render from their
+    // cached/embedded user data. Swallow transient network failures here (e.g. iOS Safari
+    // "TypeError: Load failed" when the tab is backgrounded or the cell signal drops) so they
+    // don't surface as unhandled rejections to Sentry. Per-hint failures are logged but
+    // intentionally not rethrown.
     await Promise.all(
-      staleOrMissing.map(hint => this.fetchUserProfileById(hint.userId, hint.userUpdatedAt))
+      staleOrMissing.map(hint =>
+        this.fetchUserProfileById(hint.userId, hint.userUpdatedAt).catch((err) => {
+          this.log(
+            "[SDK] hydrateUsersFromHints: profile fetch failed for",
+            hint.userId,
+            err,
+          );
+          return null;
+        }),
+      ),
     );
   }
 
