@@ -505,6 +505,13 @@ export class CcPlatformSdk {
   > = new Map();
   private userBatchTimer: number | null = null;
 
+  // Per-id refresh dedupe so background SWR refreshes don't pile up.
+  // Users use a Set (the underlying queueUserFetch already de-dupes by Map key,
+  // so the Set just suppresses repeat scheduling). Groups have no batching layer
+  // and use a Promise map so concurrent callers reuse the same in-flight GET.
+  private userRefreshInFlight: Set<Ulid> = new Set();
+  private groupRefreshInFlight: Map<Ulid, Promise<Group>> = new Map();
+
   // Engagement fetching - debounced and single-flight
   private readonly engagementBatchDelay = 100;
   private engagementBatchQueue: Set<Ulid> = new Set();
@@ -4832,21 +4839,37 @@ export class CcPlatformSdk {
     hintUpdatedAt?: string | number,
   ): Promise<UserProfile | null> {
     const cache = await this.cachePromise;
-    const cached = await cache.getUser(userId);
+    const entry = await cache.getUserEntry(userId);
+    const cached = entry?.data ?? null;
+
     if (cached && !this.isUserStale(cached, hintUpdatedAt)) {
       // Handle cached data that may be wrapped in {data: [...]} (legacy cache entries)
-      if (cached && typeof cached === 'object' && 'data' in cached && Array.isArray((cached as any).data)) {
+      if (typeof cached === 'object' && 'data' in cached && Array.isArray((cached as any).data)) {
         const unwrappedCached = (cached as any).data[0] as UserProfile;
         if (unwrappedCached) {
-          // Fix the cache entry
           await cache.setUser(userId, unwrappedCached);
           return unwrappedCached;
         }
       }
+
+      // Stale-while-revalidate: if the cached row is past the soft refresh
+      // TTL (default 30 min), return it now AND fire a background refresh.
+      // Per-id dedupe via userRefreshInFlight prevents duplicate fetches.
+      if (cache.isPastRefreshTTL(entry) && !this.userRefreshInFlight.has(userId)) {
+        this.userRefreshInFlight.add(userId);
+        this.queueUserFetch(userId, hintUpdatedAt)
+          .catch((err) => {
+            this.log("[SDK] background user refresh failed for", userId, err);
+          })
+          .finally(() => {
+            this.userRefreshInFlight.delete(userId);
+          });
+      }
+
       return cached;
     }
 
-    // Use batched fetching with debounce
+    // Cache miss or hint-stale: await a fresh fetch
     return this.queueUserFetch(userId, hintUpdatedAt);
   }
 
@@ -4984,8 +5007,12 @@ export class CcPlatformSdk {
 
     const staleOrMissing = [];
     for (const hint of uniqueHints) {
-      const cached = await cache.getUser(hint.userId);
-      if (!cached || this.isUserStale(cached, hint.userUpdatedAt)) {
+      const entry = await cache.getUserEntry(hint.userId);
+      if (
+        !entry ||
+        this.isUserStale(entry.data, hint.userUpdatedAt) ||
+        cache.isPastRefreshTTL(entry)
+      ) {
         staleOrMissing.push(hint);
       }
     }
@@ -8012,6 +8039,17 @@ export class CcPlatformSdk {
     // The API returns data array directly, need to extract cursor from headers or response
     const data = Array.isArray(response) ? response : (response as unknown as { data?: Group[] }).data || [];
     const rawResponse = response as unknown as { next_cursor?: string; nextCursor?: string };
+
+    // Warm per-group cache so subsequent getGroup() calls hit IndexedDB.
+    if (data.length > 0) {
+      try {
+        const cache = await this.cachePromise;
+        await cache.setGroups(data);
+      } catch (err) {
+        this.log("[SDK] warm group cache failed:", err);
+      }
+    }
+
     return {
       data,
       nextCursor: rawResponse.next_cursor || rawResponse.nextCursor,
@@ -8019,17 +8057,71 @@ export class CcPlatformSdk {
   }
 
   /**
+   * Fetch a single group from the API and write it through to cache.
+   * @internal
+   */
+  private async fetchGroupFromNetwork(groupUlid: Ulid): Promise<Group> {
+    const response = await this.client.get<ApiEnvelope<Group>>(
+      `/v1/groups/${encodeURIComponent(groupUlid)}`,
+    );
+    const group = this.unwrap(response);
+    if (group) {
+      try {
+        const cache = await this.cachePromise;
+        await cache.setGroup(groupUlid, group);
+      } catch (err) {
+        this.log("[SDK] setGroup cache write failed:", err);
+      }
+    }
+    return group;
+  }
+
+  /**
    * Get a single group by its ULID.
    * GET /v1/groups/{groupUlid}
+   *
+   * Stale-while-revalidate: returns the cached group if present and within
+   * the hard TTL. If the cached entry is past the soft refresh TTL
+   * (default 30 min) a background refresh is fired but the cached value is
+   * still returned immediately. Cache misses await the network fetch.
    *
    * @param groupUlid - The ULID of the group
    * @returns The group details
    */
   async getGroup(groupUlid: Ulid): Promise<Group> {
-    const response = await this.client.get<ApiEnvelope<Group>>(
-      `/v1/groups/${encodeURIComponent(groupUlid)}`,
-    );
-    return this.unwrap(response);
+    const cache = await this.cachePromise;
+    const entry = await cache.getGroupEntry(groupUlid);
+
+    if (entry) {
+      if (cache.isPastRefreshTTL(entry)) {
+        // Promise-map dedupe: concurrent callers reuse the same in-flight
+        // GET. The promise removes itself from the map when settled.
+        if (!this.groupRefreshInFlight.has(groupUlid)) {
+          const p = this.fetchGroupFromNetwork(groupUlid)
+            .catch((err) => {
+              this.log("[SDK] background group refresh failed for", groupUlid, err);
+              throw err;
+            })
+            .finally(() => {
+              this.groupRefreshInFlight.delete(groupUlid);
+            });
+          // Swallow rejections at the top level — this is fire-and-forget.
+          p.catch(() => undefined);
+          this.groupRefreshInFlight.set(groupUlid, p as Promise<Group>);
+        }
+      }
+      return entry.data;
+    }
+
+    // Cache miss: also dedupe so a flurry of cold reads only fires one GET.
+    const inFlight = this.groupRefreshInFlight.get(groupUlid);
+    if (inFlight) return inFlight;
+
+    const p = this.fetchGroupFromNetwork(groupUlid).finally(() => {
+      this.groupRefreshInFlight.delete(groupUlid);
+    });
+    this.groupRefreshInFlight.set(groupUlid, p);
+    return p;
   }
 
   /**
@@ -8046,7 +8138,17 @@ export class CcPlatformSdk {
     );
     const unwrapped = this.unwrap(response);
     // API returns { group: {...} } due to GroupResource wrapper
-    return unwrapped.group || (unwrapped as unknown as Group);
+    const group = unwrapped.group || (unwrapped as unknown as Group);
+    const id = (group?.ulid || group?.id) as Ulid | undefined;
+    if (id) {
+      try {
+        const cache = await this.cachePromise;
+        await cache.setGroup(id, group);
+      } catch (err) {
+        this.log("[SDK] cache write after createGroup failed:", err);
+      }
+    }
+    return group;
   }
 
   /**
@@ -8060,6 +8162,14 @@ export class CcPlatformSdk {
     await this.client.post("/v1/group/join", {
       body: { groupId },
     });
+    // Membership/role flipped server-side; drop cached copy so the next
+    // read fetches fresh isJoined/memberRole/membersCount.
+    try {
+      const cache = await this.cachePromise;
+      await cache.deleteGroup(groupId);
+    } catch (err) {
+      this.log("[SDK] cache invalidate after joinGroup failed:", err);
+    }
   }
 
   /**
@@ -8073,6 +8183,12 @@ export class CcPlatformSdk {
     await this.client.post("/v1/group/leave", {
       body: { groupId },
     });
+    try {
+      const cache = await this.cachePromise;
+      await cache.deleteGroup(groupId);
+    } catch (err) {
+      this.log("[SDK] cache invalidate after leaveGroup failed:", err);
+    }
   }
 
   /**
@@ -8279,8 +8395,8 @@ export class CcPlatformSdk {
     await this.client.patch("/v1/group/edit", {
       body: request,
     });
-    // Read-after-write: fetch and return the updated group
-    return this.getGroup(request.groupId);
+    // Read-after-write: bypass cache, fetch fresh from network, write through.
+    return this.fetchGroupFromNetwork(request.groupId);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

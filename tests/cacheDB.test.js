@@ -199,3 +199,114 @@ test("trimCache handles many stale entries without per-row overhead errors", asy
   const remaining = await inner.toArray();
   assert.equal(remaining.length, 0);
 });
+
+// ---- groups store ------------------------------------------------------
+
+test("setGroup / getGroup roundtrip", async () => {
+  const cache = freshDb(HOUR);
+  await cache.open();
+
+  await cache.setGroup("01GROUP1", {
+    ulid: "01GROUP1",
+    name: "Group One",
+    membersCount: 3,
+  });
+
+  const got = await cache.getGroup("01GROUP1");
+  assert.ok(got);
+  assert.equal(got.name, "Group One");
+  assert.equal(got.membersCount, 3);
+});
+
+test("setGroups bulk write skips entries without a ULID", async () => {
+  const cache = freshDb(HOUR);
+  await cache.open();
+
+  await cache.setGroups([
+    { ulid: "01GROUPB1", name: "B1" },
+    { name: "no-id" },
+    { ulid: "01GROUPB2", name: "B2" },
+  ]);
+
+  const b1 = await cache.getGroup("01GROUPB1");
+  const b2 = await cache.getGroup("01GROUPB2");
+  assert.ok(b1);
+  assert.ok(b2);
+  assert.equal(b1.name, "B1");
+  assert.equal(b2.name, "B2");
+});
+
+test("deleteGroup removes the entry", async () => {
+  const cache = freshDb(HOUR);
+  await cache.open();
+
+  await cache.setGroup("01GROUPDEL", { ulid: "01GROUPDEL", name: "Doomed" });
+  assert.ok(await cache.getGroup("01GROUPDEL"));
+
+  await cache.deleteGroup("01GROUPDEL");
+  assert.equal(await cache.getGroup("01GROUPDEL"), null);
+});
+
+test("clearAll wipes the groups store", async () => {
+  const cache = freshDb(HOUR);
+  await cache.open();
+
+  await cache.setGroup("01GROUPCLR", { ulid: "01GROUPCLR", name: "Bye" });
+  await cache.clearAll();
+  assert.equal(await cache.getGroup("01GROUPCLR"), null);
+});
+
+// ---- refresh TTL -------------------------------------------------------
+
+test("isPastRefreshTTL is false right after write", async () => {
+  const cache = freshDb(HOUR);
+  await cache.open();
+
+  await cache.setUser("01TTLUSER", { ulid: "01TTLUSER", username: "fresh" });
+  const entry = await cache.getUserEntry("01TTLUSER");
+  assert.ok(entry);
+  assert.equal(cache.isPastRefreshTTL(entry), false);
+});
+
+test("isPastRefreshTTL is true once lastCheckedAt is older than refresh TTL", async () => {
+  // 1-second refresh TTL keeps the test fast.
+  const cache = new CacheDB(HOUR, `test-cache-${++dbCounter}-${Date.now()}`, undefined, 1000);
+  await cache.open();
+
+  await cache.setUser("01TTLOLD", { ulid: "01TTLOLD", username: "old" });
+
+  const inner = cache.db.users;
+  const stored = await inner.get("01TTLOLD");
+  stored.lastCheckedAt = Date.now() - 5000; // 5s ago
+  await inner.put(stored);
+
+  const entry = await cache.getUserEntry("01TTLOLD");
+  assert.ok(entry);
+  assert.equal(cache.isPastRefreshTTL(entry), true);
+});
+
+test("isPastRefreshTTL treats a missing entry as past TTL", async () => {
+  const cache = freshDb(HOUR);
+  await cache.open();
+  assert.equal(cache.isPastRefreshTTL(null), true);
+  assert.equal(cache.isPastRefreshTTL(undefined), true);
+});
+
+test("setUser stamps lastCheckedAt so refreshes reset the TTL clock", async () => {
+  const cache = freshDb(HOUR);
+  await cache.open();
+
+  await cache.setUser("01STAMP", { ulid: "01STAMP", username: "v1" });
+  const before = await cache.getUserEntry("01STAMP");
+  // Backdate.
+  const inner = cache.db.users;
+  const row = await inner.get("01STAMP");
+  row.lastCheckedAt = 0;
+  await inner.put(row);
+
+  // Re-write should refresh the stamp to ~now.
+  await cache.setUser("01STAMP", { ulid: "01STAMP", username: "v2" });
+  const after = await cache.getUserEntry("01STAMP");
+  assert.ok(after.lastCheckedAt > 0);
+  assert.ok(after.lastCheckedAt >= before.lastCheckedAt);
+});
