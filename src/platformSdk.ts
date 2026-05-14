@@ -512,6 +512,14 @@ export class CcPlatformSdk {
   private userRefreshInFlight: Set<Ulid> = new Set();
   private groupRefreshInFlight: Map<Ulid, Promise<Group>> = new Map();
 
+  // Negative cache: short tombstone for entities the API returned 404 for.
+  // Stops retry storms on deleted/banned profiles or removed groups. Value
+  // is the epoch ms when the tombstone expires (default 60s after the 404).
+  // Cleared whenever a successful write happens for that id.
+  private readonly negativeCacheTtlMs = 60 * 1000;
+  private userNotFound: Map<Ulid, number> = new Map();
+  private groupNotFound: Map<Ulid, number> = new Map();
+
   // Engagement fetching - debounced and single-flight
   private readonly engagementBatchDelay = 100;
   private engagementBatchQueue: Set<Ulid> = new Set();
@@ -2001,6 +2009,8 @@ export class CcPlatformSdk {
   async clearCache(): Promise<void> {
     const cache = await this.cachePromise;
     await cache.clearAll();
+    this.userNotFound.clear();
+    this.groupNotFound.clear();
   }
 
   /**
@@ -4834,10 +4844,30 @@ export class CcPlatformSdk {
     });
   }
 
+  /**
+   * Whether `id` has a fresh 404 tombstone in `map`. Removes the entry
+   * lazily once expired so the Map doesn't grow unbounded.
+   * @internal
+   */
+  private hasFreshNegativeCache(map: Map<Ulid, number>, id: Ulid): boolean {
+    const expiresAt = map.get(id);
+    if (expiresAt === undefined) return false;
+    if (Date.now() > expiresAt) {
+      map.delete(id);
+      return false;
+    }
+    return true;
+  }
+
   async fetchUserProfileById(
     userId: Ulid,
     hintUpdatedAt?: string | number,
   ): Promise<UserProfile | null> {
+    // Negative-cache short-circuit: skip network if API recently said 404.
+    if (this.hasFreshNegativeCache(this.userNotFound, userId)) {
+      return null;
+    }
+
     const cache = await this.cachePromise;
     const entry = await cache.getUserEntry(userId);
     const cached = entry?.data ?? null;
@@ -4961,12 +4991,34 @@ export class CcPlatformSdk {
         }
       }
 
-      // Resolve all pending promises
+      // Resolve all pending promises. Any id requested but not returned by
+      // the batch endpoint is treated as a 404 — write a 60s tombstone so
+      // we don't immediately re-request it on the next read. Also evict the
+      // cached row so an SWR refresh that catches a server-side delete
+      // doesn't keep serving the stale profile until the hard TTL expires.
+      const ttl = Date.now() + this.negativeCacheTtlMs;
+      const missingIds: Ulid[] = [];
       for (const userId of userIds) {
         const resolvers = resolversSnapshot.get(userId) || [];
         const user = userMap.get(userId) || null;
+        if (user) {
+          this.userNotFound.delete(userId);
+        } else {
+          this.userNotFound.set(userId, ttl);
+          missingIds.push(userId);
+        }
         for (const { resolve } of resolvers) {
           resolve(user);
+        }
+      }
+      if (missingIds.length > 0) {
+        try {
+          const c = await this.cachePromise;
+          for (const id of missingIds) {
+            await c.deleteUser(id);
+          }
+        } catch (cacheErr) {
+          this.log("[SDK] cache delete after batch 404 failed:", cacheErr);
         }
       }
     } catch (err) {
@@ -8061,19 +8113,39 @@ export class CcPlatformSdk {
    * @internal
    */
   private async fetchGroupFromNetwork(groupUlid: Ulid): Promise<Group> {
-    const response = await this.client.get<ApiEnvelope<Group>>(
-      `/v1/groups/${encodeURIComponent(groupUlid)}`,
-    );
-    const group = this.unwrap(response);
-    if (group) {
-      try {
-        const cache = await this.cachePromise;
-        await cache.setGroup(groupUlid, group);
-      } catch (err) {
-        this.log("[SDK] setGroup cache write failed:", err);
+    try {
+      const response = await this.client.get<ApiEnvelope<Group>>(
+        `/v1/groups/${encodeURIComponent(groupUlid)}`,
+      );
+      const group = this.unwrap(response);
+      if (group) {
+        this.groupNotFound.delete(groupUlid);
+        try {
+          const cache = await this.cachePromise;
+          await cache.setGroup(groupUlid, group);
+        } catch (err) {
+          this.log("[SDK] setGroup cache write failed:", err);
+        }
       }
+      return group;
+    } catch (err) {
+      // Tombstone 404s so subsequent reads short-circuit for 60s instead of
+      // pounding the API for a group the server has already said is gone.
+      // Also evict the cached row if present — without this, an SWR refresh
+      // that catches a server-side delete would keep serving the stale group
+      // for up to 24h (until the hard TTL expires).
+      const status = (err as { status?: number })?.status;
+      if (status === 404) {
+        this.groupNotFound.set(groupUlid, Date.now() + this.negativeCacheTtlMs);
+        try {
+          const cache = await this.cachePromise;
+          await cache.deleteGroup(groupUlid);
+        } catch (cacheErr) {
+          this.log("[SDK] cache delete after 404 failed:", cacheErr);
+        }
+      }
+      throw err;
     }
-    return group;
   }
 
   /**
@@ -8089,6 +8161,13 @@ export class CcPlatformSdk {
    * @returns The group details
    */
   async getGroup(groupUlid: Ulid): Promise<Group> {
+    // Negative-cache short-circuit: replay the 404 instead of refetching.
+    if (this.hasFreshNegativeCache(this.groupNotFound, groupUlid)) {
+      const err = new Error(`Group ${groupUlid} not found`);
+      (err as { status?: number }).status = 404;
+      throw err;
+    }
+
     const cache = await this.cachePromise;
     const entry = await cache.getGroupEntry(groupUlid);
 
@@ -8141,6 +8220,7 @@ export class CcPlatformSdk {
     const group = unwrapped.group || (unwrapped as unknown as Group);
     const id = (group?.ulid || group?.id) as Ulid | undefined;
     if (id) {
+      this.groupNotFound.delete(id);
       try {
         const cache = await this.cachePromise;
         await cache.setGroup(id, group);

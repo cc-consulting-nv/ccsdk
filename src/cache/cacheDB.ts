@@ -1,14 +1,13 @@
 /**
  * Cache layer for the CC Platform SDK using Dexie (IndexedDB).
  *
- * Provides offline-first caching for posts, users, feeds, and notifications.
+ * Provides offline-first caching for posts, users, groups, and feeds.
  *
  * @module cache/cacheDB
  * @category Cache
  */
 import Dexie, { type EntityTable, liveQuery, type Observable } from "dexie";
 import { type FeedPage, type Group, type Post, type Ulid, type UserProfile } from "../types";
-import { type Notification } from "../types";
 
 /**
  * Default soft-refresh TTL (30 minutes). Entries older than this are still
@@ -89,7 +88,6 @@ class PlatformCacheDB extends Dexie {
   feedResources!: EntityTable<FeedResource, "route">;
   users!: EntityTable<CacheEntry<UserProfile>, "id">;
   groups!: EntityTable<CacheEntry<Group>, "id">;
-  notifications!: EntityTable<CacheEntry<any>, "id">;
   notificationFeeds!: EntityTable<{
     route: string;
     userId: string;
@@ -170,6 +168,20 @@ class PlatformCacheDB extends Dexie {
         await Promise.all([stamp("posts"), stamp("users")]);
       });
 
+    // Version 6 drops the `notifications` per-id store. It was wired in
+    // cacheDB but never read or written by the SDK — pure dead code. Setting
+    // the schema to `null` instructs Dexie to delete the store on upgrade,
+    // reclaiming whatever IndexedDB space was orphaned.
+    this.version(6).stores({
+      posts: "id, cachedAt, lastAccessed, lastCheckedAt",
+      feedResources: "route, cachedAt, lastAccessed",
+      users: "id, cachedAt, lastAccessed, lastCheckedAt",
+      groups: "id, cachedAt, lastAccessed, lastCheckedAt",
+      notifications: null,
+      notificationFeeds: "route, userId, updatedAt",
+      metadata: "key, updatedAt",
+    });
+
     this.on("versionchange", () => {
       this.close();
     });
@@ -228,6 +240,8 @@ export class CacheDB {
   private readonly dbName?: string;
   private readonly ttlMs: number;
   private readonly refreshTtlMs: number;
+  private readonly trimIntervalMs: number;
+  private trimTimer: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Create a new cache instance.
@@ -239,15 +253,19 @@ export class CacheDB {
    * @param refreshTtlMs - Soft refresh TTL; entries older than this are still
    *   returned, but `isPastRefreshTTL()` returns true so the SDK can fire a
    *   background refresh (default: 30 minutes).
+   * @param trimIntervalMs - How often to auto-run `trimCache()` to evict
+   *   past-hard-TTL rows. Defaults to 1 hour. Pass `0` to disable.
    */
   constructor(
     ttlMs: number = 24 * 60 * 60 * 1000,
     dbName?: string,
     private readonly maxCapacity?: number,
     refreshTtlMs: number = DEFAULT_REFRESH_TTL_MS,
+    trimIntervalMs: number = 60 * 60 * 1000,
   ) {
     this.ttlMs = ttlMs;
     this.refreshTtlMs = refreshTtlMs;
+    this.trimIntervalMs = trimIntervalMs;
     this.dbName = dbName;
     this.db = new PlatformCacheDB(dbName);
   }
@@ -304,6 +322,37 @@ export class CacheDB {
       }
       this.db = new PlatformCacheDB(this.dbName);
       await this.db.open();
+    }
+    this.startTrimSchedule();
+  }
+
+  /**
+   * Start the periodic background trim. Idempotent — safe to call again.
+   * Triggered automatically by `open()` when `trimIntervalMs > 0`. Errors
+   * inside the trim are logged but never thrown — trim is best-effort.
+   */
+  startTrimSchedule(): void {
+    if (this.trimTimer !== null) return;
+    if (!this.trimIntervalMs || this.trimIntervalMs <= 0) return;
+    this.trimTimer = setInterval(() => {
+      this.trimCache().catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn("[CacheDB] scheduled trim failed:", err);
+      });
+    }, this.trimIntervalMs);
+    // Don't keep a Node process alive just to run trim. No-op in browsers.
+    const t = this.trimTimer as { unref?: () => void };
+    if (typeof t.unref === "function") t.unref();
+  }
+
+  /**
+   * Stop the periodic trim. Call from `dispose()`/teardown to avoid leaking
+   * a dangling interval handle when the SDK is torn down.
+   */
+  stopTrimSchedule(): void {
+    if (this.trimTimer !== null) {
+      clearInterval(this.trimTimer);
+      this.trimTimer = null;
     }
   }
 
@@ -931,7 +980,6 @@ export class CacheDB {
        this.db.users.clear(),
        this.db.groups?.clear() ?? Promise.resolve(),
        this.db.feedResources.clear(),
-       this.db.notifications.clear(),
        this.db.notificationFeeds.clear(),
        this.db.metadata.clear(),
      ]);
@@ -940,7 +988,7 @@ export class CacheDB {
   /**
    * Trim expired and overflow entries from CacheEntry-type stores.
    *
-   * Performs two cleanup operations across posts, users, and notifications
+   * Performs two cleanup operations across posts, users, and groups
    * (the stores that hold `CacheEntry<T>` records):
    * 1. Removes entries whose `cachedAt` is past TTL (the same staleness
    *    semantic that read paths apply, so trim and read agree).
@@ -961,7 +1009,6 @@ export class CacheDB {
        this.db.posts,
        this.db.users,
        this.db.groups,
-       this.db.notifications,
      ];
      let totalRemoved = 0;
 
@@ -1008,36 +1055,6 @@ export class CacheDB {
 
      return totalRemoved;
    }
-
-  // ========================================================================
-  // Notifications
-  // ========================================================================
-
-  /**
-   * Store a notification in the cache.
-   *
-   * @param notification - The notification to cache
-   */
-  async storeNotification(notification: Notification): Promise<void> {
-    const id = (notification as any).notificationId || notification.id;
-    if (!id) return;
-    await this.db.notifications.put(this.createEntry(id as Ulid, notification as any));
-  }
-
-  /**
-   * Get a notification from cache by ID.
-   *
-   * @param id - The notification ULID
-   * @returns The cached notification or null if not found/expired
-   */
-  async getNotification(id: Ulid): Promise<Notification | null> {
-    return this.safeRead(async () => {
-      const entry = await this.db.notifications.get(id);
-      if (!entry || this.isExpired(entry.cachedAt)) return null;
-      await this.db.notifications.put(this.touch(entry));
-      return entry.data as Notification;
-    }, null);
-  }
 
   /**
    * Store notification feed pagination state.
@@ -1153,8 +1170,9 @@ export async function createCache(
   dbName?: string,
   maxCapacity?: number,
   refreshTtlMs?: number,
+  trimIntervalMs?: number,
 ): Promise<CacheDB> {
-  const cache = new CacheDB(ttlMs, dbName, maxCapacity, refreshTtlMs);
+  const cache = new CacheDB(ttlMs, dbName, maxCapacity, refreshTtlMs, trimIntervalMs);
   await cache.open();
   return cache;
 }
