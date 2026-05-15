@@ -485,23 +485,60 @@ test("leaveGroup invalidates cached group", async () => {
   assert.equal(calls.length, 3);
 });
 
-test("createGroup writes through to cache", async () => {
-  const created = createSampleGroupResponse({
+test("createGroup performs read-after-write and returns hydrated group", async () => {
+  // Create response from /v1/group/add typically returns a partial group
+  // (just the fields the server resource serializes on create). The SDK
+  // refetches via GET /v1/groups/{ulid} to get computed fields like
+  // membersCount, memberRole, isJoined.
+  const partial = createSampleGroupResponse({
     ulid: "01hxgroupcreate1",
     name: "Brand New",
+    membersCount: undefined,
+    memberRole: undefined,
+  });
+  const hydrated = createSampleGroupResponse({
+    ulid: "01hxgroupcreate1",
+    name: "Brand New",
+    membersCount: 1,
+    memberRole: "owner",
+    isJoined: true,
   });
 
   const { sdk, calls } = createAuthenticatedSequentialSdk([
-    { data: { data: { group: created } } },
+    { data: { data: { group: partial } } }, // POST /v1/group/add
+    { data: { data: hydrated } },             // GET /v1/groups/{ulid}
   ]);
 
   const result = await sdk.createGroup({ name: "Brand New" });
   assert.equal(result.ulid, "01hxgroupcreate1");
+  assert.equal(result.membersCount, 1, "hydrated membersCount returned");
+  assert.equal(result.memberRole, "owner", "hydrated memberRole returned");
+  assert.equal(calls.length, 2, "POST then GET (read-after-write)");
+  assert.equal(calls[0].url, `${baseUrl}/v1/group/add`);
+  assert.equal(calls[1].url, `${baseUrl}/v1/groups/01hxgroupcreate1`);
 
-  // Subsequent getGroup should not hit the network.
+  // Subsequent getGroup hits the cache populated by the read-after-write.
   const cached = await sdk.getGroup("01hxgroupcreate1");
   assert.equal(cached.name, "Brand New");
-  assert.equal(calls.length, 1, "createGroup should warm cache, no follow-up GET");
+  assert.equal(cached.memberRole, "owner");
+  assert.equal(calls.length, 2, "third read served from cache");
+});
+
+test("createGroup falls back to create-response when read-after-write fails", async () => {
+  const partial = createSampleGroupResponse({
+    ulid: "01hxgroupcrtfb01",
+    name: "Fallback",
+  });
+
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: { group: partial } } },        // POST succeeds
+    { status: 500, data: { message: "Server" } },  // GET refetch fails
+  ]);
+
+  const result = await sdk.createGroup({ name: "Fallback" });
+  assert.equal(result.ulid, "01hxgroupcrtfb01", "fallback returns create response");
+  assert.equal(result.name, "Fallback");
+  assert.equal(calls.length, 2);
 });
 
 test("updateGroup invalidates cache and serves fresh data", async () => {
@@ -765,4 +802,128 @@ test("fetchUserProfileById batch missing-id evicts cached profile", async () => 
   });
 
   assert.ok(sdk.userNotFound.has("01hxuserdel0001"));
+});
+
+// ---------------------------------------------------------------------------
+// Read-after-write parity across entity creates/updates
+// ---------------------------------------------------------------------------
+
+test("createPlaylist refetches via getPlaylist", async () => {
+  const partial = { ulid: "01hxplaylist0001", name: "P1" };
+  const hydrated = { ulid: "01hxplaylist0001", name: "P1", trackCount: 0, isOwner: true };
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: partial } },     // POST /v1/playlist/add
+    { data: { data: hydrated } },    // GET  /v1/playlist/{id}
+  ]);
+  const env = await sdk.createPlaylist({ name: "P1" });
+  const playlist = sdk.unwrap(env);
+  assert.equal(playlist.trackCount, 0);
+  assert.equal(playlist.isOwner, true);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, `${baseUrl}/v1/playlist/add`);
+  assert.equal(calls[1].url, `${baseUrl}/v1/playlist/01hxplaylist0001`);
+});
+
+test("createSongPlaylist refetches via getPlaylist + sends type:SONG", async () => {
+  const partial = { ulid: "01hxsongpl00001", name: "S1" };
+  const hydrated = { ulid: "01hxsongpl00001", name: "S1", type: "SONG" };
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: partial } },
+    { data: { data: hydrated } },
+  ]);
+  await sdk.createSongPlaylist({ name: "S1" });
+  assert.equal(calls[0].body.type, "SONG");
+  assert.equal(calls.length, 2);
+});
+
+test("createPlaylist falls back to create response when refetch fails", async () => {
+  const partial = { ulid: "01hxplfb00000001", name: "FB" };
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: partial } },
+    { status: 500, data: { message: "boom" } },
+  ]);
+  const env = await sdk.createPlaylist({ name: "FB" });
+  assert.equal(sdk.unwrap(env).ulid, "01hxplfb00000001");
+  assert.equal(calls.length, 2);
+});
+
+test("updatePlaylist returns hydrated playlist via getPlaylist", async () => {
+  const after = { ulid: "01hxplupd00001", name: "Renamed", trackCount: 5 };
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: { success: true } } }, // PATCH
+    { data: { data: after } },              // GET
+  ]);
+  const env = await sdk.updatePlaylist("01hxplupd00001", { name: "Renamed" });
+  assert.equal(sdk.unwrap(env).name, "Renamed");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].method, "PATCH");
+  assert.equal(calls[1].method, "GET");
+});
+
+test("createBusiness refetches via fetchBusiness", async () => {
+  const partial = { ulid: "01hxbiz00000001", name: "Biz" };
+  const hydrated = { ulid: "01hxbiz00000001", name: "Biz", reviewCount: 0, averageRating: null };
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    // POST returns Business directly (no envelope wrap)
+    { data: partial },
+    // GET
+    { data: hydrated },
+  ]);
+  const result = await sdk.createBusiness({ name: "Biz" });
+  assert.equal(result.reviewCount, 0);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, `${baseUrl}/v1/businesses`);
+  assert.equal(calls[1].url, `${baseUrl}/v1/businesses/01hxbiz00000001`);
+});
+
+test("updateBusiness refetches via fetchBusiness", async () => {
+  const updated = { ulid: "01hxbizupd0001", name: "Updated" };
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: updated },  // PUT
+    { data: updated },  // GET
+  ]);
+  const result = await sdk.updateBusiness("01hxbizupd0001", { name: "Updated" });
+  assert.equal(result.name, "Updated");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].method, "PUT");
+});
+
+test("createRadioStation refetches via getRadioStation", async () => {
+  const partial = { ulid: "01hxradio0000001", name: "R1" };
+  const hydrated = { ulid: "01hxradio0000001", name: "R1", description: "desc" };
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: partial } },     // POST
+    { data: { data: hydrated } },    // GET
+  ]);
+  const env = await sdk.createRadioStation({ name: "R1" });
+  const station = sdk.unwrap(env);
+  assert.equal(station.description, "desc");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].url, `${baseUrl}/v1/radio-stations/01hxradio0000001`);
+});
+
+test("createBlogPost refetches by slug from create response", async () => {
+  const partial = { ulid: "01hxblog00000001", slug: "hello-world", title: "Hello" };
+  const hydrated = { ulid: "01hxblog00000001", slug: "hello-world", title: "Hello", contentHtml: "<p>hi</p>", authors: [] };
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: partial } },     // POST /v1/blog
+    { data: { data: hydrated } },    // GET  /v1/blog/{slug}
+  ]);
+  const result = await sdk.createBlogPost({ title: "Hello", content: {}, slug: "hello-world" });
+  assert.equal(result.contentHtml, "<p>hi</p>");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].url, `${baseUrl}/v1/blog/hello-world`);
+});
+
+test("updateBlogPost refetches by post-rename slug", async () => {
+  // Title changed → server returns new slug; refetch should use the new slug.
+  const updated = { ulid: "01hxblogupd00001", slug: "new-title", title: "New Title" };
+  const refetched = { ulid: "01hxblogupd00001", slug: "new-title", title: "New Title", contentHtml: "<p>x</p>" };
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: updated } },    // PUT
+    { data: { data: refetched } },  // GET by NEW slug
+  ]);
+  const result = await sdk.updateBlogPost("01hxblogupd00001", { title: "New Title" });
+  assert.equal(result.contentHtml, "<p>x</p>");
+  assert.equal(calls[1].url, `${baseUrl}/v1/blog/new-title`);
 });
