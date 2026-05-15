@@ -3585,10 +3585,36 @@ export class CcPlatformSdk {
   }
 
   /**
+   * Read-after-write helper for playlist creation. Extracts the new
+   * playlist's id from the create response and refetches via getPlaylist
+   * to populate computed/relational fields. Falls back to the create
+   * response if the id is missing or refetch fails — best-effort.
+   * @internal
+   */
+  private async refetchPlaylistOrFallback(
+    created: ApiEnvelope<Playlist>,
+  ): Promise<ApiEnvelope<Playlist>> {
+    const playlist = this.unwrap<Playlist>(created);
+    const id = (playlist as { ulid?: string; id?: string })?.ulid
+      || (playlist as { ulid?: string; id?: string })?.id;
+    if (!id) return created;
+    try {
+      return await this.getPlaylist(id);
+    } catch (err) {
+      this.log("[SDK] createPlaylist read-after-write failed, returning create response:", err);
+      return created;
+    }
+  }
+
+  /**
    * Create a new playlist.
    *
+   * Performs read-after-write: after the POST succeeds, refetches the
+   * playlist via getPlaylist so the returned envelope contains the fully
+   * hydrated record (server-computed fields, normalized URLs, etc.).
+   *
    * @param payload - Playlist creation data including name, description, isPublic
-   * @returns Promise resolving to the created playlist
+   * @returns Promise resolving to the hydrated created playlist
    *
    * @example
    * ```typescript
@@ -3603,7 +3629,8 @@ export class CcPlatformSdk {
    * @category Playlists
    */
   async createPlaylist(payload: Record<string, unknown>): Promise<ApiEnvelope<Playlist>> {
-    return this.client.post<ApiEnvelope<Playlist>>("/v1/playlist/add", { body: payload });
+    const created = await this.client.post<ApiEnvelope<Playlist>>("/v1/playlist/add", { body: payload });
+    return this.refetchPlaylistOrFallback(created);
   }
 
   /**
@@ -3631,9 +3658,10 @@ export class CcPlatformSdk {
     isPublic?: boolean;
     isPrivate?: boolean;
   }): Promise<ApiEnvelope<Playlist>> {
-    return this.client.post<ApiEnvelope<Playlist>>("/v1/playlist/add", {
+    const created = await this.client.post<ApiEnvelope<Playlist>>("/v1/playlist/add", {
       body: { ...payload, type: "SONG" },
     });
+    return this.refetchPlaylistOrFallback(created);
   }
 
   /**
@@ -3657,10 +3685,18 @@ export class CcPlatformSdk {
     playlistId: string,
     payload: Record<string, unknown>,
   ): Promise<ApiEnvelope<Playlist>> {
-    return this.client.patch<ApiEnvelope<Playlist>>(
+    await this.client.patch<ApiEnvelope<Playlist>>(
       `/v1/playlist/${encodeURIComponent(playlistId)}`,
       { body: payload },
     );
+    // Read-after-write: caller wants the canonical post-update playlist
+    // (server may compute fields, normalize fields, recalc counts).
+    try {
+      return await this.getPlaylist(playlistId);
+    } catch (err) {
+      this.log("[SDK] updatePlaylist read-after-write failed:", err);
+      throw err;
+    }
   }
 
   /**
@@ -3980,7 +4016,22 @@ export class CcPlatformSdk {
     description?: string;
     cover_image?: string;
   }): Promise<ApiEnvelope<Playlist>> {
-    return this.client.post<ApiEnvelope<Playlist>>('/v1/radio-stations', { body: payload });
+    const created = await this.client.post<ApiEnvelope<Playlist>>('/v1/radio-stations', { body: payload });
+    // Read-after-write: refetch via getRadioStation so the envelope contains
+    // the canonical record (computed fields, normalized cover URL, etc.).
+    const station = this.unwrap<Playlist>(created);
+    const ulid = (station as { ulid?: string; id?: string })?.ulid
+      || (station as { ulid?: string; id?: string })?.id;
+    if (!ulid) return created;
+    try {
+      // getRadioStation returns ApiEnvelope<Playlist> & { start_position?, total_tracks? }
+      // — return as the narrower envelope shape callers expect from createRadioStation.
+      const refetched = await this.getRadioStation(ulid);
+      return refetched as ApiEnvelope<Playlist>;
+    } catch (err) {
+      this.log("[SDK] createRadioStation read-after-write failed:", err);
+      return created;
+    }
   }
 
   /**
@@ -8004,7 +8055,16 @@ export class CcPlatformSdk {
     const response = await this.client.post<ApiEnvelope<BlogPost>>("/v1/blog", {
       body: input,
     });
-    return this.unwrap(response);
+    const created = this.unwrap(response);
+    // Read-after-write: refetch by slug so the caller gets server-rendered
+    // contentHtml, populated authors/categories/tags, and any normalized fields.
+    if (!created?.slug) return created;
+    try {
+      return await this.getBlogPost(created.slug);
+    } catch (err) {
+      this.log("[SDK] createBlogPost read-after-write failed:", err);
+      return created;
+    }
   }
 
   /**
@@ -8019,7 +8079,16 @@ export class CcPlatformSdk {
     const response = await this.client.put<ApiEnvelope<BlogPost>>(`/v1/blog/${encodeURIComponent(ulid)}`, {
       body: input,
     });
-    return this.unwrap(response);
+    const updated = this.unwrap(response);
+    // Read-after-write: slug may change with title; prefer the slug from the
+    // PUT response (post-rename) over the URL ulid for the refetch.
+    if (!updated?.slug) return updated;
+    try {
+      return await this.getBlogPost(updated.slug);
+    } catch (err) {
+      this.log("[SDK] updateBlogPost read-after-write failed:", err);
+      return updated;
+    }
   }
 
   /**
@@ -9295,7 +9364,21 @@ export class CcPlatformSdk {
   async createBusiness(
     data: import("./types/business").BusinessInput
   ): Promise<import("./types/business").Business> {
-    return this.client.post<import("./types/business").Business>("/v1/businesses", { body: data });
+    const created = await this.client.post<import("./types/business").Business>(
+      "/v1/businesses",
+      { body: data },
+    );
+    // Read-after-write: fetch canonical record with all server-computed fields.
+    const ulid = (created as { ulid?: string; id?: string })?.ulid
+      || (created as { ulid?: string; id?: string })?.id;
+    if (!ulid) return created;
+    try {
+      const refetched = await this.fetchBusiness(ulid);
+      return refetched ?? created;
+    } catch (err) {
+      this.log("[SDK] createBusiness read-after-write failed:", err);
+      return created;
+    }
   }
 
   /**
@@ -9312,10 +9395,18 @@ export class CcPlatformSdk {
     ulid: string,
     data: import("./types/business").BusinessInput
   ): Promise<import("./types/business").Business> {
-    return this.client.put<import("./types/business").Business>(
+    const updated = await this.client.put<import("./types/business").Business>(
       `/v1/businesses/${ulid}`,
       { body: data }
     );
+    // Read-after-write so caller sees server-side normalization + counts.
+    try {
+      const refetched = await this.fetchBusiness(ulid);
+      return refetched ?? updated;
+    } catch (err) {
+      this.log("[SDK] updateBusiness read-after-write failed:", err);
+      return updated;
+    }
   }
 
   /**
