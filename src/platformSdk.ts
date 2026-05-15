@@ -8207,8 +8207,19 @@ export class CcPlatformSdk {
    * Create a new group.
    * POST /v1/group/add
    *
+   * Read-after-write: the create response is shaped by the server-side
+   * resource and may omit computed fields (`membersCount`, `memberRole`,
+   * `isJoined`, owner block, normalized media URLs). After the POST
+   * succeeds, we fetch the canonical group via `fetchGroupFromNetwork`
+   * and return that — matching the `updateGroup` contract.
+   *
+   * If the follow-up GET fails for any reason (network blip, transient
+   * 5xx), we fall back to the create-response group so the caller still
+   * gets a usable object. The cache is best-effort; failures are logged
+   * but never thrown.
+   *
    * @param request - Group creation request
-   * @returns The created group (with isJoined: true since creator is auto-joined)
+   * @returns The fully-hydrated group (with isJoined: true, computed counts, etc.)
    */
   async createGroup(request: CreateGroupRequest): Promise<Group> {
     const response = await this.client.post<ApiEnvelope<{ group: Group }>>(
@@ -8217,18 +8228,30 @@ export class CcPlatformSdk {
     );
     const unwrapped = this.unwrap(response);
     // API returns { group: {...} } due to GroupResource wrapper
-    const group = unwrapped.group || (unwrapped as unknown as Group);
-    const id = (group?.ulid || group?.id) as Ulid | undefined;
-    if (id) {
-      this.groupNotFound.delete(id);
+    const created = unwrapped.group || (unwrapped as unknown as Group);
+    const id = (created?.ulid || created?.id) as Ulid | undefined;
+    if (!id) {
+      // No id to refetch — return whatever the API gave us.
+      return created;
+    }
+
+    this.groupNotFound.delete(id);
+
+    // Read-after-write: fetch canonical group + cache write-through.
+    try {
+      return await this.fetchGroupFromNetwork(id);
+    } catch (err) {
+      this.log("[SDK] createGroup read-after-write fetch failed, returning create response:", err);
+      // Best-effort: still warm the cache with the create payload so
+      // subsequent reads avoid a guaranteed network round-trip.
       try {
         const cache = await this.cachePromise;
-        await cache.setGroup(id, group);
-      } catch (err) {
-        this.log("[SDK] cache write after createGroup failed:", err);
+        await cache.setGroup(id, created);
+      } catch (cacheErr) {
+        this.log("[SDK] cache write after createGroup failed:", cacheErr);
       }
+      return created;
     }
-    return group;
   }
 
   /**

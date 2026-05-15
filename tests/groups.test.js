@@ -485,23 +485,60 @@ test("leaveGroup invalidates cached group", async () => {
   assert.equal(calls.length, 3);
 });
 
-test("createGroup writes through to cache", async () => {
-  const created = createSampleGroupResponse({
+test("createGroup performs read-after-write and returns hydrated group", async () => {
+  // Create response from /v1/group/add typically returns a partial group
+  // (just the fields the server resource serializes on create). The SDK
+  // refetches via GET /v1/groups/{ulid} to get computed fields like
+  // membersCount, memberRole, isJoined.
+  const partial = createSampleGroupResponse({
     ulid: "01hxgroupcreate1",
     name: "Brand New",
+    membersCount: undefined,
+    memberRole: undefined,
+  });
+  const hydrated = createSampleGroupResponse({
+    ulid: "01hxgroupcreate1",
+    name: "Brand New",
+    membersCount: 1,
+    memberRole: "owner",
+    isJoined: true,
   });
 
   const { sdk, calls } = createAuthenticatedSequentialSdk([
-    { data: { data: { group: created } } },
+    { data: { data: { group: partial } } }, // POST /v1/group/add
+    { data: { data: hydrated } },             // GET /v1/groups/{ulid}
   ]);
 
   const result = await sdk.createGroup({ name: "Brand New" });
   assert.equal(result.ulid, "01hxgroupcreate1");
+  assert.equal(result.membersCount, 1, "hydrated membersCount returned");
+  assert.equal(result.memberRole, "owner", "hydrated memberRole returned");
+  assert.equal(calls.length, 2, "POST then GET (read-after-write)");
+  assert.equal(calls[0].url, `${baseUrl}/v1/group/add`);
+  assert.equal(calls[1].url, `${baseUrl}/v1/groups/01hxgroupcreate1`);
 
-  // Subsequent getGroup should not hit the network.
+  // Subsequent getGroup hits the cache populated by the read-after-write.
   const cached = await sdk.getGroup("01hxgroupcreate1");
   assert.equal(cached.name, "Brand New");
-  assert.equal(calls.length, 1, "createGroup should warm cache, no follow-up GET");
+  assert.equal(cached.memberRole, "owner");
+  assert.equal(calls.length, 2, "third read served from cache");
+});
+
+test("createGroup falls back to create-response when read-after-write fails", async () => {
+  const partial = createSampleGroupResponse({
+    ulid: "01hxgroupcrtfb01",
+    name: "Fallback",
+  });
+
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: { group: partial } } },        // POST succeeds
+    { status: 500, data: { message: "Server" } },  // GET refetch fails
+  ]);
+
+  const result = await sdk.createGroup({ name: "Fallback" });
+  assert.equal(result.ulid, "01hxgroupcrtfb01", "fallback returns create response");
+  assert.equal(result.name, "Fallback");
+  assert.equal(calls.length, 2);
 });
 
 test("updateGroup invalidates cache and serves fresh data", async () => {
