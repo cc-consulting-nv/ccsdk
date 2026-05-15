@@ -1471,7 +1471,9 @@ export class CcPlatformSdk {
     }
 
     this.postBatchTimer = window.setTimeout(() => {
-      this.flushPostBatch(cache);
+      this.flushPostBatch(cache).catch((err) => {
+        this.log("[SDK] flushPostBatch (debounce) unexpected error:", err);
+      });
     }, this.postBatchDelay);
 
     const settled = await Promise.allSettled(promises);
@@ -4996,10 +4998,16 @@ export class CcPlatformSdk {
 
       // If we hit max batch size, flush immediately
       if (this.userBatchQueue.size >= this.userBatchMaxSize) {
-        this.flushUserBatch();
+        this.flushUserBatch().catch((err) => {
+          this.log("[SDK] flushUserBatch (max-size) unexpected error:", err);
+        });
       } else {
         // Otherwise, debounce
-        this.userBatchTimer = setTimeout(() => this.flushUserBatch(), this.userBatchDelay) as unknown as number;
+        this.userBatchTimer = setTimeout(() => {
+          this.flushUserBatch().catch((err) => {
+            this.log("[SDK] flushUserBatch (debounce) unexpected error:", err);
+          });
+        }, this.userBatchDelay) as unknown as number;
       }
     });
   }

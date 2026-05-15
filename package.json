@@ -20,7 +20,8 @@
     "clean": "rimraf dist",
     "prepublishOnly": "npm run clean && npm run build",
     "lint": "echo \"lint not configured for sdk\"",
-    "test": "pnpm build && node --loader ./tests/extension-loader.mjs --test tests/httpClient.test.js tests/httpClient.bodyCap.test.js tests/stories.test.js tests/platformSdk.cache.test.js tests/cacheDB.test.js tests/auth.test.js tests/businesses.test.js tests/polls.test.js tests/utils.s3Key.test.js tests/blobStore.test.js tests/multipartUpload.test.js tests/postProcessing.test.js tests/groups.test.js",
+    "test": "pnpm build && node --loader ./tests/extension-loader.mjs --test $(ls tests/*.test.js)",
+    "test:coverage": "pnpm build && npx c8 --reporter=text --include='dist/**' --exclude='dist/index.js' --extensions '.ts' -- node --loader ./tests/extension-loader.mjs --test $(ls tests/*.test.js)",
     "test:integration": "node ./tests/integration.js",
     "docs": "typedoc --options typedoc.html.json",
     "docs:html": "typedoc --options typedoc.html.json",
@@ -53,6 +54,7 @@
     "dexie": "^4.2.1"
   },
   "devDependencies": {
+    "c8": "^11.0.0",
     "fake-indexeddb": "^6.2.5",
     "rimraf": "^5.0.5",
     "typedoc": "^0.28.15",
