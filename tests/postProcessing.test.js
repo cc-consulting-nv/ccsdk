@@ -124,3 +124,38 @@ test("maxTotalMs ceiling fires onDone with null after timeout", async () => {
   assert.equal(onDone.length, 1);
   assert.equal(onDone[0], null);
 });
+
+test("onDone throws → onError is called instead", async () => {
+  const fetcher = makeFetcher([{ ulid: "a", isProcessing: false }]);
+  const onDone = [];
+  const onError = [];
+  const w = watchPostProcessing(fetcher, "a", {
+    ...fastSchedule,
+    onDone: (p) => {
+      onDone.push(p);
+      throw new Error("boom");
+    },
+    onError: (e) => onError.push(e),
+  });
+  await w.settled;
+  assert.equal(onDone.length, 1);
+  assert.equal(onDone[0].body, undefined);
+  assert.equal(onError.length, 1);
+  assert.equal(onError[0].message, "boom");
+});
+
+test("signal already aborted returns early without polling", async () => {
+  const fetcher = makeFetcher([]);
+  const onDone = [];
+  const ctrl = new AbortController();
+  ctrl.abort();
+  const w = watchPostProcessing(fetcher, "a", {
+    ...fastSchedule,
+    signal: ctrl.signal,
+    onDone: (p) => onDone.push(p),
+  });
+  await w.settled;
+  assert.equal(w.isSettled, true);
+  assert.equal(onDone.length, 0);
+  assert.equal(fetcher.calls.length, 0);
+});
