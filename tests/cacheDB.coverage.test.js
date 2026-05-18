@@ -24,7 +24,7 @@ test("safeRead returns fallback on Dexie connection-lost error after reopen", as
   assert.equal(result, null, "safeRead returns null fallback on connection loss");
 });
 
-test("safeWrite swallows Dexie connection-lost error silently", async () => {
+test("safeWrite swallows Dexie connection-lost error without throwing", async () => {
   const cache = freshDb(HOUR);
   await cache.open();
   cache.db.close();
