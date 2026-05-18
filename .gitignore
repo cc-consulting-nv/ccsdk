@@ -33,3 +33,9 @@ coverage/
 .leann/
 
 logs/*
+
+# Local agent state
+.context/
+
+# Backup files
+*.bak
