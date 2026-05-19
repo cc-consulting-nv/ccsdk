@@ -5202,6 +5202,54 @@ export class CcPlatformSdk {
   }
 
   /**
+   * Search groups by query string (full search).
+   *
+   * Returns public groups matching the query against name + description.
+   * Excludes DM conversations and private groups.
+   *
+   * @param query - The search query string
+   * @param limit - Maximum number of results to return (default: 30)
+   * @returns Promise resolving to an array of matching groups
+   *
+   * @example
+   * ```typescript
+   * const response = await sdk.searchGroups('photography');
+   * const groups = sdk.unwrap(response);
+   * groups.forEach(g => console.log(g.name));
+   * ```
+   *
+   * @category Search
+   */
+  async searchGroups(query: string, limit = 30): Promise<ApiEnvelope<Group[]>> {
+    return this.client.post<ApiEnvelope<Group[]>>("/v1/search/group", {
+      body: { q: query, limit, pagination: false },
+    });
+  }
+
+  /**
+   * Autocomplete groups by query string (for typeahead suggestions).
+   *
+   * Returns lightweight group records optimized for typeahead/autocomplete UIs.
+   * Returns 204 No Content when no matches are found.
+   *
+   * @param query - The search query string (min 2 chars)
+   * @returns Promise resolving to an array of matching groups
+   *
+   * @example
+   * ```typescript
+   * const response = await sdk.searchGroupsAutocomplete('pho');
+   * const suggestions = sdk.unwrap(response);
+   * ```
+   *
+   * @category Search
+   */
+  async searchGroupsAutocomplete(query: string): Promise<ApiEnvelope<Group[]>> {
+    return this.client.post<ApiEnvelope<Group[]>>("/v1/search/autocomplete/group", {
+      body: { q: query },
+    });
+  }
+
+  /**
    * Get suggested users to follow.
    *
    * Returns personalized user suggestions based on:

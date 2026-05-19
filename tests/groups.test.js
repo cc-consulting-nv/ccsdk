@@ -927,3 +927,60 @@ test("updateBlogPost refetches by post-rename slug", async () => {
   assert.equal(result.contentHtml, "<p>x</p>");
   assert.equal(calls[1].url, `${baseUrl}/v1/blog/new-title`);
 });
+
+// ---------------------------------------------------------------------------
+// searchGroups + searchGroupsAutocomplete tests
+// ---------------------------------------------------------------------------
+
+test("searchGroups POSTs to /v1/search/group with query + default limit", async () => {
+  const group = createSampleGroupResponse({ name: "Photography Club" });
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: [group] } },
+  ]);
+
+  const response = await sdk.searchGroups("photography");
+
+  assert.equal(calls[0].url, `${baseUrl}/v1/search/group`);
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[0].body.q, "photography");
+  assert.equal(calls[0].body.limit, 30);
+  assert.equal(calls[0].body.pagination, false);
+  assert.equal(response.data[0].name, "Photography Club");
+});
+
+test("searchGroups forwards custom limit", async () => {
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: [] } },
+  ]);
+
+  await sdk.searchGroups("food", 10);
+
+  assert.equal(calls[0].body.q, "food");
+  assert.equal(calls[0].body.limit, 10);
+});
+
+test("searchGroupsAutocomplete POSTs to /v1/search/autocomplete/group", async () => {
+  const group = createSampleGroupResponse({ name: "Photo" });
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: [group] } },
+  ]);
+
+  const response = await sdk.searchGroupsAutocomplete("pho");
+
+  assert.equal(calls[0].url, `${baseUrl}/v1/search/autocomplete/group`);
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[0].body.q, "pho");
+  assert.equal(response.data[0].name, "Photo");
+});
+
+test("searchGroupsAutocomplete handles empty result set", async () => {
+  // Server returns an empty data envelope for no-match queries.
+  const { sdk, calls } = createAuthenticatedSequentialSdk([
+    { data: { data: [] } },
+  ]);
+
+  const response = await sdk.searchGroupsAutocomplete("nomatch");
+
+  assert.equal(calls[0].url, `${baseUrl}/v1/search/autocomplete/group`);
+  assert.deepEqual(response.data, []);
+});
