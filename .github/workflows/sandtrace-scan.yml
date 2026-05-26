@@ -8,7 +8,7 @@ on:
 
 jobs:
   sandtrace:
-    uses: cc-consulting-nv/.github/.github/workflows/sandtrace-scan.yml@64ba1ad387c05ce7546301e98d75e9b9c15cfc95
+    uses: cc-consulting-nv/.github/.github/workflows/sandtrace-scan.yml@main
     with:
       sandtrace_cloud_url: ${{ vars.SANDTRACE_CLOUD_URL }}
     secrets:
