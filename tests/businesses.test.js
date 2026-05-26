@@ -184,6 +184,38 @@ test("searchBusinesses includes authorization header", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// fetchFeaturedBusinesses
+// ---------------------------------------------------------------------------
+
+test("fetchFeaturedBusinesses returns businesses from flat array response", async () => {
+  // API returns a flat array, not { data: [...] }
+  const { sdk } = createMockSdk([sampleBusiness, sampleBusiness]);
+
+  const result = await sdk.fetchFeaturedBusinesses(5);
+
+  assert.ok(Array.isArray(result), "result is an array");
+  assert.equal(result.length, 2);
+});
+
+test("fetchFeaturedBusinesses returns empty array when API returns []", async () => {
+  const { sdk } = createMockSdk([]);
+
+  const result = await sdk.fetchFeaturedBusinesses(3);
+
+  assert.ok(Array.isArray(result));
+  assert.equal(result.length, 0);
+});
+
+test("fetchFeaturedBusinesses passes limit as query param", async () => {
+  const { sdk, calls } = createMockSdk([]);
+
+  await sdk.fetchFeaturedBusinesses(7);
+
+  const url = new URL(calls[0].url);
+  assert.equal(url.searchParams.get("limit"), "7");
+});
+
+// ---------------------------------------------------------------------------
 // setBusinessFeatured
 // ---------------------------------------------------------------------------
 

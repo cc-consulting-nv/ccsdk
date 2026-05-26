@@ -8882,10 +8882,11 @@ export class CcPlatformSdk {
    * @category Business Directory
    */
   async fetchFeaturedBusinesses(limit = 6): Promise<import("./types/business").Business[]> {
-    const response = await this.client.get<{
-      data: import("./types/business").Business[];
-    }>(`/v1/businesses/featured?limit=${limit}`);
-    return response.data || [];
+    const response = await this.client.get<
+      import("./types/business").Business[]
+    >(`/v1/businesses/featured?limit=${limit}`);
+    // API returns a flat array (not wrapped in { data })
+    return Array.isArray(response) ? response : (response as unknown as { data: import("./types/business").Business[] }).data || [];
   }
 
   /**
