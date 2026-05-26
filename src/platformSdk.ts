@@ -8889,6 +8889,45 @@ export class CcPlatformSdk {
   }
 
   /**
+   * Set a business as featured (admin-only).
+   * POST /v1/businesses/{ulid}/featured
+   *
+   * @param ulid - Business ULID
+   * @param options - Optional featured_until expiration date (ISO 8601)
+   * @returns Updated business
+   *
+   * @category Business Directory
+   */
+  async setBusinessFeatured(
+    ulid: string,
+    options?: { featuredUntil?: string }
+  ): Promise<import("./types/business").Business> {
+    return this.client.post<import("./types/business").Business>(
+      `/v1/businesses/${ulid}/featured`,
+      options?.featuredUntil
+        ? { body: { featured_until: options.featuredUntil } }
+        : undefined
+    );
+  }
+
+  /**
+   * Clear a business's featured status (admin-only).
+   * DELETE /v1/businesses/{ulid}/featured
+   *
+   * @param ulid - Business ULID
+   * @returns Updated business
+   *
+   * @category Business Directory
+   */
+  async clearBusinessFeatured(
+    ulid: string
+  ): Promise<import("./types/business").Business> {
+    return this.client.delete<import("./types/business").Business>(
+      `/v1/businesses/${ulid}/featured`
+    );
+  }
+
+  /**
    * Fetch nearby businesses.
    * GET /v1/businesses/nearby
    *
