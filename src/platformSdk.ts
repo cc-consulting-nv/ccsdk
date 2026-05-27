@@ -34,7 +34,7 @@ import {
   type GenrePreferencesResponse,
   type GenrePreferenceUpdate,
   type TrendingGenre,
-  type TrendingMusicUser,
+  type TrendingUser,
   type TrendingHashtag,
   type TrendingSong,
   type SignupConfig,
@@ -6772,18 +6772,29 @@ export class CcPlatformSdk {
     return this.unwrap<TrendingGenre[]>(response);
   }
 
-  async getTrendingMusicUsers(params?: {
+  /**
+   * Trending creators ranked by recent video views.
+   *
+   * @param params.kind - "videos" (long-form, default) or "shorts" (vertical/BURST).
+   *   Selects the backing endpoint; both return the same TrendingUser shape.
+   */
+  async getTrendingUsers(params?: {
     limit?: number;
-  }): Promise<TrendingMusicUser[]> {
+    kind?: "videos" | "shorts";
+  }): Promise<TrendingUser[]> {
     const queryParams = new URLSearchParams();
     if (params?.limit) {
       queryParams.append("limit", params.limit.toString());
     }
     const queryString = queryParams.toString();
-    const response = await this.client.get<ApiEnvelope<TrendingMusicUser[]>>(
-      `/v1/posts/feed/trending/users${queryString ? `?${queryString}` : ""}`,
+    const path =
+      params?.kind === "shorts"
+        ? "/v1/posts/feed/trending/shorts/users"
+        : "/v1/posts/feed/trending/users";
+    const response = await this.client.get<ApiEnvelope<TrendingUser[]>>(
+      `${path}${queryString ? `?${queryString}` : ""}`,
     );
-    return this.unwrap<TrendingMusicUser[]>(response);
+    return this.unwrap<TrendingUser[]>(response);
   }
 
   /**
