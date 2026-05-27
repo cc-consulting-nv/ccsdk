@@ -1356,7 +1356,7 @@ export interface TrendingGenre {
   audioCount: number;
 }
 
-export interface TrendingMusicUser {
+export interface TrendingUser {
   userId: number;
   username: string;
   name: string;
