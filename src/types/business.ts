@@ -302,6 +302,8 @@ export interface BusinessAnalytics {
     saves: number;
     phoneCalls: number;
     emailInquiries: number;
+    websiteClicks: number;
+    directionRequests: number;
   };
 }
 
