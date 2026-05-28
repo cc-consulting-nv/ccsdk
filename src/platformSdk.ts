@@ -6155,7 +6155,12 @@ export class CcPlatformSdk {
 
   async createPushSubscription(subscription: PushSubscriptionJSON): Promise<ApiEnvelope<unknown>> {
     return this.client.post<ApiEnvelope<unknown>>("/v1/subscriptions", {
-      body: { subscription },
+      body: {
+        endpoint: subscription.endpoint,
+        publicKey: subscription.keys?.p256dh ?? null,
+        authToken: subscription.keys?.auth ?? null,
+        contentEncoding: "aes128gcm",
+      },
     });
   }
 
