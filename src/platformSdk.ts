@@ -9125,6 +9125,10 @@ export class CcPlatformSdk {
    * @param data - Event data (camelCase; transformed to snake_case for API)
    * @returns Created event
    *
+   * @remarks The event API does not have server-side camelCase mapping
+   * (unlike BusinessController which has mapCamelCaseInput), so we
+   * transform keys manually here.
+   *
    * @category Business Directory
    */
   async createBusinessEvent(
