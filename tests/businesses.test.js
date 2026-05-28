@@ -374,3 +374,39 @@ test("fetchBusinessAnalytics includes authorization header", async () => {
 
   assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
 });
+
+// ---------------------------------------------------------------------------
+// fetchMyBusinessesAnalytics (aggregate)
+// ---------------------------------------------------------------------------
+
+test("fetchMyBusinessesAnalytics calls GET /v1/me/businesses/analytics", async () => {
+  const analyticsData = { totalViews: 50, profileClicks: 10, phoneCalls: 5, emailInquiries: 2, websiteClicks: 8, directionRequests: 3, trends: { views: 10, profileClicks: 5, phoneCalls: 0, emailInquiries: 100 } };
+  const { sdk, calls } = createMockSdk({ data: analyticsData });
+
+  await sdk.fetchMyBusinessesAnalytics();
+
+  assert.equal(calls.length, 1);
+  const url = new URL(calls[0].url);
+  assert.equal(url.pathname, "/v1/me/businesses/analytics");
+  assert.equal(calls[0].init.method, "GET");
+});
+
+test("fetchMyBusinessesAnalytics returns aggregated BusinessAnalytics shape", async () => {
+  const analyticsData = { totalViews: 150, profileClicks: 30, phoneCalls: 12, emailInquiries: 5, websiteClicks: 28, directionRequests: 14, trends: { views: 25, profileClicks: -10, phoneCalls: 33.3, emailInquiries: 0 } };
+  const { sdk } = createMockSdk({ data: analyticsData });
+
+  const result = await sdk.fetchMyBusinessesAnalytics();
+
+  assert.equal(result.totalViews, 150);
+  assert.equal(result.phoneCalls, 12);
+  assert.equal(result.trends.views, 25);
+  assert.equal(result.trends.phoneCalls, 33.3);
+});
+
+test("fetchMyBusinessesAnalytics includes authorization header", async () => {
+  const { sdk, calls } = createMockSdk({ data: { totalViews: 0, profileClicks: 0, phoneCalls: 0, emailInquiries: 0, websiteClicks: 0, directionRequests: 0, trends: {} } });
+
+  await sdk.fetchMyBusinessesAnalytics();
+
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
+});

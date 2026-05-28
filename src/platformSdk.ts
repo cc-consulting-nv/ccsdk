@@ -9548,6 +9548,23 @@ export class CcPlatformSdk {
     return response.data ?? [];
   }
 
+  /**
+   * Fetch aggregated analytics across all businesses owned by the authenticated user.
+   * GET /v1/me/businesses/analytics
+   *
+   * Single server-side query — no client-side fan-out.
+   *
+   * @returns Aggregated BusinessAnalytics for all owned businesses
+   *
+   * @category Business Directory
+   */
+  async fetchMyBusinessesAnalytics(): Promise<import("./types/business").BusinessAnalytics> {
+    const response = await this.client.get<{
+      data: import("./types/business").BusinessAnalytics;
+    }>("/v1/me/businesses/analytics");
+    return response.data;
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Authenticated Routes - Reviews
   // ─────────────────────────────────────────────────────────────────────────────

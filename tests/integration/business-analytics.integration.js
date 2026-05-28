@@ -216,6 +216,56 @@ async function testFetchBusinessAnalyticsUnauthorized() {
 }
 
 // ---------------------------------------------------------------------------
+// Tests: fetchMyBusinessesAnalytics (aggregate)
+// ---------------------------------------------------------------------------
+
+async function testFetchMyBusinessesAnalytics() {
+  console.log("\n=== fetchMyBusinessesAnalytics (aggregate) ===");
+
+  try {
+    const analytics = await sdk.fetchMyBusinessesAnalytics();
+
+    if (!analytics || typeof analytics !== "object") {
+      fail("fetchMyBusinessesAnalytics did not return an object");
+      return;
+    }
+    success("returns an object");
+
+    // Check required fields
+    const requiredFields = [
+      "totalViews",
+      "profileClicks",
+      "phoneCalls",
+      "emailInquiries",
+      "websiteClicks",
+      "directionRequests",
+    ];
+    const missingFields = requiredFields.filter((f) => !(f in analytics));
+    if (missingFields.length === 0) {
+      success("has all required metric fields");
+    } else {
+      fail(`missing fields: ${missingFields.join(", ")}`);
+    }
+
+    // Should include totals from at least the test business
+    if (typeof analytics.totalViews === "number") {
+      success(`totalViews is a number (${analytics.totalViews})`);
+    } else {
+      fail("totalViews is not a number");
+    }
+
+    // Trends object
+    if (analytics.trends && typeof analytics.trends === "object") {
+      success("has trends object");
+    } else {
+      fail("missing or invalid trends object");
+    }
+  } catch (error) {
+    fail("fetchMyBusinessesAnalytics threw an error", error);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Teardown: Delete test business
 // ---------------------------------------------------------------------------
 
@@ -247,6 +297,7 @@ async function main() {
   await testFetchMyBusinesses();
   await testFetchBusinessAnalytics();
   await testFetchBusinessAnalyticsUnauthorized();
+  await testFetchMyBusinessesAnalytics();
 
   await teardown();
 
