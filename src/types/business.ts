@@ -399,6 +399,55 @@ export interface BusinessListResponse {
 }
 
 /**
+ * Input for creating/updating a business event
+ * @category Business Directory
+ */
+export interface BusinessEventInput {
+  /** Host business ULID (required for creation) */
+  businessId: string;
+  /** Event title */
+  title: string;
+  /** Event description */
+  description?: string;
+  /** Event category */
+  category?: string;
+  /** Tags */
+  tags?: string[];
+  /** Venue name */
+  venueName?: string;
+  /** Street address */
+  address?: string;
+  /** City */
+  city?: string;
+  /** Latitude */
+  latitude?: number;
+  /** Longitude */
+  longitude?: number;
+  /** Whether the event is virtual */
+  isVirtual?: boolean;
+  /** Virtual event link */
+  virtualLink?: string;
+  /** Start date/time (ISO 8601) */
+  startsAt: string;
+  /** End date/time (ISO 8601) */
+  endsAt?: string;
+  /** Whether it's an all-day event */
+  isAllDay?: boolean;
+  /** Cover image URL */
+  imageUrl?: string;
+  /** Gallery image URLs */
+  gallery?: string[];
+  /** Whether the event is free */
+  isFree?: boolean;
+  /** Ticket price */
+  ticketPrice?: number;
+  /** Ticket purchase link */
+  ticketLink?: string;
+  /** Event capacity */
+  capacity?: number;
+}
+
+/**
  * Response wrapper for paginated event lists
  * @category Business Directory
  */
