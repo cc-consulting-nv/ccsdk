@@ -32,19 +32,23 @@ function createMockSdk(responseData, status = 200) {
   return { sdk, calls };
 }
 
+// Matches the actual BusinessEventResource response shape from the API
 const sampleEvent = {
+  id: "01hxevt0000000000000000001",
   ulid: "01hxevt0000000000000000001",
   title: "Beach Cleanup",
   description: "Community beach cleanup event",
   slug: "beach-cleanup",
   category: "community",
   businessId: "01hxbiz0000000000000000001",
+  venueName: "Maracas Bay",
   startsAt: "2026-06-15T09:00:00+00:00",
   endsAt: "2026-06-15T12:00:00+00:00",
   isAllDay: false,
   isFree: true,
   interestedCount: 10,
   goingCount: 5,
+  status: "published",
 };
 
 // ---------------------------------------------------------------------------

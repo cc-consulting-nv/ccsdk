@@ -120,32 +120,78 @@ export interface BusinessEvent {
   id: Ulid;
   /** ULID string */
   ulid: Ulid;
-  /** Event name */
-  name: string;
+  /** Event title */
+  title: string;
   /** Event description */
   description?: string;
+  /** URL-friendly slug */
+  slug?: string;
+  /** Event category */
+  category?: string;
+  /** Tags */
+  tags?: string[];
   /** Host business ULID */
   businessId?: Ulid;
-  /** Host business name */
-  businessName?: string;
-  /** Venue location */
-  venue?: string;
+  /** Host business (nested) */
+  business?: { id: Ulid; name: string; slug: string };
+  /** Venue name */
+  venueName?: string;
+  /** Street address */
+  address?: string;
+  /** City */
+  city?: string;
+  /** Latitude */
+  latitude?: number;
+  /** Longitude */
+  longitude?: number;
+  /** Whether the event is virtual */
+  isVirtual?: boolean;
+  /** Virtual event link */
+  virtualLink?: string;
   /** Start date/time (ISO 8601) */
-  startDate: string;
+  startsAt: string;
   /** End date/time (ISO 8601) */
-  endDate?: string;
+  endsAt?: string;
   /** Whether it's an all-day event */
   isAllDay?: boolean;
-  /** Ticket information */
-  ticketInfo?: "free" | "paid" | "tba";
-  /** Ticket purchase URL */
-  ticketUrl?: string;
+  /** Duration string */
+  duration?: string;
+  /** Whether the event is upcoming */
+  isUpcoming?: boolean;
+  /** Whether the event is ongoing */
+  isOngoing?: boolean;
+  /** Whether the event is past */
+  isPast?: boolean;
   /** Cover image URL */
-  coverImage?: string;
+  imageUrl?: string;
+  /** Gallery image URLs */
+  gallery?: string[];
+  /** Whether the event is free */
+  isFree?: boolean;
+  /** Ticket price */
+  ticketPrice?: number;
+  /** Ticket currency */
+  ticketCurrency?: string;
+  /** Formatted price string */
+  formattedPrice?: string;
+  /** Ticket purchase URL */
+  ticketLink?: string;
+  /** Event capacity */
+  capacity?: number;
   /** Number of interested users */
   interestedCount?: number;
   /** Number of going users */
   goingCount?: number;
+  /** Event creator (nested) */
+  createdBy?: { id: Ulid; username: string; displayName: string; avatar?: string };
+  /** Event status */
+  status?: string;
+  /** Whether the event is featured */
+  isFeatured?: boolean;
+  /** Creation timestamp */
+  createdAt?: string;
+  /** Last update timestamp */
+  updatedAt?: string;
 }
 
 /**
