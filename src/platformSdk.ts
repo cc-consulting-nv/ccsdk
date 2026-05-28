@@ -9533,6 +9533,21 @@ export class CcPlatformSdk {
     await this.client.delete(`/v1/businesses/${ulid}`);
   }
 
+  /**
+   * Fetch businesses owned by the authenticated user.
+   * GET /v1/me/businesses
+   *
+   * @returns Array of businesses the current user owns
+   *
+   * @category Business Directory
+   */
+  async fetchMyBusinesses(): Promise<import("./types/business").Business[]> {
+    const response = await this.client.get<{
+      data: import("./types/business").Business[];
+    }>("/v1/me/businesses");
+    return response.data ?? [];
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Authenticated Routes - Reviews
   // ─────────────────────────────────────────────────────────────────────────────
