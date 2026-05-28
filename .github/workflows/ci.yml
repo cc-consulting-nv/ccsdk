@@ -1,13 +1,43 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether to run
+        id: decide
+        run: |
+          # PR and manual runs always proceed; only the hourly cron is gated.
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Scheduled run: only build/test if code changed in the last hour.
+          if git log --since='1 hour ago' --name-only --pretty=format: \
+              | grep -qE '^(src/|tests/|package\.json|pnpm-lock\.yaml|tsconfig.*\.json|\.npmrc|pnpm-workspace\.yaml)'; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "No code changes in the last hour — skipping build/test."
+          fi
+
   build-and-test:
+    needs: check
+    if: needs.check.outputs.should_run == 'true'
     runs-on: ubuntu-latest
 
     steps:
