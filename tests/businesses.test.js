@@ -182,3 +182,96 @@ test("searchBusinesses includes authorization header", async () => {
 
   assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
 });
+
+// ---------------------------------------------------------------------------
+// fetchFeaturedBusinesses
+// ---------------------------------------------------------------------------
+
+test("fetchFeaturedBusinesses returns businesses from flat array response", async () => {
+  // API returns a flat array, not { data: [...] }
+  const { sdk } = createMockSdk([sampleBusiness, sampleBusiness]);
+
+  const result = await sdk.fetchFeaturedBusinesses(5);
+
+  assert.ok(Array.isArray(result), "result is an array");
+  assert.equal(result.length, 2);
+});
+
+test("fetchFeaturedBusinesses returns empty array when API returns []", async () => {
+  const { sdk } = createMockSdk([]);
+
+  const result = await sdk.fetchFeaturedBusinesses(3);
+
+  assert.ok(Array.isArray(result));
+  assert.equal(result.length, 0);
+});
+
+test("fetchFeaturedBusinesses passes limit as query param", async () => {
+  const { sdk, calls } = createMockSdk([]);
+
+  await sdk.fetchFeaturedBusinesses(7);
+
+  const url = new URL(calls[0].url);
+  assert.equal(url.searchParams.get("limit"), "7");
+});
+
+// ---------------------------------------------------------------------------
+// setBusinessFeatured
+// ---------------------------------------------------------------------------
+
+test("setBusinessFeatured sends POST to correct endpoint", async () => {
+  const { sdk, calls } = createMockSdk({ ...sampleBusiness, isFeatured: true });
+
+  const result = await sdk.setBusinessFeatured("01hxbiz0000000000000000001");
+
+  assert.equal(calls.length, 1);
+  const url = new URL(calls[0].url);
+  assert.equal(url.pathname, "/v1/businesses/01hxbiz0000000000000000001/featured");
+  assert.equal(calls[0].init.method, "POST");
+  assert.equal(result.isFeatured, true);
+});
+
+test("setBusinessFeatured sends featured_until when provided", async () => {
+  const { sdk, calls } = createMockSdk({ ...sampleBusiness, isFeatured: true, featuredUntil: "2026-12-31T00:00:00Z" });
+
+  await sdk.setBusinessFeatured("01hxbiz0000000000000000001", {
+    featuredUntil: "2026-12-31T00:00:00Z",
+  });
+
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.featured_until, "2026-12-31T00:00:00Z");
+});
+
+test("setBusinessFeatured sends no body when no options", async () => {
+  const { sdk, calls } = createMockSdk({ ...sampleBusiness, isFeatured: true });
+
+  await sdk.setBusinessFeatured("01hxbiz0000000000000000001");
+
+  // No body or empty body
+  const body = calls[0].init.body;
+  assert.ok(!body || body === "{}" || body === "null" || body === undefined);
+});
+
+// ---------------------------------------------------------------------------
+// clearBusinessFeatured
+// ---------------------------------------------------------------------------
+
+test("clearBusinessFeatured sends DELETE to correct endpoint", async () => {
+  const { sdk, calls } = createMockSdk({ ...sampleBusiness, isFeatured: false });
+
+  const result = await sdk.clearBusinessFeatured("01hxbiz0000000000000000001");
+
+  assert.equal(calls.length, 1);
+  const url = new URL(calls[0].url);
+  assert.equal(url.pathname, "/v1/businesses/01hxbiz0000000000000000001/featured");
+  assert.equal(calls[0].init.method, "DELETE");
+  assert.equal(result.isFeatured, false);
+});
+
+test("clearBusinessFeatured includes authorization header", async () => {
+  const { sdk, calls } = createMockSdk({ ...sampleBusiness, isFeatured: false });
+
+  await sdk.clearBusinessFeatured("01hxbiz0000000000000000001");
+
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
+});
