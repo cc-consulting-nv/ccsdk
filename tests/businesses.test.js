@@ -326,12 +326,12 @@ test("fetchMyBusinesses includes authorization header", async () => {
 test("fetchBusinessAnalytics calls GET /v1/businesses/{id}/analytics/dashboard", async () => {
   const analyticsData = {
     totalViews: 100,
-    profileClicks: 20,
+    saves: 20,
     phoneCalls: 5,
     emailInquiries: 3,
     websiteClicks: 10,
     directionRequests: 2,
-    trends: { views: 12.5, profileClicks: -5.0, phoneCalls: 0, emailInquiries: 100 },
+    trends: { views: 12.5, saves: -5.0, phoneCalls: 0, emailInquiries: 100 },
   };
   const { sdk, calls } = createMockSdk({ data: analyticsData });
 
@@ -346,19 +346,19 @@ test("fetchBusinessAnalytics calls GET /v1/businesses/{id}/analytics/dashboard",
 test("fetchBusinessAnalytics returns BusinessAnalytics shape", async () => {
   const analyticsData = {
     totalViews: 100,
-    profileClicks: 20,
+    saves: 20,
     phoneCalls: 5,
     emailInquiries: 3,
     websiteClicks: 10,
     directionRequests: 2,
-    trends: { views: 12.5, profileClicks: -5.0, phoneCalls: 0, emailInquiries: 100 },
+    trends: { views: 12.5, saves: -5.0, phoneCalls: 0, emailInquiries: 100 },
   };
   const { sdk } = createMockSdk({ data: analyticsData });
 
   const result = await sdk.fetchBusinessAnalytics("01hxbiz0000000000000000001");
 
   assert.equal(result.totalViews, 100);
-  assert.equal(result.profileClicks, 20);
+  assert.equal(result.saves, 20);
   assert.equal(result.phoneCalls, 5);
   assert.equal(result.emailInquiries, 3);
   assert.equal(result.websiteClicks, 10);
@@ -368,7 +368,7 @@ test("fetchBusinessAnalytics returns BusinessAnalytics shape", async () => {
 });
 
 test("fetchBusinessAnalytics includes authorization header", async () => {
-  const { sdk, calls } = createMockSdk({ data: { totalViews: 0, profileClicks: 0, phoneCalls: 0, emailInquiries: 0, websiteClicks: 0, directionRequests: 0, trends: {} } });
+  const { sdk, calls } = createMockSdk({ data: { totalViews: 0, saves: 0, phoneCalls: 0, emailInquiries: 0, websiteClicks: 0, directionRequests: 0, trends: {} } });
 
   await sdk.fetchBusinessAnalytics("01hxbiz0000000000000000001");
 
@@ -380,7 +380,7 @@ test("fetchBusinessAnalytics includes authorization header", async () => {
 // ---------------------------------------------------------------------------
 
 test("fetchMyBusinessesAnalytics calls GET /v1/me/businesses/analytics", async () => {
-  const analyticsData = { totalViews: 50, profileClicks: 10, phoneCalls: 5, emailInquiries: 2, websiteClicks: 8, directionRequests: 3, trends: { views: 10, profileClicks: 5, phoneCalls: 0, emailInquiries: 100 } };
+  const analyticsData = { totalViews: 50, saves: 10, phoneCalls: 5, emailInquiries: 2, websiteClicks: 8, directionRequests: 3, trends: { views: 10, saves: 5, phoneCalls: 0, emailInquiries: 100 } };
   const { sdk, calls } = createMockSdk({ data: analyticsData });
 
   await sdk.fetchMyBusinessesAnalytics();
@@ -392,7 +392,7 @@ test("fetchMyBusinessesAnalytics calls GET /v1/me/businesses/analytics", async (
 });
 
 test("fetchMyBusinessesAnalytics returns aggregated BusinessAnalytics shape", async () => {
-  const analyticsData = { totalViews: 150, profileClicks: 30, phoneCalls: 12, emailInquiries: 5, websiteClicks: 28, directionRequests: 14, trends: { views: 25, profileClicks: -10, phoneCalls: 33.3, emailInquiries: 0 } };
+  const analyticsData = { totalViews: 150, saves: 30, phoneCalls: 12, emailInquiries: 5, websiteClicks: 28, directionRequests: 14, trends: { views: 25, saves: -10, phoneCalls: 33.3, emailInquiries: 0 } };
   const { sdk } = createMockSdk({ data: analyticsData });
 
   const result = await sdk.fetchMyBusinessesAnalytics();
@@ -404,7 +404,7 @@ test("fetchMyBusinessesAnalytics returns aggregated BusinessAnalytics shape", as
 });
 
 test("fetchMyBusinessesAnalytics includes authorization header", async () => {
-  const { sdk, calls } = createMockSdk({ data: { totalViews: 0, profileClicks: 0, phoneCalls: 0, emailInquiries: 0, websiteClicks: 0, directionRequests: 0, trends: {} } });
+  const { sdk, calls } = createMockSdk({ data: { totalViews: 0, saves: 0, phoneCalls: 0, emailInquiries: 0, websiteClicks: 0, directionRequests: 0, trends: {} } });
 
   await sdk.fetchMyBusinessesAnalytics();
 
