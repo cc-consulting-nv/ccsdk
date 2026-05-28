@@ -275,3 +275,102 @@ test("clearBusinessFeatured includes authorization header", async () => {
 
   assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
 });
+
+// ---------------------------------------------------------------------------
+// fetchMyBusinesses
+// ---------------------------------------------------------------------------
+
+test("fetchMyBusinesses calls GET /v1/me/businesses", async () => {
+  const { sdk, calls } = createMockSdk({ data: [sampleBusiness] });
+
+  await sdk.fetchMyBusinesses();
+
+  assert.equal(calls.length, 1);
+  const url = new URL(calls[0].url);
+  assert.equal(url.pathname, "/v1/me/businesses");
+  assert.equal(calls[0].init.method, "GET");
+});
+
+test("fetchMyBusinesses returns array of businesses", async () => {
+  const { sdk } = createMockSdk({ data: [sampleBusiness, { ...sampleBusiness, ulid: "01hxbiz0000000000000000002", name: "Second Biz" }] });
+
+  const result = await sdk.fetchMyBusinesses();
+
+  assert.ok(Array.isArray(result), "result is an array");
+  assert.equal(result.length, 2);
+  assert.equal(result[0].ulid, sampleBusiness.ulid);
+  assert.equal(result[1].name, "Second Biz");
+});
+
+test("fetchMyBusinesses returns empty array when user owns no businesses", async () => {
+  const { sdk } = createMockSdk({ data: [] });
+
+  const result = await sdk.fetchMyBusinesses();
+
+  assert.ok(Array.isArray(result));
+  assert.equal(result.length, 0);
+});
+
+test("fetchMyBusinesses includes authorization header", async () => {
+  const { sdk, calls } = createMockSdk({ data: [] });
+
+  await sdk.fetchMyBusinesses();
+
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
+});
+
+// ---------------------------------------------------------------------------
+// fetchBusinessAnalytics
+// ---------------------------------------------------------------------------
+
+test("fetchBusinessAnalytics calls GET /v1/businesses/{id}/analytics/dashboard", async () => {
+  const analyticsData = {
+    totalViews: 100,
+    profileClicks: 20,
+    phoneCalls: 5,
+    emailInquiries: 3,
+    websiteClicks: 10,
+    directionRequests: 2,
+    trends: { views: 12.5, profileClicks: -5.0, phoneCalls: 0, emailInquiries: 100 },
+  };
+  const { sdk, calls } = createMockSdk({ data: analyticsData });
+
+  await sdk.fetchBusinessAnalytics("01hxbiz0000000000000000001");
+
+  assert.equal(calls.length, 1);
+  const url = new URL(calls[0].url);
+  assert.equal(url.pathname, "/v1/businesses/01hxbiz0000000000000000001/analytics/dashboard");
+  assert.equal(calls[0].init.method, "GET");
+});
+
+test("fetchBusinessAnalytics returns BusinessAnalytics shape", async () => {
+  const analyticsData = {
+    totalViews: 100,
+    profileClicks: 20,
+    phoneCalls: 5,
+    emailInquiries: 3,
+    websiteClicks: 10,
+    directionRequests: 2,
+    trends: { views: 12.5, profileClicks: -5.0, phoneCalls: 0, emailInquiries: 100 },
+  };
+  const { sdk } = createMockSdk({ data: analyticsData });
+
+  const result = await sdk.fetchBusinessAnalytics("01hxbiz0000000000000000001");
+
+  assert.equal(result.totalViews, 100);
+  assert.equal(result.profileClicks, 20);
+  assert.equal(result.phoneCalls, 5);
+  assert.equal(result.emailInquiries, 3);
+  assert.equal(result.websiteClicks, 10);
+  assert.equal(result.directionRequests, 2);
+  assert.equal(result.trends.views, 12.5);
+  assert.equal(result.trends.phoneCalls, 0);
+});
+
+test("fetchBusinessAnalytics includes authorization header", async () => {
+  const { sdk, calls } = createMockSdk({ data: { totalViews: 0, profileClicks: 0, phoneCalls: 0, emailInquiries: 0, websiteClicks: 0, directionRequests: 0, trends: {} } });
+
+  await sdk.fetchBusinessAnalytics("01hxbiz0000000000000000001");
+
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
+});
