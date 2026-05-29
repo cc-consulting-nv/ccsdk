@@ -9072,6 +9072,7 @@ export class CcPlatformSdk {
   async fetchBusinessEvents(options?: {
     businessId?: string;
     upcoming?: boolean;
+    category?: string;
     city?: string;
     perPage?: number;
     cursor?: string | null;
@@ -9079,6 +9080,7 @@ export class CcPlatformSdk {
     const params = new URLSearchParams();
     if (options?.businessId) params.append("business_id", options.businessId);
     if (options?.upcoming) params.append("upcoming", "true");
+    if (options?.category) params.append("category", options.category);
     if (options?.city) params.append("city", options.city);
     if (options?.perPage) params.append("per_page", String(options.perPage));
     if (options?.cursor) params.append("cursor", options.cursor);
