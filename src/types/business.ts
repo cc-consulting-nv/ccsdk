@@ -286,8 +286,8 @@ export interface RecentlyViewedBusiness {
 export interface BusinessAnalytics {
   /** Total profile views */
   totalViews: number;
-  /** Profile detail clicks */
-  profileClicks: number;
+  /** Saves / bookmarks */
+  saves: number;
   /** Phone number clicks */
   phoneCalls: number;
   /** Email clicks */
@@ -299,9 +299,11 @@ export interface BusinessAnalytics {
   /** Week-over-week trends */
   trends: {
     views: number;
-    profileClicks: number;
+    saves: number;
     phoneCalls: number;
     emailInquiries: number;
+    websiteClicks: number;
+    directionRequests: number;
   };
 }
 
