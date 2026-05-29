@@ -9070,12 +9070,14 @@ export class CcPlatformSdk {
    * @category Business Directory
    */
   async fetchBusinessEvents(options?: {
+    businessId?: string;
     upcoming?: boolean;
     city?: string;
     perPage?: number;
     cursor?: string | null;
   }): Promise<import("./types/business").BusinessEventListResponse> {
     const params = new URLSearchParams();
+    if (options?.businessId) params.append("business_id", options.businessId);
     if (options?.upcoming) params.append("upcoming", "true");
     if (options?.city) params.append("city", options.city);
     if (options?.perPage) params.append("per_page", String(options.perPage));
@@ -9106,10 +9108,137 @@ export class CcPlatformSdk {
    * @category Business Directory
    */
   async fetchBusinessEvent(ulid: string): Promise<import("./types/business").BusinessEvent | null> {
-    const response = await this.client.get<{
-      data: import("./types/business").BusinessEvent;
-    }>(`/v1/business-events/${ulid}`);
-    return response.data || null;
+    const response = await this.client.get<import("./types/business").BusinessEvent>(
+      `/v1/business-events/${ulid}`
+    );
+    return response || null;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Authenticated Routes - Events
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Create a business event.
+   * POST /v1/business-events
+   *
+   * @param data - Event data (camelCase; transformed to snake_case for API)
+   * @returns Created event
+   *
+   * @remarks The event API does not have server-side camelCase mapping
+   * (unlike BusinessController which has mapCamelCaseInput), so we
+   * transform keys manually here.
+   *
+   * @category Business Directory
+   */
+  async createBusinessEvent(
+    data: import("./types/business").BusinessEventInput
+  ): Promise<import("./types/business").BusinessEvent> {
+    const body: Record<string, unknown> = {
+      business_id: data.businessId,
+      title: data.title,
+      description: data.description,
+      category: data.category,
+      tags: data.tags,
+      venue_name: data.venueName,
+      address: data.address,
+      city: data.city,
+      latitude: data.latitude,
+      longitude: data.longitude,
+      is_virtual: data.isVirtual,
+      virtual_link: data.virtualLink,
+      starts_at: data.startsAt,
+      ends_at: data.endsAt,
+      is_all_day: data.isAllDay,
+      image_url: data.imageUrl,
+      gallery: data.gallery,
+      is_free: data.isFree,
+      ticket_price: data.ticketPrice,
+      ticket_link: data.ticketLink,
+      capacity: data.capacity,
+    };
+    // Strip undefined values
+    for (const key of Object.keys(body)) {
+      if (body[key] === undefined) delete body[key];
+    }
+
+    const created = await this.client.post<import("./types/business").BusinessEvent>(
+      "/v1/business-events",
+      { body },
+    );
+    // Read-after-write: fetch canonical record with all server-computed fields.
+    const ulid = (created as { ulid?: string; id?: string })?.ulid
+      || (created as { ulid?: string; id?: string })?.id;
+    if (!ulid) return created;
+    try {
+      const refetched = await this.fetchBusinessEvent(ulid);
+      return refetched ?? created;
+    } catch (err) {
+      this.log("[SDK] createBusinessEvent read-after-write failed:", err);
+      return created;
+    }
+  }
+
+  /**
+   * Update a business event.
+   * PUT /v1/business-events/{ulid}
+   *
+   * @param ulid - Event ULID
+   * @param data - Partial event data (camelCase; transformed to snake_case for API)
+   * @returns Updated event
+   *
+   * @category Business Directory
+   */
+  async updateBusinessEvent(
+    ulid: string,
+    data: Partial<import("./types/business").BusinessEventInput>
+  ): Promise<import("./types/business").BusinessEvent> {
+    const body: Record<string, unknown> = {};
+    if (data.title !== undefined) body.title = data.title;
+    if (data.description !== undefined) body.description = data.description;
+    if (data.category !== undefined) body.category = data.category;
+    if (data.tags !== undefined) body.tags = data.tags;
+    if (data.venueName !== undefined) body.venue_name = data.venueName;
+    if (data.address !== undefined) body.address = data.address;
+    if (data.city !== undefined) body.city = data.city;
+    if (data.latitude !== undefined) body.latitude = data.latitude;
+    if (data.longitude !== undefined) body.longitude = data.longitude;
+    if (data.isVirtual !== undefined) body.is_virtual = data.isVirtual;
+    if (data.virtualLink !== undefined) body.virtual_link = data.virtualLink;
+    if (data.startsAt !== undefined) body.starts_at = data.startsAt;
+    if (data.endsAt !== undefined) body.ends_at = data.endsAt;
+    if (data.isAllDay !== undefined) body.is_all_day = data.isAllDay;
+    if (data.imageUrl !== undefined) body.image_url = data.imageUrl;
+    if (data.gallery !== undefined) body.gallery = data.gallery;
+    if (data.isFree !== undefined) body.is_free = data.isFree;
+    if (data.ticketPrice !== undefined) body.ticket_price = data.ticketPrice;
+    if (data.ticketLink !== undefined) body.ticket_link = data.ticketLink;
+    if (data.capacity !== undefined) body.capacity = data.capacity;
+
+    const updated = await this.client.put<import("./types/business").BusinessEvent>(
+      `/v1/business-events/${ulid}`,
+      { body },
+    );
+    // Read-after-write so caller sees server-side normalization.
+    try {
+      const refetched = await this.fetchBusinessEvent(ulid);
+      return refetched ?? updated;
+    } catch (err) {
+      this.log("[SDK] updateBusinessEvent read-after-write failed:", err);
+      return updated;
+    }
+  }
+
+  /**
+   * Delete a business event.
+   * DELETE /v1/business-events/{ulid}
+   *
+   * @param ulid - Event ULID
+   *
+   * @category Business Directory
+   */
+  async deleteBusinessEvent(ulid: string): Promise<void> {
+    await this.client.delete(`/v1/business-events/${ulid}`);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
