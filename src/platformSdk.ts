@@ -9847,6 +9847,65 @@ export class CcPlatformSdk {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // Authenticated Routes - Business Claims
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Request a business claim (step 1).
+   * POST /v1/businesses/{businessId}/claim/verify
+   *
+   * Sends contact info and an optional supporting document (multipart).
+   * The server sends a verification code to the provided email.
+   *
+   * @param businessId - Business ULID
+   * @param data - Claimant contact details
+   * @param document - Optional supporting document (PDF, JPG, PNG)
+   * @returns Claim response with pending_id for verification step
+   *
+   * @category Business Directory
+   */
+  async requestBusinessClaim(
+    businessId: string,
+    data: import("./types/business").BusinessClaimInput,
+    document?: File | null,
+  ): Promise<import("./types/business").BusinessClaimResponse> {
+    const formData = new FormData();
+    formData.append("name", data.name);
+    formData.append("email", data.email);
+    if (data.phone) formData.append("phone", data.phone);
+    formData.append("position", data.position);
+    if (data.message) formData.append("message", data.message);
+    if (document) formData.append("document", document);
+
+    return this.client.post<import("./types/business").BusinessClaimResponse>(
+      `/v1/businesses/${businessId}/claim/verify`,
+      { body: formData },
+    );
+  }
+
+  /**
+   * Verify a business claim with the emailed code (step 2).
+   * POST /v1/businesses/{businessId}/claim
+   *
+   * @param businessId - Business ULID
+   * @param pendingId - The pending_id returned from requestBusinessClaim
+   * @param verificationCode - Code sent to the claimant's email
+   * @returns Success/failure response
+   *
+   * @category Business Directory
+   */
+  async verifyBusinessClaim(
+    businessId: string,
+    pendingId: string,
+    verificationCode: string,
+  ): Promise<import("./types/business").BusinessClaimVerifyResponse> {
+    return this.client.post<import("./types/business").BusinessClaimVerifyResponse>(
+      `/v1/businesses/${businessId}/claim`,
+      { body: { pending_id: pendingId, verification_code: verificationCode } },
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // Authenticated Routes - Reviews
   // ─────────────────────────────────────────────────────────────────────────────
 
