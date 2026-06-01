@@ -951,30 +951,61 @@ export interface ChatGroup {
 }
 
 /**
+ * A media attachment on a chat message.
+ *
+ * @category Chat
+ */
+export interface ChatAttachment {
+  /** Absolute URL of the attachment */
+  url: string;
+  /** Media kind */
+  type: "image" | "video";
+}
+
+/**
  * A message in a chat group.
+ *
+ * Backend chat messages are CHAT-type posts, so the wire payload mirrors
+ * `PostResource`: sender identity lives on the top-level `username`/`userId`
+ * and the nested `user` object; media arrives via `images`. The SDK normalizes
+ * these into the flat fields below so consumers don't have to.
  *
  * @example
  * ```typescript
- * const messages = await sdk.getChatMessages(groupUlid);
- * for (const msg of messages) {
- *   console.log(`${msg.sender?.username}: ${msg.body}`);
+ * const page = await sdk.getChatMessages(groupUlid);
+ * for (const msg of sdk.unwrap(page)) {
+ *   console.log(`${msg.sender?.username ?? msg.username}: ${msg.body}`);
  * }
  * ```
  *
  * @category Chat
  */
 export interface ChatMessage {
-  /** Unique identifier */
+  /** Unique identifier (lowercased ULID) */
   id: string;
   /** ULID identifier */
   ulid?: string;
   /** ULID of the chat group this message belongs to */
-  groupUlid: string;
-  /** User ID of the sender */
-  senderId: string;
-  /** ULID of the sender */
+  groupUlid?: string;
+  /** Sender username (top-level on the wire) */
+  username?: string;
+  /** ULID of the sender (top-level `userId` on the wire) */
+  userId?: string;
+  /**
+   * ULID of the sender. Convenience alias of `userId`, also set client-side
+   * by consumers after sending so own-message detection works.
+   */
+  senderId?: string;
+  /** ULID of the sender. Convenience alias of `userId`. */
   senderUlid?: string;
-  /** Full sender information */
+  /** Nested sender info as returned by the API (`user` object) */
+  user?: {
+    userId: string;
+    avatar?: string;
+    name?: string;
+    [key: string]: unknown;
+  };
+  /** Normalized sender summary (derived from `user`/`username`) */
   sender?: {
     ulid: string;
     username: string;
@@ -983,12 +1014,61 @@ export interface ChatMessage {
   };
   /** Message content */
   body: string;
+  /** Media attachments (normalized from the API `images` array) */
+  attachments?: ChatAttachment[];
+  /** Raw media array as returned by the API */
+  images?: ChatAttachment[];
   /** When the message was sent (ISO 8601) */
   createdAt?: string;
   /** When the message was read (null if unread) */
   readAt?: string | null;
   /** Additional properties from API */
   [key: string]: unknown;
+}
+
+/**
+ * A cursor-paginated page of chat messages.
+ *
+ * Returned by {@link CcPlatformSdk.getChatMessages}. `data` is the canonical
+ * message array; `nextCursor` (or its snake_case alias) drives pagination.
+ *
+ * @category Chat
+ */
+export interface ChatMessagesPage {
+  /** Messages in this page (oldest-to-newest) */
+  data: ChatMessage[];
+  /** Cursor for the next (older) page, or null when exhausted */
+  nextCursor?: string | null;
+  /** Whether more pages are available */
+  hasMore?: boolean;
+}
+
+/**
+ * Payload for {@link CcPlatformSdk.sendChatMessage}.
+ *
+ * At least one of `body` or `attachments` must be present.
+ *
+ * @category Chat
+ */
+export interface SendChatMessagePayload {
+  /** Text content (max 2000 chars) */
+  body?: string;
+  /** Up to 4 media attachments */
+  attachments?: ChatAttachment[];
+}
+
+/**
+ * Payload for {@link CcPlatformSdk.createChatGroup}.
+ *
+ * @category Chat
+ */
+export interface CreateChatGroupPayload {
+  /** Participant user ULIDs (at least one). A single participant creates a DM. */
+  participants: string[];
+  /** Optional group name; auto-generated when omitted */
+  name?: string;
+  /** Optional description */
+  description?: string;
 }
 
 /**

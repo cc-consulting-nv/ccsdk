@@ -29,6 +29,10 @@ import {
   type SongChannel,
   type ChatGroup,
   type ChatMessage,
+  type ChatMessagesPage,
+  type ChatAttachment,
+  type SendChatMessagePayload,
+  type CreateChatGroupPayload,
   type AppSettings,
   type NotificationType,
   type GenrePreferencesResponse,
@@ -6406,8 +6410,12 @@ export class CcPlatformSdk {
    *
    * @category Chat
    */
-  async createChatGroup(payload: Record<string, unknown>): Promise<ApiEnvelope<ChatGroup>> {
-    return this.client.post<ApiEnvelope<ChatGroup>>("/v1/chat/groups", { body: payload });
+  async createChatGroup(
+    payload: CreateChatGroupPayload,
+  ): Promise<ApiEnvelope<ChatGroup>> {
+    return this.client.post<ApiEnvelope<ChatGroup>>("/v1/chat/groups", {
+      body: payload as unknown as Record<string, unknown>,
+    });
   }
 
   /**
@@ -6440,11 +6448,114 @@ export class CcPlatformSdk {
   async getChatMessages(
     groupUlid: string,
     params?: Record<string, unknown>,
-  ): Promise<ApiEnvelope<ChatMessage[]>> {
-    return this.client.get<ApiEnvelope<ChatMessage[]>>(
+  ): Promise<ChatMessagesPage> {
+    const raw = await this.client.get<Record<string, unknown>>(
       `/v1/chat/groups/${encodeURIComponent(groupUlid)}/messages`,
       { query: params },
     );
+    return this.normalizeChatMessagesPage(raw, groupUlid);
+  }
+
+  /**
+   * Normalize a raw chat-messages response into a {@link ChatMessagesPage}.
+   *
+   * The backend returns the message array under `data` (with `messages` kept as
+   * a back-compat alias) and the cursor under `next_cursor`/`nextCursor`. Each
+   * message is a CHAT-type post, so sender identity is flattened here.
+   *
+   * @category Chat
+   */
+  private normalizeChatMessagesPage(
+    raw: unknown,
+    groupUlid: string,
+  ): ChatMessagesPage {
+    const obj = (raw ?? {}) as Record<string, unknown>;
+
+    let rawMessages: unknown[] = [];
+    if (Array.isArray(obj)) {
+      rawMessages = obj as unknown[];
+    } else if (Array.isArray(obj.data)) {
+      rawMessages = obj.data as unknown[];
+    } else if (Array.isArray(obj.messages)) {
+      rawMessages = obj.messages as unknown[];
+    } else if (obj.data && typeof obj.data === "object") {
+      const inner = obj.data as Record<string, unknown>;
+      if (Array.isArray(inner.data)) rawMessages = inner.data as unknown[];
+      else if (Array.isArray(inner.messages))
+        rawMessages = inner.messages as unknown[];
+    }
+
+    const data = rawMessages
+      .filter(
+        (m): m is Record<string, unknown> =>
+          m != null &&
+          typeof m === "object" &&
+          ((m as Record<string, unknown>).id != null ||
+            (m as Record<string, unknown>).ulid != null),
+      )
+      .map((m) => this.normalizeChatMessage(m, groupUlid));
+
+    const nextCursor =
+      (obj.next_cursor as string | null | undefined) ??
+      (obj.nextCursor as string | null | undefined) ??
+      null;
+
+    const hasMore =
+      (obj.has_more as boolean | undefined) ??
+      (obj.hasMore as boolean | undefined) ??
+      (data.length > 0 && !!nextCursor);
+
+    return { data, nextCursor, hasMore };
+  }
+
+  /**
+   * Normalize a single raw chat message (CHAT-type post payload) into the flat
+   * {@link ChatMessage} shape.
+   *
+   * @category Chat
+   */
+  private normalizeChatMessage(
+    raw: Record<string, unknown>,
+    groupUlid?: string,
+  ): ChatMessage {
+    const user = raw.user as Record<string, unknown> | undefined;
+    const userId = (user?.userId as string | undefined) ?? (raw.userId as string | undefined);
+    const username = raw.username as string | undefined;
+
+    const images = Array.isArray(raw.images)
+      ? (raw.images as unknown[]).filter(
+          (i): i is ChatAttachment =>
+            !!i && typeof i === "object" && "url" in (i as object),
+        )
+      : undefined;
+
+    return {
+      ...raw,
+      id: String(raw.id ?? raw.ulid ?? ""),
+      ulid: raw.ulid as string | undefined,
+      groupUlid:
+        (raw.groupUlid as string | undefined) ??
+        (raw.groupId as string | undefined) ??
+        groupUlid,
+      username,
+      userId,
+      senderId: userId,
+      senderUlid: userId,
+      user: user as ChatMessage["user"],
+      sender: userId
+        ? {
+            ulid: userId,
+            username: username ?? "",
+            name: (user?.name as string | undefined) ?? username,
+            avatar: user?.avatar as string | undefined,
+          }
+        : undefined,
+      body: (raw.body as string | undefined) ?? "",
+      attachments: images,
+      images,
+      createdAt: raw.createdAt as string | undefined,
+      readAt: raw.readAt as string | null | undefined,
+    };
   }
 
   /**
@@ -6464,12 +6575,19 @@ export class CcPlatformSdk {
    */
   async sendChatMessage(
     groupUlid: string,
-    payload: Record<string, unknown>,
+    payload: SendChatMessagePayload,
   ): Promise<ApiEnvelope<ChatMessage>> {
-    return this.client.post<ApiEnvelope<ChatMessage>>(
+    const raw = await this.client.post<Record<string, unknown>>(
       `/v1/chat/groups/${encodeURIComponent(groupUlid)}/messages`,
-      { body: payload },
+      { body: payload as unknown as Record<string, unknown> },
     );
+    // Backend wraps the sent message under `data`; tolerate a flat body too.
+    const obj = (raw ?? {}) as Record<string, unknown>;
+    const inner =
+      obj.data && typeof obj.data === "object"
+        ? (obj.data as Record<string, unknown>)
+        : obj;
+    return { data: this.normalizeChatMessage(inner, groupUlid) };
   }
 
   /**
@@ -6524,6 +6642,38 @@ export class CcPlatformSdk {
     await this.client.delete(
       `/v1/chat/groups/${encodeURIComponent(groupUlid)}/messages/${encodeURIComponent(messageUlid)}`,
     );
+  }
+
+  /**
+   * Get the total unread chat message count across all conversations.
+   *
+   * Useful for a global badge counter.
+   *
+   * @returns Promise resolving to `{ unreadCount }`
+   *
+   * @example
+   * ```typescript
+   * const { unreadCount } = await sdk.getChatUnreadCount();
+   * ```
+   *
+   * @category Chat
+   */
+  async getChatUnreadCount(): Promise<{ unreadCount: number }> {
+    const raw = await this.client.get<Record<string, unknown>>(
+      "/v1/chat/unread-count",
+    );
+    const obj = (raw ?? {}) as Record<string, unknown>;
+    // Backend returns `{ unread_count }`; tolerate `{ data: { unread_count } }`
+    // and camelCase variants.
+    const inner =
+      obj.data && typeof obj.data === "object"
+        ? (obj.data as Record<string, unknown>)
+        : obj;
+    const count =
+      (inner.unread_count as number | undefined) ??
+      (inner.unreadCount as number | undefined) ??
+      0;
+    return { unreadCount: Number(count) || 0 };
   }
 
   // ---------------------------------------------------------------------------
