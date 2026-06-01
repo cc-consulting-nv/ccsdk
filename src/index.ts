@@ -39,6 +39,7 @@ export * from "./httpClient";
 export * from "./cache/cacheDB";
 export * from "./platformSdk";
 export * from "./query";
+export * from "./realtime";
 export * from "./auth";
 export * from "./persister";
 export * from "./multipartUpload";

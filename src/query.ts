@@ -24,7 +24,15 @@ import type {
   QueryClient,
 } from "@tanstack/query-core";
 import type { CcPlatformSdk } from "./platformSdk";
-import type { FeedPage, Post, Story, StoryFeedResponse, Ulid } from "./types";
+import type {
+  ChatGroup,
+  ChatMessagesPage,
+  FeedPage,
+  Post,
+  Story,
+  StoryFeedResponse,
+  Ulid,
+} from "./types";
 
 /**
  * Query key factories for posts and feeds.
@@ -61,6 +69,14 @@ export const queryKeys = {
     user: (username: string) => ["stories", "user", username] as const,
     detail: (ulid: string) => ["stories", "detail", ulid] as const,
     viewers: (ulid: string) => ["stories", "viewers", ulid] as const,
+  },
+  chat: {
+    all: ["chat"] as const,
+    groups: () => ["chat", "groups"] as const,
+    dms: () => ["chat", "groups", "dm"] as const,
+    messages: (groupUlid: string) =>
+      ["chat", "messages", groupUlid] as const,
+    unread: () => ["chat", "unread"] as const,
   },
 } as const;
 
@@ -469,4 +485,159 @@ export async function prefetchUserStories(
   username: string,
 ): Promise<void> {
   await queryClient.prefetchQuery(createUserStoriesQueryOptions(sdk, username));
+}
+
+/**
+ * Create query options for the current user's chat groups (conversations).
+ *
+ * @param sdk - The CC Platform SDK instance
+ * @param opts - Optional overrides plus `dmOnly` to list only DM conversations
+ * @returns Query options for use with `useQuery`
+ *
+ * @example
+ * ```typescript
+ * const { data: groups } = useQuery(createChatGroupsQueryOptions(sdk));
+ * const { data: dms } = useQuery(createChatGroupsQueryOptions(sdk, { dmOnly: true }));
+ * ```
+ *
+ * @category Query Helpers
+ */
+export function createChatGroupsQueryOptions(
+  sdk: CcPlatformSdk,
+  opts?: { dmOnly?: boolean } & Partial<
+    FetchQueryOptions<
+      ChatGroup[],
+      Error,
+      ChatGroup[],
+      ReturnType<typeof queryKeys.chat.groups | typeof queryKeys.chat.dms>
+    >
+  >,
+): FetchQueryOptions<
+  ChatGroup[],
+  Error,
+  ChatGroup[],
+  ReturnType<typeof queryKeys.chat.groups | typeof queryKeys.chat.dms>
+> {
+  const { dmOnly, ...rest } = opts ?? {};
+  return {
+    queryKey: dmOnly ? queryKeys.chat.dms() : queryKeys.chat.groups(),
+    queryFn: async () => {
+      const res = dmOnly
+        ? await sdk.getDmConversations()
+        : await sdk.getChatGroups();
+      return res?.data ?? [];
+    },
+    staleTime: 30_000,
+    gcTime: 10 * 60 * 1000,
+    ...rest,
+  } as FetchQueryOptions<
+    ChatGroup[],
+    Error,
+    ChatGroup[],
+    ReturnType<typeof queryKeys.chat.groups | typeof queryKeys.chat.dms>
+  >;
+}
+
+/**
+ * Create infinite query options for the messages in a chat conversation.
+ *
+ * Flatten pages with `data.pages.flatMap(p => p.data)`.
+ *
+ * @param sdk - The CC Platform SDK instance
+ * @param groupUlid - The ULID of the chat group
+ * @param opts - Optional overrides for infinite query options
+ * @returns Infinite query options for use with `useInfiniteQuery`
+ *
+ * @example
+ * ```typescript
+ * const { data, fetchNextPage, hasNextPage } =
+ *   useInfiniteQuery(createChatMessagesInfiniteQueryOptions(sdk, groupUlid));
+ * const messages = data?.pages.flatMap(p => p.data) ?? [];
+ * ```
+ *
+ * @category Query Helpers
+ */
+export function createChatMessagesInfiniteQueryOptions(
+  sdk: CcPlatformSdk,
+  groupUlid: string,
+  opts?: Partial<
+    FetchInfiniteQueryOptions<
+      ChatMessagesPage,
+      Error,
+      ChatMessagesPage,
+      ReturnType<typeof queryKeys.chat.messages>,
+      string | undefined
+    >
+  >,
+): FetchInfiniteQueryOptions<
+  ChatMessagesPage,
+  Error,
+  ChatMessagesPage,
+  ReturnType<typeof queryKeys.chat.messages>,
+  string | undefined
+> {
+  return {
+    queryKey: queryKeys.chat.messages(groupUlid),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) =>
+      sdk.getChatMessages(groupUlid, {
+        cursor: pageParam as string | undefined,
+      }),
+    getNextPageParam: (lastPage: ChatMessagesPage) =>
+      lastPage.nextCursor ?? undefined,
+    staleTime: 0,
+    gcTime: 5 * 60 * 1000,
+    ...opts,
+  } as FetchInfiniteQueryOptions<
+    ChatMessagesPage,
+    Error,
+    ChatMessagesPage,
+    ReturnType<typeof queryKeys.chat.messages>,
+    string | undefined
+  >;
+}
+
+/**
+ * Create query options for the total unread chat message count.
+ *
+ * @param sdk - The CC Platform SDK instance
+ * @param opts - Optional overrides for query options
+ * @returns Query options for use with `useQuery`
+ *
+ * @example
+ * ```typescript
+ * const { data } = useQuery(createChatUnreadCountQueryOptions(sdk));
+ * const badge = data?.unreadCount ?? 0;
+ * ```
+ *
+ * @category Query Helpers
+ */
+export function createChatUnreadCountQueryOptions(
+  sdk: CcPlatformSdk,
+  opts?: Partial<
+    FetchQueryOptions<
+      { unreadCount: number },
+      Error,
+      { unreadCount: number },
+      ReturnType<typeof queryKeys.chat.unread>
+    >
+  >,
+): FetchQueryOptions<
+  { unreadCount: number },
+  Error,
+  { unreadCount: number },
+  ReturnType<typeof queryKeys.chat.unread>
+> {
+  return {
+    queryKey: queryKeys.chat.unread(),
+    queryFn: () => sdk.getChatUnreadCount(),
+    staleTime: 30_000,
+    gcTime: 10 * 60 * 1000,
+    ...opts,
+  } as FetchQueryOptions<
+    { unreadCount: number },
+    Error,
+    { unreadCount: number },
+    ReturnType<typeof queryKeys.chat.unread>
+  >;
 }
