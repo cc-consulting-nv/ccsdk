@@ -9394,6 +9394,70 @@ export class CcPlatformSdk {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // Authenticated Routes - Event Favorites
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Check whether the authenticated user has saved an event.
+   * GET /v1/business-events/{ulid}/favorite
+   *
+   * @param ulid - Event ULID
+   * @returns Whether the event is favorited by the current user
+   *
+   * @category Business Directory
+   */
+  async checkEventFavorite(ulid: string): Promise<import("./types/business").EventSavedCheckResponse> {
+    return this.client.get<import("./types/business").EventSavedCheckResponse>(
+      `/v1/business-events/${encodeURIComponent(ulid)}/favorite`
+    );
+  }
+
+  /**
+   * Save an event for the authenticated user.
+   * POST /v1/business-events/{ulid}/favorite
+   *
+   * Idempotent — saving an already-saved event is a no-op.
+   *
+   * @param ulid - Event ULID
+   * @returns Updated favorite status
+   *
+   * @category Business Directory
+   */
+  async saveEventFavorite(ulid: string): Promise<import("./types/business").EventSavedCheckResponse> {
+    return this.client.post<import("./types/business").EventSavedCheckResponse>(
+      `/v1/business-events/${encodeURIComponent(ulid)}/favorite`
+    );
+  }
+
+  /**
+   * Remove a saved event for the authenticated user.
+   * DELETE /v1/business-events/{ulid}/favorite
+   *
+   * No-op if the event was not saved.
+   *
+   * @param ulid - Event ULID
+   *
+   * @category Business Directory
+   */
+  async removeEventFavorite(ulid: string): Promise<void> {
+    await this.client.delete(`/v1/business-events/${encodeURIComponent(ulid)}/favorite`);
+  }
+
+  /**
+   * Fetch all event IDs the authenticated user has saved.
+   * GET /v1/users/me/event-favorites
+   *
+   * @returns List of saved event ULIDs
+   *
+   * @category Business Directory
+   */
+  async fetchMyEventFavorites(): Promise<import("./types/business").EventFavoritesListResponse> {
+    return this.client.get<import("./types/business").EventFavoritesListResponse>(
+      "/v1/users/me/event-favorites"
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // Public Routes - Reviews
   // ─────────────────────────────────────────────────────────────────────────────
 
