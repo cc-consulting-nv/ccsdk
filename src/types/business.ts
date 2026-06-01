@@ -532,3 +532,34 @@ export interface BusinessCollectionBusinessesResponse {
 export interface BusinessSavedCheckResponse {
   collectionIds: string[];
 }
+
+/**
+ * Input for requesting a business claim (step 1: submit contact info + optional document)
+ * @category Business Directory
+ */
+export interface BusinessClaimInput {
+  name: string;
+  email: string;
+  phone?: string;
+  position: string;
+  message?: string;
+}
+
+/**
+ * Response from requesting a business claim verification
+ * @category Business Directory
+ */
+export interface BusinessClaimResponse {
+  success: boolean;
+  message: string;
+  data?: { pending_id: string; requires_verification: boolean; email: string };
+}
+
+/**
+ * Response from verifying a business claim with a code
+ * @category Business Directory
+ */
+export interface BusinessClaimVerifyResponse {
+  success: boolean;
+  message: string;
+}
