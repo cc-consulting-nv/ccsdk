@@ -352,3 +352,27 @@ test("fetchBusinessEvents omits business_id when not provided", async () => {
   assert.equal(url.searchParams.has("business_id"), false);
   assert.equal(url.searchParams.get("upcoming"), "true");
 });
+
+test("fetchBusinessEvents passes category as query param", async () => {
+  const { sdk, calls } = createMockSdk({
+    data: [sampleEvent],
+    meta: { next_cursor: null },
+  });
+
+  await sdk.fetchBusinessEvents({ category: "music" });
+
+  const url = new URL(calls[0].url);
+  assert.equal(url.searchParams.get("category"), "music");
+});
+
+test("fetchBusinessEvents omits category when not provided", async () => {
+  const { sdk, calls } = createMockSdk({
+    data: [],
+    meta: { next_cursor: null },
+  });
+
+  await sdk.fetchBusinessEvents({ upcoming: true });
+
+  const url = new URL(calls[0].url);
+  assert.equal(url.searchParams.has("category"), false);
+});
