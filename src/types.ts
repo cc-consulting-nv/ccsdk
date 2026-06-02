@@ -216,6 +216,14 @@ export interface Post {
   visibility?: "public" | "followers" | "private";
   /** Scheduled time for hidden post to become visible */
   unhideAt?: string | null;
+  /**
+   * Start color of a text-post background gradient (hex `#RGB` or `#RRGGBB`).
+   * Gradient angle is fixed at 135°. Only present on gradient-eligible posts
+   * (plain text or poll — no images, video, openGraph, or embed). Null when no gradient.
+   */
+  backgroundColor1?: string | null;
+  /** End color of a text-post background gradient (hex). Pairs with {@link backgroundColor1}. */
+  backgroundColor2?: string | null;
   /** Whether the current user can edit this post (based on ownership and time window) */
   isEditable?: boolean;
   /** Additional properties from API */
