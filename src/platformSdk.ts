@@ -2279,14 +2279,19 @@ export class CcPlatformSdk {
   /**
    * Create a new post.
    *
-   * @param payload - Post data (content, type, media, etc.)
+   * @param payload - Post data (content, type, media, etc.). For a text or poll post you may
+   *   pass `backgroundColor1` and `backgroundColor2` (hex `#RGB`/`#RRGGBB`) to set a 135°
+   *   background gradient. The server ignores them on posts with images, video, openGraph, or
+   *   an embed, and requires both colors together.
    * @returns The created post with full data
    *
    * @example
    * ```typescript
    * const post = await sdk.createPost({
    *   content: 'Hello world!',
-   *   type: 'POST'
+   *   type: 'POST',
+   *   backgroundColor1: '#1a1815',
+   *   backgroundColor2: '#44403C',
    * });
    * ```
    *
@@ -2371,13 +2376,17 @@ export class CcPlatformSdk {
    * Update an existing post.
    *
    * @param postUlid - ULID of the post to update
-   * @param payload - Updated post data
+   * @param payload - Updated post data. Pass `backgroundColor1`/`backgroundColor2` (hex) to set
+   *   or change a text-post background gradient, or both `null` to clear it. Ignored on posts
+   *   with images, openGraph, or an embed.
    * @returns The updated post
    *
    * @example
    * ```typescript
    * const updated = await sdk.updatePost('01HX...', {
-   *   content: 'Updated content'
+   *   content: 'Updated content',
+   *   backgroundColor1: '#1a1815',
+   *   backgroundColor2: '#44403C',
    * });
    * ```
    *
