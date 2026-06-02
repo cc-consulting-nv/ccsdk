@@ -192,6 +192,8 @@ export interface BusinessEvent {
   createdAt?: string;
   /** Last update timestamp */
   updatedAt?: string;
+  /** Whether the authenticated user has saved this event (populated when authenticated) */
+  isFavorited?: boolean;
 }
 
 /**
@@ -531,6 +533,22 @@ export interface BusinessCollectionBusinessesResponse {
  */
 export interface BusinessSavedCheckResponse {
   collectionIds: string[];
+}
+
+/**
+ * Response for checking or toggling an authenticated user's event favorite
+ * @category Business Directory
+ */
+export interface EventSavedCheckResponse {
+  favorited: boolean;
+}
+
+/**
+ * Response for listing an authenticated user's saved event IDs
+ * @category Business Directory
+ */
+export interface EventFavoritesListResponse {
+  eventIds: string[];
 }
 
 /**
