@@ -581,3 +581,42 @@ export interface BusinessClaimVerifyResponse {
   success: boolean;
   message: string;
 }
+
+/**
+ * Input for contacting a business via the public contact form.
+ * `website` is a honeypot field — leave empty; non-empty values are bot submissions.
+ * @category Business Directory
+ */
+export interface BusinessContactInput {
+  name: string;
+  email: string;
+  phone?: string;
+  subject: string;
+  message: string;
+  /** Honeypot — must stay empty for human submissions. */
+  website?: string;
+  /** reCAPTCHA v3 token (verified server-side). */
+  recaptchaToken?: string;
+}
+
+/**
+ * Response from submitting the business contact form. When `requires_verification`
+ * is true, a 6-digit code was emailed and `pending_id` must be passed to verify.
+ * @category Business Directory
+ */
+export interface BusinessContactResponse {
+  success: boolean;
+  message: string;
+  requires_verification?: boolean;
+  pending_id?: string;
+  email?: string;
+}
+
+/**
+ * Centroid coordinates for a geocoded city/place, or null when not found.
+ * @category Business Directory
+ */
+export interface GeocodeCityResult {
+  latitude: number;
+  longitude: number;
+}

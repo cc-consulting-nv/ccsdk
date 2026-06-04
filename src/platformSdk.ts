@@ -10159,6 +10159,103 @@ export class CcPlatformSdk {
     });
   }
 
+  /**
+   * Submit the public contact form for a business (step 1 of 2).
+   * POST /v1/businesses/{id}/contact
+   *
+   * Public endpoint — no auth. When the response sets `requires_verification`,
+   * a 6-digit code is emailed; pass the returned `pending_id` to
+   * {@link verifyBusinessContact}. `input.website` is a honeypot (leave empty).
+   *
+   * @param businessId - Business ULID
+   * @param input - Contact form fields (+ optional reCAPTCHA token, honeypot)
+   * @returns Normalized contact response with pending_id/email surfaced
+   *
+   * @category Business Directory
+   */
+  async submitBusinessContact(
+    businessId: string,
+    input: import("./types/business").BusinessContactInput
+  ): Promise<import("./types/business").BusinessContactResponse> {
+    const { recaptchaToken, ...rest } = input;
+    const raw = await this.client.post<{
+      success?: boolean;
+      message?: string;
+      data?: { requires_verification?: boolean; pending_id?: string; email?: string };
+      requires_verification?: boolean;
+      pending_id?: string;
+      email?: string;
+    }>(`/v1/businesses/${encodeURIComponent(businessId)}/contact`, {
+      skipAuth: true,
+      body: { ...rest, recaptcha_token: recaptchaToken },
+    });
+    // Server may nest under `data` (claim-style) or return flat — normalize both.
+    return {
+      success: raw.success ?? true,
+      message: raw.message ?? "",
+      requires_verification: raw.data?.requires_verification ?? raw.requires_verification,
+      pending_id: raw.data?.pending_id ?? raw.pending_id,
+      email: raw.data?.email ?? raw.email,
+    };
+  }
+
+  /**
+   * Verify the emailed code and deliver the contact message (step 2 of 2).
+   * POST /v1/businesses/{id}/contact/verify
+   *
+   * Public endpoint — no auth.
+   *
+   * @param businessId - Business ULID
+   * @param pendingId - The pending_id from {@link submitBusinessContact}
+   * @param code - 6-digit verification code from the email
+   *
+   * @category Business Directory
+   */
+  async verifyBusinessContact(
+    businessId: string,
+    pendingId: string,
+    code: string
+  ): Promise<{ success: boolean; message: string }> {
+    return this.client.post<{ success: boolean; message: string }>(
+      `/v1/businesses/${encodeURIComponent(businessId)}/contact/verify`,
+      {
+        skipAuth: true,
+        body: { pending_id: pendingId, verification_code: code },
+      }
+    );
+  }
+
+  /**
+   * Resolve a city / place name to centroid coordinates for distance search.
+   * GET /v1/businesses/geocode-city?q={query}
+   *
+   * Public endpoint — no auth. The geocoding provider token stays server-side.
+   * Returns null when the place can't be located (so callers can show a
+   * "city not found" state without try/catch).
+   *
+   * @param query - City or place name (e.g. "Las Vegas")
+   * @returns Centroid coordinates, or null if not found
+   *
+   * @category Business Directory
+   */
+  async geocodeCity(
+    query: string
+  ): Promise<import("./types/business").GeocodeCityResult | null> {
+    const raw = await this.client.get<{
+      latitude?: number;
+      longitude?: number;
+      data?: { latitude?: number; longitude?: number };
+    }>(`/v1/businesses/geocode-city`, {
+      skipAuth: true,
+      query: { q: query },
+    });
+    // Accept either flat {latitude,longitude} or wrapped {data:{...}}.
+    const lat = raw.latitude ?? raw.data?.latitude;
+    const lng = raw.longitude ?? raw.data?.longitude;
+    if (typeof lat !== "number" || typeof lng !== "number") return null;
+    return { latitude: lat, longitude: lng };
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Authenticated Routes - Analytics
   // ─────────────────────────────────────────────────────────────────────────────
