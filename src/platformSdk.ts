@@ -8974,17 +8974,24 @@ export class CcPlatformSdk {
    * back uniformly with the cursor-based list methods on this SDK.
    *
    * @param query - Search query
-   * @param filters - Optional filters (city, category, region, perPage, page)
+   * @param filters - Optional filters (city, category, region, lat, lng, radius, perPage, page)
    * @returns Paginated list of matching businesses
    *
    * @example
    * ```typescript
+   * // Filter by city name
    * const result = await sdk.searchBusinesses("pizza", {
    *   city: "Port of Spain",
    *   perPage: 20,
    *   page: 1,
    * });
-   * console.log(result.businesses, result.hasMore, result.nextCursor);
+   *
+   * // Geo-radius search (lat/lng + radius in km)
+   * const nearby = await sdk.searchBusinesses("pizza", {
+   *   lat: 10.6573,
+   *   lng: -61.5175,
+   *   radius: 40,
+   * });
    * ```
    *
    * @remarks
@@ -8996,12 +9003,15 @@ export class CcPlatformSdk {
    */
   async searchBusinesses(
     query: string,
-    filters?: { city?: string; category?: string; region?: string; perPage?: number; page?: number }
+    filters?: { city?: string; category?: string; region?: string; lat?: number; lng?: number; radius?: number; perPage?: number; page?: number }
   ): Promise<import("./types/business").BusinessListResponse> {
     const params = new URLSearchParams({ q: query });
     if (filters?.city) params.append("city", filters.city);
     if (filters?.category) params.append("category", filters.category);
     if (filters?.region) params.append("region", filters.region);
+    if (filters?.lat != null) params.append("lat", String(filters.lat));
+    if (filters?.lng != null) params.append("lng", String(filters.lng));
+    if (filters?.radius != null) params.append("radius", String(filters.radius));
     if (filters?.perPage != null) params.append("per_page", String(filters.perPage));
     if (filters?.page != null) params.append("page", String(filters.page));
 
@@ -9107,6 +9117,43 @@ export class CcPlatformSdk {
       data: import("./types/business").Business[];
     }>(`/v1/businesses/nearby?lat=${latitude}&lng=${longitude}&radius=${radius}`);
     return response.data || [];
+  }
+
+  /**
+   * Geocode a city or place name to its centroid coordinates.
+   * GET /v1/businesses/geocode-city
+   *
+   * Resolves a city/town name to lat/lng via the server-side Mapbox geocoding
+   * proxy so the client can then run a distance-based search without exposing
+   * a geocoding API key.
+   *
+   * @param query - City or place name (e.g. "Las Vegas", "Port of Spain")
+   * @returns Coordinates and the original query, or null if the city could not be resolved
+   *
+   * @example
+   * ```typescript
+   * const coords = await sdk.geocodeCityCoordinates("Port of Spain");
+   * if (coords) {
+   *   console.log(coords.latitude, coords.longitude);
+   * }
+   * ```
+   *
+   * @category Business Directory
+   */
+  async geocodeCityCoordinates(
+    query: string
+  ): Promise<{ query: string; latitude: number; longitude: number } | null> {
+    const params = new URLSearchParams({ q: query });
+
+    try {
+      const response = await this.client.get<{
+        data: { query: string; latitude: number; longitude: number };
+      }>(`/v1/businesses/geocode-city?${params.toString()}`);
+      const data = (response as unknown as { data: { query: string; latitude: number; longitude: number } }).data ?? response;
+      return data?.latitude != null && data?.longitude != null ? data : null;
+    } catch {
+      return null;
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
