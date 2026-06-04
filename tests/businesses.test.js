@@ -410,3 +410,122 @@ test("fetchMyBusinessesAnalytics includes authorization header", async () => {
 
   assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
 });
+
+// ---------------------------------------------------------------------------
+// searchBusinesses: geo params (lat, lng, radius)
+// ---------------------------------------------------------------------------
+
+test("searchBusinesses serializes lat/lng/radius into query string", async () => {
+  const { sdk, calls } = createMockSdk({ data: [], found: 0, page: 1, per_page: 20 });
+
+  await sdk.searchBusinesses("pizza", {
+    lat: 10.6573,
+    lng: -61.5175,
+    radius: 40,
+  });
+
+  const url = new URL(calls[0].url);
+  assert.equal(url.searchParams.get("q"), "pizza");
+  assert.equal(url.searchParams.get("lat"), "10.6573");
+  assert.equal(url.searchParams.get("lng"), "-61.5175");
+  assert.equal(url.searchParams.get("radius"), "40");
+});
+
+test("searchBusinesses omits lat/lng/radius when not provided", async () => {
+  const { sdk, calls } = createMockSdk({ data: [], found: 0 });
+
+  await sdk.searchBusinesses("pizza", { city: "Port of Spain" });
+
+  const url = new URL(calls[0].url);
+  assert.equal(url.searchParams.has("lat"), false);
+  assert.equal(url.searchParams.has("lng"), false);
+  assert.equal(url.searchParams.has("radius"), false);
+});
+
+test("searchBusinesses can combine city filter with geo params", async () => {
+  const { sdk, calls } = createMockSdk({ data: [sampleBusiness], found: 1, page: 1, per_page: 20 });
+
+  await sdk.searchBusinesses("pizza", {
+    city: "Port of Spain",
+    lat: 10.6573,
+    lng: -61.5175,
+    radius: 25,
+  });
+
+  const url = new URL(calls[0].url);
+  assert.equal(url.searchParams.get("city"), "Port of Spain");
+  assert.equal(url.searchParams.get("lat"), "10.6573");
+  assert.equal(url.searchParams.get("radius"), "25");
+});
+
+test("searchBusinesses preserves lat=0 and lng=0 (no truthiness drop)", async () => {
+  const { sdk, calls } = createMockSdk({ data: [], found: 0 });
+
+  await sdk.searchBusinesses("pizza", { lat: 0, lng: 0, radius: 10 });
+
+  const url = new URL(calls[0].url);
+  assert.equal(url.searchParams.get("lat"), "0");
+  assert.equal(url.searchParams.get("lng"), "0");
+  assert.equal(url.searchParams.get("radius"), "10");
+});
+
+// ---------------------------------------------------------------------------
+// geocodeCityCoordinates
+// ---------------------------------------------------------------------------
+
+test("geocodeCityCoordinates returns coordinates on success", async () => {
+  const { sdk } = createMockSdk({
+    data: { query: "Port of Spain", latitude: 10.6573, longitude: -61.5175 },
+  });
+
+  const result = await sdk.geocodeCityCoordinates("Port of Spain");
+
+  assert.notEqual(result, null);
+  assert.equal(result.query, "Port of Spain");
+  assert.equal(result.latitude, 10.6573);
+  assert.equal(result.longitude, -61.5175);
+});
+
+test("geocodeCityCoordinates calls correct endpoint with query param", async () => {
+  const { sdk, calls } = createMockSdk({
+    data: { query: "San Fernando", latitude: 10.2834, longitude: -61.4678 },
+  });
+
+  await sdk.geocodeCityCoordinates("San Fernando");
+
+  const url = new URL(calls[0].url);
+  assert.equal(url.pathname, "/v1/businesses/geocode-city");
+  assert.equal(url.searchParams.get("q"), "San Fernando");
+});
+
+test("geocodeCityCoordinates returns null on 404 (unrecognized city)", async () => {
+  const { sdk } = createMockSdk({ message: "Could not locate that city." }, 404);
+
+  const result = await sdk.geocodeCityCoordinates("Nonexistent Place");
+
+  assert.equal(result, null);
+});
+
+test("geocodeCityCoordinates returns null on network error", async () => {
+  const fetchImpl = async () => { throw new Error("Network error"); };
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    tokens: { accessToken: "test-token" },
+    fetchImpl,
+    cache: {},
+  });
+
+  const result = await sdk.geocodeCityCoordinates("Port of Spain");
+
+  assert.equal(result, null);
+});
+
+test("geocodeCityCoordinates includes authorization header", async () => {
+  const { sdk, calls } = createMockSdk({
+    data: { query: "Port of Spain", latitude: 10.6573, longitude: -61.5175 },
+  });
+
+  await sdk.geocodeCityCoordinates("Port of Spain");
+
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
+});
