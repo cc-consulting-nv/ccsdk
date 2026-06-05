@@ -54,10 +54,14 @@ export interface Business {
   latitude?: number;
   /** Longitude for map */
   longitude?: number;
-  /** Cover image URL */
+  /** Cover image URL (alias kept for older consumers; the API field is `coverImageUrl`). */
   coverImage?: string;
-  /** Logo image URL */
+  /** Logo image URL (alias kept for older consumers; the API field is `logoUrl`). */
   logo?: string;
+  /** Cover image URL as returned by the API (`coverImageUrl`). */
+  coverImageUrl?: string;
+  /** Logo image URL as returned by the API (`logoUrl`). */
+  logoUrl?: string;
   /** Gallery image URLs */
   gallery?: string[];
   /** Social media links */
@@ -376,6 +380,10 @@ export interface BusinessInput {
   longitude?: number;
   coverImage?: string;
   logo?: string;
+  /** Cover image URL as returned by the API (`coverImageUrl`). */
+  coverImageUrl?: string;
+  /** Logo image URL as returned by the API (`logoUrl`). */
+  logoUrl?: string;
   gallery?: string[];
   socialLinks?: Business["socialLinks"];
 }
