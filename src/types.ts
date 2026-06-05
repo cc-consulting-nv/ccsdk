@@ -258,6 +258,12 @@ export interface FeedPage {
   affiliateProducts?: AffiliateProduct[];
   /** How often to show an affiliate product (every Nth item) */
   affiliateFrequency?: number;
+  /** Boosted ad items to display in the feed (injected by API, distributed like affiliate products) */
+  boostedAds?: BoostedAd[];
+  /** How often to show a boosted ad (every Nth item) */
+  adFrequency?: number;
+  /** 0-based index of the FIRST boosted ad slot (default 3) */
+  adFirstSlot?: number;
 }
 
 /**
@@ -280,6 +286,33 @@ export interface AffiliateProduct {
   thumbnailUrl: string | null;
   buyUrl: string;
   isOnSale: boolean;
+}
+
+/**
+ * A boosted ad returned in feed pages.
+ *
+ * Mirrors the backend AdResource which extends PostResource. Items in
+ * `boostedAds` always carry `isAd: true` so consumers can filter them.
+ *
+ * @category Feeds
+ */
+export interface BoostedAd {
+  /** Post ULID of the boosted ad (posts.ulid). */
+  ulid: string;
+  /** Always true on items returned in boostedAds. */
+  isAd: true;
+  /** Boost type slug, typically 'boosted'. */
+  adType: string;
+  /** Underlying content type of the boosted post — POST | VIDEO | SONG. */
+  type?: string;
+  /** Title (boosts cloned from songs carry one). */
+  title?: string | null;
+  /** Body text. */
+  body?: string;
+  /** Cover/preview images, same shape as PostResource images. */
+  images?: unknown[];
+  /** Any other AdResource field passes through unchanged. */
+  [key: string]: unknown;
 }
 
 /**
