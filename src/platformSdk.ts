@@ -16,6 +16,7 @@ import {
   type CurrentUser,
   type SuggestedUser,
   type AffiliateProduct,
+  type BoostedAd,
   type FeedPage,
   type Post,
   type Poll,
@@ -1772,14 +1773,24 @@ export class CcPlatformSdk {
 
     // Extract affiliate products from envelope (sibling to 'data')
     const rawEnvelope = response as unknown as Record<string, unknown>;
-    const affiliateProducts = (rawEnvelope.affiliateProducts ?? (rawEnvelope.data as Record<string, unknown> | undefined)?.affiliateProducts) as AffiliateProduct[] | undefined;
-    const affiliateFrequency = (rawEnvelope.affiliateFrequency ?? (rawEnvelope.data as Record<string, unknown> | undefined)?.affiliateFrequency) as number | undefined;
+    const envelopeData = rawEnvelope.data as Record<string, unknown> | undefined;
+    const affiliateProducts = (rawEnvelope.affiliateProducts ?? envelopeData?.affiliateProducts) as AffiliateProduct[] | undefined;
+    const affiliateFrequency = (rawEnvelope.affiliateFrequency ?? envelopeData?.affiliateFrequency) as number | undefined;
+
+    // Extract boosted ads from envelope (sibling to 'data', same shape as
+    // affiliate products). Without this the API emits boostedAds/adFrequency/
+    // adFirstSlot but they never reach the FeedPage, so consumers can't splice
+    // ads into the feed even though the server recorded the impression.
+    const boostedAds = (rawEnvelope.boostedAds ?? envelopeData?.boostedAds) as BoostedAd[] | undefined;
+    const adFrequency = (rawEnvelope.adFrequency ?? envelopeData?.adFrequency) as number | undefined;
+    const adFirstSlot = (rawEnvelope.adFirstSlot ?? envelopeData?.adFirstSlot) as number | undefined;
 
     return {
       ulids,
       posts,
       nextCursor,
       ...(affiliateProducts?.length ? { affiliateProducts, affiliateFrequency } : {}),
+      ...(boostedAds?.length ? { boostedAds, adFrequency, adFirstSlot } : {}),
     };
   }
 
