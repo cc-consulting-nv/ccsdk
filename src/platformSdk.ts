@@ -1,4 +1,4 @@
-import { CacheDB, createCache } from "./cache/cacheDB";
+import { CacheDB, createCache, DEFAULT_DB_NAME } from "./cache/cacheDB";
 import { HttpClient, type HttpClientOptions } from "./httpClient";
 import { HybridTokenProvider, RefreshCoordinator, type SessionStore, type TokenProvider } from "./auth";
 import { MultipartUpload, type MultipartUploadOptions, type UploadResult } from "./multipartUpload";
@@ -548,6 +548,33 @@ export class CcPlatformSdk {
   // Session refresh - single-flight request deduplication
   private refreshSessionInFlight: Promise<AuthTokens | null> | null = null;
 
+  // Sign-out epoch - bumped at sign-out (local or broadcast from another
+  // tab). In-flight token refreshes capture it at start and refuse to
+  // persist tokens if it changed, so a refresh that resolves mid-logout
+  // can't resurrect the cleared session. Note: app-supplied onRefreshTokens
+  // callbacks that do their own fetch instead of routing through
+  // sdk.refreshToken() bypass this guard entirely.
+  private signOutEpoch = 0;
+
+  // True from the start of a local sign-out until its cache wipe finished.
+  // Blocks token refreshes from starting and cache unfencing from firing
+  // during the wipe (a 401 on the logout request itself can otherwise spawn
+  // a refresh that re-persists tokens and lifts the fence mid-wipe).
+  private signOutInProgress = false;
+
+  // Latched when ANOTHER tab signs out. A refresh that starts after the
+  // broadcast captures the post-bump epoch (passing the epoch guard), and
+  // in cookie-refresh mode could mint fresh tokens before the originating
+  // tab's server-side revocation lands. Cleared only by an explicit new
+  // session installed through updateSession() (login/setSession) — NOT by
+  // restoreSession(), which could be re-loading the stale store.
+  private remoteSignedOut = false;
+
+  // Cross-tab sign-out propagation. Tabs share IndexedDB + localStorage, so
+  // a sign-out in one tab must fence the others before their in-flight
+  // requests write the old user's data back into the shared cache.
+  private sessionChannel: BroadcastChannel | null = null;
+
   // Acting context for delegated user access
   private actingContext: ActingContext | null = null;
 
@@ -587,6 +614,110 @@ export class CcPlatformSdk {
     };
 
     this.client = new HttpClient(clientOptions);
+
+    if (typeof BroadcastChannel !== "undefined") {
+      this.sessionChannel = new BroadcastChannel(
+        `cc-platform-sdk:session:${options.dbName ?? DEFAULT_DB_NAME}`,
+      );
+      this.sessionChannel.onmessage = (event: MessageEvent) => {
+        if ((event?.data as { type?: string } | undefined)?.type === "signout") {
+          this.onRemoteSignOut();
+        }
+      };
+      // Don't keep a Node process alive just for the channel. No-op in browsers.
+      const ch = this.sessionChannel as unknown as { unref?: () => void };
+      if (typeof ch.unref === "function") ch.unref();
+    }
+  }
+
+  /**
+   * Another tab signed out. Drop this tab's tokens (in-memory AND persisted —
+   * with a per-tab sessionStore the originating tab can't reach this tab's
+   * store, and restoreSession() would otherwise resurrect the signed-out
+   * session) and fence cache writes so in-flight requests can't repopulate
+   * the shared IndexedDB. The originating tab owns the IndexedDB wipe.
+   */
+  private onRemoteSignOut(): void {
+    this.signOutEpoch += 1;
+    this.remoteSignedOut = true;
+    this.setActingContext(null);
+    void this.updateSession(null).catch(() => {
+      /* store unavailable - in-memory tokens were already cleared (setTokens
+         runs synchronously before the persist inside updateSession) */
+    });
+    void this.cachePromise.then((cache) => cache.fenceWrites()).catch(() => {
+      /* cache unavailable - nothing to fence */
+    });
+  }
+
+  /**
+   * Begin a sign-out epoch: invalidate in-flight token refreshes, fence
+   * cache writes, broadcast the sign-out to other tabs, and give an
+   * in-flight refresh a bounded window to settle before clearSession() runs.
+   *
+   * Every await is time-capped — a wedged IndexedDB open or a black-holed
+   * refresh request must not be able to hang sign-out. Stragglers that
+   * outlive the cap are defused by the epoch / signOutInProgress guards in
+   * performRefreshToken() and updateSession().
+   */
+  private async beginSignOut(): Promise<void> {
+    this.signOutEpoch += 1;
+    this.signOutInProgress = true;
+    // Delegated-access material is session-scoped: wipe it (and its
+    // localStorage copy) with the session, or the next login would silently
+    // send the previous session's X-Acting-Context headers.
+    this.setActingContext(null);
+    try {
+      this.sessionChannel?.postMessage({ type: "signout" });
+    } catch {
+      /* channel closed - nothing to broadcast */
+    }
+    const timeout = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    try {
+      await Promise.race([
+        this.cachePromise.then((cache) => cache.fenceWrites()),
+        timeout(1000),
+      ]);
+    } catch {
+      /* cache unavailable - nothing to fence */
+    }
+    if (this.refreshSessionInFlight) {
+      try {
+        await Promise.race([this.refreshSessionInFlight, timeout(2000)]);
+      } catch {
+        /* settle only - outcome is irrelevant once the epoch advanced */
+      }
+      // Drop the slot even if the refresh is still pending: a black-holed
+      // refresh kept here would be handed to the NEXT session's first
+      // refreshToken() call, eventually resolve null (epoch guard), and get
+      // misread as a hard auth failure for the fresh session.
+      this.refreshSessionInFlight = null;
+    }
+  }
+
+  /**
+   * Await a sign-out step with a time cap. A wedged session store or
+   * IndexedDB must not be able to hang sign-out forever — most importantly,
+   * it must not keep `signOutInProgress` latched, which would silently break
+   * every future login in this tab. Rejections propagate (callers need to
+   * know a wipe failed); a capped-but-still-pending op is logged and its
+   * eventual rejection is swallowed.
+   */
+  private async awaitCapped(op: Promise<unknown>, label: string, ms: number): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finished = await Promise.race([
+      op.then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), ms);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (!finished) {
+      void op.catch(() => {
+        /* already reported as capped */
+      });
+      // eslint-disable-next-line no-console
+      console.warn(`[CcPlatformSdk] ${label} still pending after ${ms}ms - continuing sign-out`);
+    }
   }
 
   /**
@@ -600,6 +731,71 @@ export class CcPlatformSdk {
 
   setTokens(tokens: AuthTokens | null): void {
     this.tokens.setTokens(tokens);
+
+    // Any path that installs a usable session lifts the cache write fence —
+    // login, setSession(), restoreSession(), or a direct setTokens() call.
+    // Epoch-guarded so an unfence scheduled just before a sign-out can never
+    // fire after that sign-out's fence went up.
+    if (this.hasAuthTokens(tokens)) {
+      this.client.resetAuthLatch();
+      const epochAtSet = this.signOutEpoch;
+      void this.cachePromise
+        .then((cache) => {
+          // Re-verify at run time: the epoch must not have moved, no wipe may
+          // be in progress, and a session must still actually exist (an
+          // updateSession undo may have cleared it between scheduling and now).
+          if (
+            this.signOutEpoch === epochAtSet &&
+            !this.signOutInProgress &&
+            this.hasAuthTokens(this.tokens.getTokens())
+          ) {
+            cache.unfenceWrites();
+          }
+        })
+        .catch(() => {
+          /* cache unavailable - nothing to unfence */
+        });
+    }
+  }
+
+  /**
+   * Release resources held by this SDK instance: the cross-tab session
+   * channel and the cache's background trim timer. Call when replacing or
+   * discarding an instance (HMR, React StrictMode double-mounts, tests,
+   * multi-instance apps) — otherwise the channel's message handler keeps the
+   * instance alive and reacting to sign-out broadcasts for the page lifetime.
+   */
+  async dispose(): Promise<void> {
+    if (this.sessionChannel) {
+      this.sessionChannel.onmessage = null;
+      try {
+        this.sessionChannel.close();
+      } catch {
+        /* already closed */
+      }
+      this.sessionChannel = null;
+    }
+    if (this.postBatchTimer !== null) {
+      clearTimeout(this.postBatchTimer);
+      this.postBatchTimer = null;
+    }
+    if (this.userBatchTimer !== null) {
+      clearTimeout(this.userBatchTimer);
+      this.userBatchTimer = null;
+    }
+    if (this.engagementBatchTimer !== null) {
+      clearTimeout(this.engagementBatchTimer);
+      this.engagementBatchTimer = null;
+    }
+    // Only stop the trim schedule on a cache this instance created — an
+    // injected options.cache may be shared with other live SDK instances.
+    if (!this.options.cache) {
+      try {
+        (await this.cachePromise).stopTrimSchedule();
+      } catch {
+        /* cache unavailable - no timer to stop */
+      }
+    }
   }
 
   /**
@@ -639,6 +835,7 @@ export class CcPlatformSdk {
   }
 
   private async updateSession(tokens: AuthTokens | null): Promise<void> {
+    const epochAtStart = this.signOutEpoch;
     const normalizedTokens = this.hasAuthTokens(tokens) ? tokens : null;
 
     // Keep the refresh token in memory + sessionStore even when an httpOnly
@@ -646,8 +843,28 @@ export class CcPlatformSdk {
     // parent domains) now refuse the cookie-only refresh path for cross-tenant
     // safety, so the SDK must be able to send `refresh_token` in the body on
     // reload. The companion sessionStore decides where (or whether) to persist.
+    // Cache unfencing rides on setTokens() (epoch-guarded there).
     this.setTokens(normalizedTokens);
     await this.persistSession(normalizedTokens);
+
+    // A sign-out that began while persistSession was in flight owns the final
+    // state — undo this persist so the cleared session stays cleared, and
+    // throw so callers (login flows) fail loudly instead of returning tokens
+    // that were just discarded. Epoch-only on purpose: a stuck
+    // signOutInProgress flag must not be able to silently undo future logins.
+    if (normalizedTokens && this.signOutEpoch !== epochAtStart) {
+      this.setTokens(null);
+      await this.persistSession(null);
+      throw new Error(
+        "Session update discarded: a sign-out began while it was being persisted",
+      );
+    }
+
+    // This instance has a confirmed fresh session - lift the remote sign-out
+    // latch so token refreshes may run again.
+    if (normalizedTokens) {
+      this.remoteSignedOut = false;
+    }
   }
 
   /**
@@ -1217,13 +1434,32 @@ export class CcPlatformSdk {
    * @category Authentication
    */
   async logout(): Promise<void> {
+    await this.beginSignOut();
     try {
       await this.client.post("/v1/auth/logout", {
         credentials: this.useRefreshCookie ? "include" : undefined,
       });
     } finally {
-      await this.clearSession();
-      await this.clearCache();
+      await this.finishSignOut();
+    }
+  }
+
+  /**
+   * Shared sign-out wipe: clear the session, then ALWAYS attempt the cache
+   * wipe (a rejecting session store must not leave the previous user's rows
+   * readable), then ALWAYS release `signOutInProgress`. Each step is
+   * time-capped so a wedged store/IndexedDB cannot latch the flag forever.
+   * The first failure still propagates after all steps ran.
+   */
+  private async finishSignOut(): Promise<void> {
+    try {
+      await this.awaitCapped(this.clearSession(), "clearSession", 5000);
+    } finally {
+      try {
+        await this.awaitCapped(this.clearCache(), "clearCache", 5000);
+      } finally {
+        this.signOutInProgress = false;
+      }
     }
   }
 
@@ -1256,8 +1492,11 @@ export class CcPlatformSdk {
     await this.client.delete("/v1/users/me", {
       credentials: this.useRefreshCookie ? "include" : undefined,
     });
-    await this.clearSession();
-    await this.clearCache();
+    // beginSignOut deliberately runs only AFTER the DELETE succeeds (unlike
+    // logout, which begins first): a failed deletion must leave this session
+    // and every other tab untouched.
+    await this.beginSignOut();
+    await this.finishSignOut();
   }
 
   /**
@@ -1281,16 +1520,35 @@ export class CcPlatformSdk {
       return this.refreshSessionInFlight;
     }
 
-    this.refreshSessionInFlight = this.performRefreshToken();
+    const inFlight = this.performRefreshToken();
+    this.refreshSessionInFlight = inFlight;
 
     try {
-      return await this.refreshSessionInFlight;
+      return await inFlight;
     } finally {
-      this.refreshSessionInFlight = null;
+      // Only clear our own slot — beginSignOut() may have already dropped it
+      // and a newer post-sign-in refresh may own the slot by now.
+      if (this.refreshSessionInFlight === inFlight) {
+        this.refreshSessionInFlight = null;
+      }
     }
   }
 
   private async performRefreshToken(): Promise<AuthTokens | null> {
+    // Refuse to start during a sign-out wipe. Without this, a 401 on the
+    // logout request itself spawns a refresh that captures the post-bump
+    // epoch (passing the guard below), re-persists tokens, and unfences the
+    // cache mid-wipe. Also keeps restoreSession() from re-installing
+    // about-to-be-cleared tokens.
+    // remoteSignedOut additionally blocks refreshes that START after another
+    // tab's sign-out broadcast — those also capture the post-bump epoch and
+    // (in cookie-refresh mode) could mint fresh tokens before the server-side
+    // revocation lands. Lifted only by a new session via updateSession().
+    if (this.signOutInProgress || this.remoteSignedOut) return null;
+
+    // If a sign-out begins while this refresh is in flight, the epoch
+    // advances and the refreshed tokens must be discarded, not persisted.
+    const epochAtStart = this.signOutEpoch;
     const currentTokens = await this.restoreSession();
     if (!currentTokens?.refreshToken && !this.useRefreshCookie) return null;
 
@@ -1311,6 +1569,7 @@ export class CcPlatformSdk {
         credentials: this.useRefreshCookie ? "include" : undefined,
       });
       const tokens = this.extractAuthTokens(response, "/auth/refresh");
+      if (this.signOutEpoch !== epochAtStart) return null;
       await this.updateSession(tokens);
       return tokens;
     } catch (error) {
@@ -1329,6 +1588,7 @@ export class CcPlatformSdk {
             credentials: this.useRefreshCookie ? "include" : undefined,
           });
           const tokens = this.extractAuthTokens(retryResponse, "/auth/refresh");
+          if (this.signOutEpoch !== epochAtStart) return null;
           await this.updateSession(tokens);
           return tokens;
         } catch {
@@ -1339,7 +1599,8 @@ export class CcPlatformSdk {
       // Clear session on definitive auth rejection (4xx) — the refresh token
       // is invalid/expired/revoked and recovery is not possible.
       // Don't clear on 5xx — those are transient and the caller may retry.
-      if (status && status >= 400 && status < 500) {
+      // Skip if a sign-out began meanwhile — it already owns the cleanup.
+      if (status && status >= 400 && status < 500 && this.signOutEpoch === epochAtStart) {
         await this.clearSession();
       }
       return null;
