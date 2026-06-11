@@ -16,6 +16,12 @@ import { type FeedPage, type Group, type Post, type Ulid, type UserProfile } fro
  */
 export const DEFAULT_REFRESH_TTL_MS = 30 * 60 * 1000;
 
+/**
+ * Default IndexedDB database name. Shared by the cache itself and the SDK's
+ * cross-tab session channel name so both always agree.
+ */
+export const DEFAULT_DB_NAME = "CcPlatformSdkCache";
+
 // Re-export liveQuery for external use
 export { liveQuery, type Observable };
 
@@ -98,7 +104,7 @@ class PlatformCacheDB extends Dexie {
   }, "route">;
   metadata!: EntityTable<{ key: string; value: any; updatedAt: number }, "key">;
 
-  constructor(dbName: string = "CcPlatformSdkCache") {
+  constructor(dbName: string = DEFAULT_DB_NAME) {
     super(dbName);
     this.version(1).stores({
       posts: "id, cachedAt, lastAccessed",
@@ -242,6 +248,13 @@ export class CacheDB {
   private readonly refreshTtlMs: number;
   private readonly trimIntervalMs: number;
   private trimTimer: ReturnType<typeof setInterval> | null = null;
+  /**
+   * When true, all cache writes (`set*`/`append*` methods) become no-ops.
+   * Raised at sign-out so in-flight requests and other tabs can't repopulate
+   * the shared IndexedDB with the previous user's data after it was wiped.
+   * Lifted when a new session is established.
+   */
+  private writesFenced = false;
 
   /**
    * Create a new cache instance.
@@ -279,6 +292,22 @@ export class CacheDB {
   }
 
   /**
+   * Stop accepting cache writes. Call at sign-out, before wiping the cache,
+   * so requests that resolve after the wipe (this tab or others) can't write
+   * the previous user's data back. Reads and deletes are unaffected.
+   */
+  fenceWrites(): void {
+    this.writesFenced = true;
+  }
+
+  /**
+   * Resume accepting cache writes. Call when a new session is established.
+   */
+  unfenceWrites(): void {
+    this.writesFenced = false;
+  }
+
+  /**
    * Whether a CacheEntry is past the soft refresh TTL and should be
    * refreshed in the background. Treats entries with no `lastCheckedAt`
    * (legacy rows that weren't backfilled) as past TTL.
@@ -310,20 +339,30 @@ export class CacheDB {
         "[CacheDB] open failed, deleting and recreating database:",
         err,
       );
-      try {
-        await this.db.delete();
-      } catch (deleteErr) {
-        // eslint-disable-next-line no-console
-        console.error(
-          "[CacheDB] delete also failed; cache will remain unavailable:",
-          deleteErr,
-        );
-        throw deleteErr;
-      }
-      this.db = new PlatformCacheDB(this.dbName);
-      await this.db.open();
+      await this.deleteAndRecreate("open");
     }
     this.startTrimSchedule();
+  }
+
+  /**
+   * Last-resort recovery shared by `open()` and `clearAll()`: delete the
+   * entire database and recreate it at the current schema. Rethrows if the
+   * delete itself fails — at that point the cache may retain stale data and
+   * callers must know.
+   */
+  private async deleteAndRecreate(context: string): Promise<void> {
+    try {
+      await this.db.delete();
+    } catch (deleteErr) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[CacheDB] ${context} fallback delete failed; cache may retain stale data:`,
+        deleteErr,
+      );
+      throw deleteErr;
+    }
+    this.db = new PlatformCacheDB(this.dbName);
+    await this.db.open();
   }
 
   /**
@@ -439,9 +478,14 @@ export class CacheDB {
     };
   }
 
-  private touch<T>(entry: CacheEntry<T>): CacheEntry<T> {
+  /**
+   * LRU metadata patch for a read "touch". Applied with `Table.update()`
+   * rather than `put()` so a row deleted by `clearAll()` while the read was
+   * in flight cannot be re-inserted by the touch write — `update()` is a
+   * no-op when the key is gone.
+   */
+  private touchPatch<T>(entry: CacheEntry<T>): { accessCount: number; lastAccessed: number } {
     return {
-      ...entry,
       accessCount: entry.accessCount + 1,
       lastAccessed: Date.now(),
     };
@@ -486,7 +530,7 @@ export class CacheDB {
         return null;
       }
 
-      await this.db.posts.put(this.touch(entry));
+      await this.db.posts.update(id, this.touchPatch(entry));
       return entry.data;
     }, null);
   }
@@ -508,7 +552,7 @@ export class CacheDB {
 
       for (const entry of validEntries) {
         result[entry.id] = entry.data;
-        await this.db.posts.put(this.touch(entry));
+        await this.db.posts.update(entry.id, this.touchPatch(entry));
       }
 
       return result;
@@ -522,6 +566,7 @@ export class CacheDB {
    * @param post - The post data to cache
    */
   async setPost(id: Ulid, post: Post): Promise<void> {
+    if (this.writesFenced) return;
     await this.safeWrite(() => this.db.posts.put(this.createEntry(id, post)).then(() => undefined));
   }
 
@@ -531,6 +576,7 @@ export class CacheDB {
    * @param posts - Record mapping ULID to Post
    */
   async setPosts(posts: Record<Ulid, Post>): Promise<void> {
+    if (this.writesFenced) return;
     const entries = Object.entries(posts).map(([id, data]) =>
       this.createEntry(id, data as Post),
     );
@@ -564,7 +610,7 @@ export class CacheDB {
       if (!entry || this.isExpired(entry.cachedAt)) {
         return null;
       }
-      await this.db.users?.put(this.touch(entry));
+      await this.db.users?.update(id, this.touchPatch(entry));
       return entry.data;
     }, null);
   }
@@ -610,7 +656,7 @@ export class CacheDB {
         return null;
       }
 
-      await this.db.users.put(this.touch(entry));
+      await this.db.users.update(entry.id, this.touchPatch(entry));
       return entry.data;
     }, null);
   }
@@ -632,7 +678,7 @@ export class CacheDB {
         if (entry && !this.isExpired(entry.cachedAt)) {
           result.set(ids[i], entry.data);
           // Touch the entry to update access stats
-          await this.db.users.put(this.touch(entry));
+          await this.db.users.update(entry.id, this.touchPatch(entry));
         }
       }
 
@@ -682,6 +728,7 @@ export class CacheDB {
   }
 
   async setUser(id: Ulid, user: UserProfile): Promise<void> {
+    if (this.writesFenced) return;
     if (!this.db.users) return;
     // Skip users without valid ULID (defensive programming)
     if (!id || typeof id !== 'string') {
@@ -732,6 +779,7 @@ export class CacheDB {
    * @param users - Array of user profiles to cache
    */
   async setUsers(users: UserProfile[]): Promise<void> {
+    if (this.writesFenced) return;
     if (!this.db.users) return;
 
     // Filter out users without valid ULIDs before caching (defensive programming)
@@ -787,7 +835,7 @@ export class CacheDB {
     return this.safeRead(async () => {
       const entry = await this.db.groups?.get(id);
       if (!entry || this.isExpired(entry.cachedAt)) return null;
-      await this.db.groups?.put(this.touch(entry));
+      await this.db.groups?.update(id, this.touchPatch(entry));
       return entry.data;
     }, null);
   }
@@ -808,6 +856,7 @@ export class CacheDB {
    * Store a group in the cache. Stamps `lastCheckedAt = now`.
    */
   async setGroup(id: Ulid, group: Group): Promise<void> {
+    if (this.writesFenced) return;
     if (!this.db.groups) return;
     if (!id || typeof id !== "string") return;
     await this.safeWrite(() =>
@@ -819,6 +868,7 @@ export class CacheDB {
    * Bulk-store groups. Skips entries without a ULID.
    */
   async setGroups(groups: Group[]): Promise<void> {
+    if (this.writesFenced) return;
     if (!this.db.groups) return;
     const entries = groups
       .map((g) => {
@@ -862,18 +912,20 @@ export class CacheDB {
   }
 
   private async removeUlidFromFeeds(id: Ulid): Promise<void> {
+    // Fenced like the set* methods: during a sign-out wipe the whole table is
+    // going away anyway, and the read-modify-write below must never run
+    // against a mid-wipe snapshot.
+    if (this.writesFenced) return;
     const feeds = await this.db.feedResources.toArray();
-    const updated = feeds
-      .map((feed) => {
-        const filtered = feed.ulids.filter((u) => u !== id);
-        const changed = filtered.length !== feed.ulids.length;
-        return changed ? { ...feed, ulids: filtered } : null;
-      })
-      .filter((feed): feed is FeedResource => Boolean(feed));
-
-    if (updated.length === 0) return;
-
-    await this.db.feedResources.bulkPut(updated);
+    if (this.writesFenced) return;
+    for (const feed of feeds) {
+      const filtered = feed.ulids.filter((u) => u !== id);
+      if (filtered.length !== feed.ulids.length) {
+        // update() (not put): a feed row deleted by clearAll() while this
+        // loop runs must not be re-inserted.
+        await this.db.feedResources.update(feed.route, { ulids: filtered });
+      }
+    }
   }
 
   /**
@@ -910,6 +962,7 @@ export class CacheDB {
     cursor?: string | null,
     replace = false,
   ): Promise<void> {
+    if (this.writesFenced) return;
     const now = Date.now();
     if (replace) {
       await this.db.feedResources.put({
@@ -925,6 +978,8 @@ export class CacheDB {
     const existing = await this.db.feedResources.get(route);
     const combined = existing ? Array.from(new Set([...ulids, ...existing.ulids])) : ulids;
 
+    // Re-check: a sign-out can fence writes while the read above was in flight.
+    if (this.writesFenced) return;
     await this.db.feedResources.put({
       route,
       ulids: combined,
@@ -946,9 +1001,12 @@ export class CacheDB {
     ulids: Ulid[],
     cursor?: string | null,
   ): Promise<void> {
+    if (this.writesFenced) return;
     const existing = await this.db.feedResources.get(route);
     const now = Date.now();
 
+    // Re-check: a sign-out can fence writes while the read above was in flight.
+    if (this.writesFenced) return;
     if (!existing) {
       await this.db.feedResources.put({
         route,
@@ -973,16 +1031,30 @@ export class CacheDB {
   /**
     * Clear all cached data from all stores.
     * Use with caution - this removes all offline data.
+    *
+    * A partial failure (e.g. DatabaseClosedError mid-flight) could clear some
+    * tables and leave others holding the previous user's data, so on any
+    * failure the entire database is deleted and recreated. If the delete also
+    * fails the error is rethrown so callers know the wipe did not complete.
     */
    async clearAll(): Promise<void> {
-     await Promise.all([
-       this.db.posts.clear(),
-       this.db.users.clear(),
-       this.db.groups?.clear() ?? Promise.resolve(),
-       this.db.feedResources.clear(),
-       this.db.notificationFeeds.clear(),
-       this.db.metadata.clear(),
-     ]);
+     try {
+       await Promise.all([
+         this.db.posts.clear(),
+         this.db.users.clear(),
+         this.db.groups?.clear() ?? Promise.resolve(),
+         this.db.feedResources.clear(),
+         this.db.notificationFeeds.clear(),
+         this.db.metadata.clear(),
+       ]);
+     } catch (err) {
+       // eslint-disable-next-line no-console
+       console.warn(
+         "[CacheDB] clearAll failed, deleting and recreating database:",
+         err,
+       );
+       await this.deleteAndRecreate("clearAll");
+     }
    }
 
   /**
@@ -1072,6 +1144,7 @@ export class CacheDB {
     cursor: string | null,
     hasMore: boolean,
   ): Promise<void> {
+    if (this.writesFenced) return;
     await this.db.notificationFeeds.put({
       route: `${userId}:${route}`,
       userId,
@@ -1123,6 +1196,7 @@ export class CacheDB {
    * @param value - The value to store
    */
   async setMetadata(key: string, value: any): Promise<void> {
+    if (this.writesFenced) return;
     try {
       const sanitized = this.sanitizeForStorage(value);
       await this.db.metadata.put({
@@ -1133,6 +1207,17 @@ export class CacheDB {
     } catch (error) {
       console.warn(`[CacheDB] Failed to store metadata key '${key}' in IndexedDB:`, error);
     }
+  }
+
+  /**
+   * Delete a metadata row. A true delete (not a null-value write), so it
+   * works even while writes are fenced — sign-out flows must always be able
+   * to remove persisted state.
+   *
+   * @param key - The metadata key to delete
+   */
+  async deleteMetadata(key: string): Promise<void> {
+    await this.safeWrite(() => this.db.metadata.delete(key).then(() => undefined));
   }
 
   /**

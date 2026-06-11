@@ -255,6 +255,16 @@ export class HttpClient {
     return parsed as T;
   }
 
+  /**
+   * Clear the one-shot logout latch. Without this, the first failed-refresh /
+   * onUnauthorized cascade disables 401-triggered refreshes for the lifetime
+   * of the client — including after the user logs back in. The SDK calls
+   * this whenever a new session is installed.
+   */
+  resetAuthLatch(): void {
+    this.isLoggingOut = false;
+  }
+
   private async refreshTokens(): Promise<AuthTokens | null> {
     // Guard: if we're already in the process of logging out, don't trigger
     // another refresh or onUnauthorized cascade.

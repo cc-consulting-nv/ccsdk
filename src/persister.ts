@@ -102,7 +102,9 @@ export function createDexieQueryPersister(
       return stored.client;
     },
     removeClient: async () => {
-      await cache.setMetadata(key, null);
+      // True delete (not a null-value write): must work during sign-out flows
+      // even while cache writes are fenced.
+      await cache.deleteMetadata(key);
     },
   };
 }
