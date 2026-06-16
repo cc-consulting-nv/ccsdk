@@ -94,7 +94,7 @@ export interface Business {
   aiPrompt?: string;
 
   // ── Ratings & Engagement ────────────────────────────────────────────
-  /** Average rating (0-5) */
+  /** Average rating (0-5). The API returns a string (SQL DECIMAL serialization, e.g. `"4.5"`); consumers should coerce with `Number()`. */
   averageRating?: number | string;
   /** Number of reviews */
   reviewCount?: number;
@@ -489,65 +489,65 @@ export interface BusinessInput {
   /** Business name */
   name?: string;
   /** Full description */
-  description?: string;
+  description?: string | null;
   /** Short tagline / summary */
-  shortDescription?: string;
+  shortDescription?: string | null;
   /** Category ULID */
   categoryId?: Ulid;
 
   // ── Contact ─────────────────────────────────────────────────────────
   /** Primary phone number */
-  phone?: string;
+  phone?: string | null;
   /** Secondary phone number */
-  phoneSecondary?: string;
+  phoneSecondary?: string | null;
   /** Email address */
-  email?: string;
+  email?: string | null;
   /** Website URL */
-  website?: string;
+  website?: string | null;
   /** WhatsApp number */
-  whatsapp?: string;
+  whatsapp?: string | null;
 
   // ── Location ────────────────────────────────────────────────────────
   /** Street address */
-  address?: string;
+  address?: string | null;
   /** Address line 2 (suite/unit) */
-  addressLine2?: string;
+  addressLine2?: string | null;
   /** City */
-  city?: string;
+  city?: string | null;
   /** Region/parish */
-  region?: string;
+  region?: string | null;
   /** Postal code */
-  postalCode?: string;
+  postalCode?: string | null;
   /** Latitude */
-  latitude?: number;
+  latitude?: number | null;
   /** Longitude */
-  longitude?: number;
+  longitude?: number | null;
 
   // ── Hours ───────────────────────────────────────────────────────────
   /** Operating hours keyed by lowercase day name */
-  hours?: Record<string, { is_open: boolean; open?: string; close?: string }>;
+  hours?: Record<string, { is_open: boolean; open?: string; close?: string }> | null;
 
   // ── Media ───────────────────────────────────────────────────────────
   /** Cover image URL */
-  coverImageUrl?: string;
+  coverImageUrl?: string | null;
   /** Logo image URL */
-  logoUrl?: string;
+  logoUrl?: string | null;
 
   // ── Social ──────────────────────────────────────────────────────────
   /** Facebook page URL */
-  facebookUrl?: string;
+  facebookUrl?: string | null;
   /** Instagram profile URL */
-  instagramUrl?: string;
+  instagramUrl?: string | null;
   /** TikTok profile URL */
-  tiktokUrl?: string;
+  tiktokUrl?: string | null;
   /** Twitter/X profile URL */
-  twitterUrl?: string;
+  twitterUrl?: string | null;
 
   // ── AI ──────────────────────────────────────────────────────────────
   /** Whether AI features are enabled */
-  aiEnabled?: boolean;
+  aiEnabled?: boolean | null;
   /** AI system prompt / configuration */
-  aiPrompt?: string;
+  aiPrompt?: string | null;
 
   // ── Deprecated aliases ──────────────────────────────────────────────
 
