@@ -116,6 +116,40 @@ export interface BusinessCategory {
 }
 
 /**
+ * Embedded category summary returned inside a Business response.
+ *
+ * This is a subset of {@link BusinessCategory} — the full category endpoints
+ * return additional fields like `children`, `sortOrder`, and `businessCount`.
+ *
+ * @category Business Directory
+ */
+export interface BusinessCategoryEmbed {
+  /** Category ULID */
+  id: Ulid;
+  /** Category display name */
+  name: string;
+  /** URL-friendly slug */
+  slug: string;
+  /** Icon name/class */
+  icon?: string;
+}
+
+/**
+ * Embedded owner summary returned inside a Business response.
+ * @category Business Directory
+ */
+export interface BusinessOwner {
+  /** User ULID */
+  id: Ulid;
+  /** Username */
+  username: string;
+  /** Display name */
+  displayName: string;
+  /** Avatar URL */
+  avatar?: string | null;
+}
+
+/**
  * Business event
  * @category Business Directory
  */
