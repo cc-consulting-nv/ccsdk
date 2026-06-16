@@ -241,6 +241,17 @@ export type BusinessReviewVerificationMethod = 'purchase' | 'visit' | 'owner_con
 export type BusinessReviewStatus = 'pending' | 'approved' | 'rejected' | 'flagged';
 
 /**
+ * A media item attached to a business review (image or video).
+ * @category Business Directory
+ */
+export interface ReviewMediaItem {
+  /** URL of the media file */
+  url: string;
+  /** Type of media */
+  type: 'image' | 'video';
+}
+
+/**
  * Business review
  * @category Business Directory
  */
@@ -263,7 +274,9 @@ export interface BusinessReview {
   title?: string | null;
   /** Review content */
   content: string;
-  /** Photo URLs */
+  /** Media items (images and videos) attached to this review */
+  media: ReviewMediaItem[];
+  /** @deprecated Use `media` — image-only URLs kept for backward compatibility */
   photos: string[];
   /** Whether the review is verified */
   isVerified: boolean;
@@ -399,7 +412,9 @@ export interface BusinessReviewInput {
   title?: string;
   /** Review content (min 10, max 5000 chars) */
   content: string;
-  /** Photo URLs (optional) */
+  /** Media items to attach (images and videos) */
+  media?: ReviewMediaItem[];
+  /** @deprecated Use `media`. Flat image URLs kept for backward compatibility. */
   photos?: string[];
 }
 
@@ -414,7 +429,9 @@ export interface BusinessReviewUpdateInput {
   title?: string | null;
   /** Review content (min 10, max 5000 chars) */
   content?: string;
-  /** Photo URLs */
+  /** Media items to attach (images and videos) */
+  media?: ReviewMediaItem[];
+  /** @deprecated Use `media`. Flat image URLs kept for backward compatibility. */
   photos?: string[];
 }
 
