@@ -3382,7 +3382,7 @@ export class CcPlatformSdk {
     unreadOnly?: boolean;
   }): Promise<ApiEnvelope<unknown>> {
     const query: Record<string, unknown> = {};
-    if (params?.cursor) query.ulid = params.cursor;
+    if (params?.cursor) query.cursor = params.cursor;
     if (params?.limit) query.limit = params.limit;
     if (params?.type) query.type = params.type;
     if (params?.unreadOnly) query.unread_only = params.unreadOnly;
