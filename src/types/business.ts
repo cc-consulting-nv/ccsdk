@@ -22,49 +22,147 @@ export interface Business {
   name: string;
   /** URL-friendly slug */
   slug: string;
-  /** Business description */
+  /** Full business description */
   description?: string;
-  /** Category name */
-  category?: string;
+  /** Short tagline / summary */
+  shortDescription?: string;
+
+  // ── Category ────────────────────────────────────────────────────────
+  /** Embedded category object */
+  category?: BusinessCategoryEmbed;
   /** Category ULID */
   categoryId?: Ulid;
+
+  // ── Contact ─────────────────────────────────────────────────────────
+  /** Primary phone number */
+  phone?: string;
+  /** Secondary phone number */
+  phoneSecondary?: string;
+  /** Email address */
+  email?: string;
+  /** Website URL */
+  website?: string;
+  /** WhatsApp number */
+  whatsapp?: string;
+
+  // ── Location ────────────────────────────────────────────────────────
   /** Street address */
   address?: string;
+  /** Address line 2 (suite/unit) */
+  addressLine2?: string;
   /** City */
   city?: string;
   /** Region/parish */
   region?: string;
   /** Postal code */
   postalCode?: string;
-  /** Phone number */
-  phone?: string;
-  /** Email address */
-  email?: string;
-  /** Website URL */
-  website?: string;
-  /** Operating hours by day */
-  hours?: Record<string, { open: string; close: string }>;
-  /** List of amenities/features */
-  amenities?: string[];
-  /** Average rating (0-5) */
-  rating?: number;
-  /** Number of reviews */
-  reviewCount?: number;
   /** Latitude for map */
   latitude?: number;
   /** Longitude for map */
   longitude?: number;
-  /** Cover image URL (alias kept for older consumers; the API field is `coverImageUrl`). */
-  coverImage?: string;
-  /** Logo image URL (alias kept for older consumers; the API field is `logoUrl`). */
-  logo?: string;
-  /** Cover image URL as returned by the API (`coverImageUrl`). */
-  coverImageUrl?: string;
-  /** Logo image URL as returned by the API (`logoUrl`). */
+
+  // ── Hours ───────────────────────────────────────────────────────────
+  /**
+   * Operating hours keyed by lowercase day name (e.g. "monday").
+   *
+   * NOTE: the open/closed flag arrives as `is_open` on the pass-through methods
+   * (`fetchBusiness`, `fetchFeaturedBusinesses`, `fetchNearbyBusinesses`) but as
+   * `isOpen` on `fetchBusinessesByCategory`, which deep-camelCases the response.
+   * Both keys are declared so the type is honest on every code path; read
+   * `day.isOpen ?? day.is_open`.
+   */
+  hours?: Record<string, { is_open?: boolean; isOpen?: boolean; open?: string; close?: string }>;
+  /** Whether the business is currently open */
+  isOpen?: boolean;
+  /**
+   * Pre-formatted hours for display, keyed by lowercase day name.
+   *
+   * Same `is_open`/`isOpen` path split as {@link Business.hours} — read
+   * `entry.isOpen ?? entry.is_open`.
+   */
+  formattedHours?: Record<string, { day: string; is_open?: boolean; isOpen?: boolean; hours: string }>;
+
+  // ── Media ───────────────────────────────────────────────────────────
+  /** Logo image URL */
   logoUrl?: string;
-  /** Gallery image URLs */
+  /** Cover image URL */
+  coverImageUrl?: string;
+  /** Photo URLs */
+  photos?: string[];
+
+  // ── Social ──────────────────────────────────────────────────────────
+  /** Facebook page URL */
+  facebookUrl?: string;
+  /** Instagram profile URL */
+  instagramUrl?: string;
+  /** TikTok profile URL */
+  tiktokUrl?: string;
+  /** Twitter/X profile URL */
+  twitterUrl?: string;
+
+  // ── AI ──────────────────────────────────────────────────────────────
+  /** Whether AI features are enabled for this business */
+  aiEnabled?: boolean;
+  /** AI system prompt (only returned to the business owner) */
+  aiPrompt?: string;
+
+  // ── Ratings & Engagement ────────────────────────────────────────────
+  /** Average rating (0-5). The API returns a string (SQL DECIMAL serialization, e.g. `"4.5"`); consumers should coerce with `Number()`. */
+  averageRating?: number | string;
+  /** Number of reviews */
+  reviewCount?: number;
+  /** Profile view count */
+  viewCount?: number;
+
+  // ── Ownership & Verification ────────────────────────────────────────
+  /** Embedded owner summary (when the business has been claimed) */
+  owner?: BusinessOwner;
+  /** When the business was claimed (ISO 8601) */
+  claimedAt?: string;
+  /** When the business was verified (ISO 8601) */
+  verifiedAt?: string;
+  /** How the business was verified */
+  verificationMethod?: string;
+  /** Whether business is verified */
+  isVerified?: boolean;
+  /** Whether business has been claimed by an owner */
+  isClaimed?: boolean;
+
+  // ── Status & Featuring ──────────────────────────────────────────────
+  /** Business status (e.g. "active", "pending") */
+  status?: string;
+  /** Whether business is featured */
+  isFeatured?: boolean;
+  /** When featured status expires (ISO 8601) */
+  featuredUntil?: string;
+
+  // ── Extensible ──────────────────────────────────────────────────────
+  /** Arbitrary attribute bag (e.g. { services: string[] }) */
+  attributes?: Record<string, unknown>;
+  /** Arbitrary metadata bag */
+  metadata?: Record<string, unknown>;
+
+  // ── Geo-query only ──────────────────────────────────────────────────
+  /** Distance in km (only present for nearby/geo queries) */
+  distance?: number;
+
+  // ── Timestamps ──────────────────────────────────────────────────────
+  /** Creation timestamp */
+  createdAt?: string;
+  /** Last update timestamp */
+  updatedAt?: string;
+
+  // ── Deprecated aliases ──────────────────────────────────────────────
+
+  /** @deprecated Use `averageRating` (returned as `number | string`; coerce with `Number()`). */
+  rating?: number;
+  /** @deprecated Use `photos`. */
   gallery?: string[];
-  /** Social media links */
+  /** @deprecated Use `coverImageUrl`. */
+  coverImage?: string;
+  /** @deprecated Use `logoUrl`. */
+  logo?: string;
+  /** @deprecated Social links are now flat fields: `facebookUrl`, `instagramUrl`, `tiktokUrl`, `twitterUrl`, `whatsapp`. */
   socialLinks?: {
     facebook?: string;
     instagram?: string;
@@ -72,18 +170,8 @@ export interface Business {
     tiktok?: string;
     whatsapp?: string;
   };
-  /** Whether business is verified */
-  isVerified?: boolean;
-  /** Whether business has been claimed by an owner */
-  isClaimed?: boolean;
-  /** When the business was claimed (ISO 8601) */
-  claimedAt?: string;
-  /** Whether business is featured */
-  isFeatured?: boolean;
-  /** Creation timestamp */
-  createdAt?: string;
-  /** Last update timestamp */
-  updatedAt?: string;
+  /** @deprecated API uses `attributes.services` instead. */
+  amenities?: string[];
 }
 
 /**
@@ -113,6 +201,40 @@ export interface BusinessCategory {
   businessCount?: number;
   /** Child categories */
   children?: BusinessCategory[];
+}
+
+/**
+ * Embedded category summary returned inside a Business response.
+ *
+ * This is a subset of {@link BusinessCategory} — the full category endpoints
+ * return additional fields like `children`, `sortOrder`, and `businessCount`.
+ *
+ * @category Business Directory
+ */
+export interface BusinessCategoryEmbed {
+  /** Category ULID */
+  id: Ulid;
+  /** Category display name */
+  name: string;
+  /** URL-friendly slug */
+  slug: string;
+  /** Icon name/class */
+  icon?: string;
+}
+
+/**
+ * Embedded owner summary returned inside a Business response.
+ * @category Business Directory
+ */
+export interface BusinessOwner {
+  /** User ULID */
+  id: Ulid;
+  /** Username */
+  username: string;
+  /** Display name */
+  displayName: string;
+  /** Avatar URL */
+  avatar?: string | null;
 }
 
 /**
@@ -377,28 +499,87 @@ export interface BusinessAnalytics {
  * @category Business Directory
  */
 export interface BusinessInput {
+  /** Business name */
   name?: string;
-  description?: string;
+  /** Full description */
+  description?: string | null;
+  /** Short tagline / summary */
+  shortDescription?: string | null;
+  /** Category ULID */
   categoryId?: Ulid;
-  address?: string;
-  city?: string;
-  region?: string;
-  postalCode?: string;
-  phone?: string;
-  email?: string;
-  website?: string;
-  hours?: Record<string, { open: string; close: string }>;
-  amenities?: string[];
-  latitude?: number;
-  longitude?: number;
+
+  // ── Contact ─────────────────────────────────────────────────────────
+  /** Primary phone number */
+  phone?: string | null;
+  /** Secondary phone number */
+  phoneSecondary?: string | null;
+  /** Email address */
+  email?: string | null;
+  /** Website URL */
+  website?: string | null;
+  /** WhatsApp number */
+  whatsapp?: string | null;
+
+  // ── Location ────────────────────────────────────────────────────────
+  /** Street address */
+  address?: string | null;
+  /** Address line 2 (suite/unit) */
+  addressLine2?: string | null;
+  /** City */
+  city?: string | null;
+  /** Region/parish */
+  region?: string | null;
+  /** Postal code */
+  postalCode?: string | null;
+  /** Latitude */
+  latitude?: number | null;
+  /** Longitude */
+  longitude?: number | null;
+
+  // ── Hours ───────────────────────────────────────────────────────────
+  /** Operating hours keyed by lowercase day name */
+  hours?: Record<string, { is_open: boolean; open?: string; close?: string }> | null;
+
+  // ── Media ───────────────────────────────────────────────────────────
+  /** Cover image URL */
+  coverImageUrl?: string | null;
+  /** Logo image URL */
+  logoUrl?: string | null;
+
+  // ── Social ──────────────────────────────────────────────────────────
+  /** Facebook page URL */
+  facebookUrl?: string | null;
+  /** Instagram profile URL */
+  instagramUrl?: string | null;
+  /** TikTok profile URL */
+  tiktokUrl?: string | null;
+  /** Twitter/X profile URL */
+  twitterUrl?: string | null;
+
+  // ── AI ──────────────────────────────────────────────────────────────
+  /** Whether AI features are enabled */
+  aiEnabled?: boolean | null;
+  /** AI system prompt / configuration */
+  aiPrompt?: string | null;
+
+  // ── Deprecated aliases ──────────────────────────────────────────────
+
+  /** @deprecated Use `coverImageUrl`. */
   coverImage?: string;
+  /** @deprecated Use `logoUrl`. */
   logo?: string;
-  /** Cover image URL as returned by the API (`coverImageUrl`). */
-  coverImageUrl?: string;
-  /** Logo image URL as returned by the API (`logoUrl`). */
-  logoUrl?: string;
+  /** @deprecated Photos are read-only; not accepted on create/update. */
   gallery?: string[];
-  socialLinks?: Business["socialLinks"];
+  /** @deprecated Social links are now flat fields: `facebookUrl`, `instagramUrl`, `tiktokUrl`, `twitterUrl`, `whatsapp`. */
+  socialLinks?: {
+    facebook?: string;
+    instagram?: string;
+    twitter?: string;
+    tiktok?: string;
+    whatsapp?: string;
+  };
+  /** @deprecated Not accepted on create/update. Services are read back via `Business.attributes.services`. */
+  amenities?: string[];
 }
 
 /**

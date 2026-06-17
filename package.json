@@ -1,6 +1,6 @@
 {
   "name": "@cc-consulting-nv/ccsdk",
-  "version": "1.0.94",
+  "version": "1.1.0",
   "description": "Closed Circuit platform SDK — typed client, caching, paginated APIs.",
   "type": "module",
   "main": "dist/index.js",
@@ -23,6 +23,7 @@
     "test": "pnpm build && node --loader ./tests/extension-loader.mjs --test $(ls tests/*.test.js)",
     "test:coverage": "pnpm build && npx c8 --reporter=text --include='dist/**' --exclude='dist/index.js' --extensions '.ts' -- node --loader ./tests/extension-loader.mjs --test $(ls tests/*.test.js)",
     "test:integration": "node ./tests/integration.js",
+    "test:integration:business": "tsx tests/integration/business-crud.integration.js",
     "docs": "typedoc --options typedoc.html.json",
     "docs:html": "typedoc --options typedoc.html.json",
     "docs:md": "typedoc --options typedoc.md.json"
@@ -60,6 +61,7 @@
     "fake-indexeddb": "^6.2.5",
     "fake-xml-http-request": "^2.1.2",
     "rimraf": "^5.0.5",
+    "tsx": "^4.22.4",
     "typedoc": "^0.28.15",
     "typedoc-plugin-markdown": "^4.9.0",
     "typescript": "^5.6.3"
