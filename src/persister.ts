@@ -22,7 +22,7 @@
  * @module persister
  * @category Persistence
  */
-import { CacheDB } from "./cache/cacheDB";
+import { CacheDB } from "./cache/cacheDB.js";
 
 /** Default storage key for persisted query client state */
 const DEFAULT_KEY = "queryClient";

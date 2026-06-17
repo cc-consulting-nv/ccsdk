@@ -28,9 +28,9 @@
  * @module multipartUpload
  * @category Uploads
  */
-import type { HttpClient } from "./httpClient";
-import { sanitizeFileName } from "./utils/s3Key";
-import type { BlobStore } from "./blobStore";
+import type { HttpClient } from "./httpClient.js";
+import { sanitizeFileName } from "./utils/s3Key.js";
+import type { BlobStore } from "./blobStore.js";
 
 /**
  * Detailed progress information for a multipart upload.

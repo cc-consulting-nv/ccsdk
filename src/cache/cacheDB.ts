@@ -6,8 +6,11 @@
  * @module cache/cacheDB
  * @category Cache
  */
-import Dexie, { type EntityTable, liveQuery, type Observable } from "dexie";
-import { type FeedPage, type Group, type Post, type Ulid, type UserProfile } from "../types";
+// ponytail: named { Dexie } import, not default — under NodeNext, dexie's ESM
+// wrapper has no .d.ts so the default resolves to a namespace type that can't be
+// `extends`-ed (TS2507). The named export keeps the constructor type.
+import { Dexie, type EntityTable, liveQuery, type Observable } from "dexie";
+import { type FeedPage, type Group, type Post, type Ulid, type UserProfile } from "../types.js";
 
 /**
  * Default soft-refresh TTL (30 minutes). Entries older than this are still

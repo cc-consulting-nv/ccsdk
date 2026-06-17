@@ -7,7 +7,7 @@
  * @category Business Directory
  */
 
-import type { Ulid } from "../types";
+import type { Ulid } from "../types.js";
 
 /**
  * Business listing in the directory

@@ -23,7 +23,7 @@ import type {
   InfiniteData,
   QueryClient,
 } from "@tanstack/query-core";
-import type { CcPlatformSdk } from "./platformSdk";
+import type { CcPlatformSdk } from "./platformSdk.js";
 import type {
   ChatGroup,
   ChatMessagesPage,
@@ -32,7 +32,7 @@ import type {
   Story,
   StoryFeedResponse,
   Ulid,
-} from "./types";
+} from "./types.js";
 
 /**
  * Query key factories for posts and feeds.
