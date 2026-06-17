@@ -62,12 +62,25 @@ export interface Business {
   longitude?: number;
 
   // ── Hours ───────────────────────────────────────────────────────────
-  /** Operating hours keyed by lowercase day name (e.g. "monday") */
-  hours?: Record<string, { is_open: boolean; open?: string; close?: string }>;
+  /**
+   * Operating hours keyed by lowercase day name (e.g. "monday").
+   *
+   * NOTE: the open/closed flag arrives as `is_open` on the pass-through methods
+   * (`fetchBusiness`, `fetchFeaturedBusinesses`, `fetchNearbyBusinesses`) but as
+   * `isOpen` on `fetchBusinessesByCategory`, which deep-camelCases the response.
+   * Both keys are declared so the type is honest on every code path; read
+   * `day.isOpen ?? day.is_open`.
+   */
+  hours?: Record<string, { is_open?: boolean; isOpen?: boolean; open?: string; close?: string }>;
   /** Whether the business is currently open */
   isOpen?: boolean;
-  /** Pre-formatted hours for display, keyed by lowercase day name */
-  formattedHours?: Record<string, { day: string; is_open: boolean; hours: string }>;
+  /**
+   * Pre-formatted hours for display, keyed by lowercase day name.
+   *
+   * Same `is_open`/`isOpen` path split as {@link Business.hours} — read
+   * `entry.isOpen ?? entry.is_open`.
+   */
+  formattedHours?: Record<string, { day: string; is_open?: boolean; isOpen?: boolean; hours: string }>;
 
   // ── Media ───────────────────────────────────────────────────────────
   /** Logo image URL */
@@ -141,7 +154,7 @@ export interface Business {
 
   // ── Deprecated aliases ──────────────────────────────────────────────
 
-  /** @deprecated Use `averageRating`. */
+  /** @deprecated Use `averageRating` (returned as `number | string`; coerce with `Number()`). */
   rating?: number;
   /** @deprecated Use `photos`. */
   gallery?: string[];
@@ -557,7 +570,7 @@ export interface BusinessInput {
   logo?: string;
   /** @deprecated Photos are read-only; not accepted on create/update. */
   gallery?: string[];
-  /** @deprecated Social links are now flat fields: `facebookUrl`, `instagramUrl`, `tiktokUrl`, `twitterUrl`. */
+  /** @deprecated Social links are now flat fields: `facebookUrl`, `instagramUrl`, `tiktokUrl`, `twitterUrl`, `whatsapp`. */
   socialLinks?: {
     facebook?: string;
     instagram?: string;
@@ -565,7 +578,7 @@ export interface BusinessInput {
     tiktok?: string;
     whatsapp?: string;
   };
-  /** @deprecated API uses `attributes.services` instead. */
+  /** @deprecated Not accepted on create/update. Services are read back via `Business.attributes.services`. */
   amenities?: string[];
 }
 

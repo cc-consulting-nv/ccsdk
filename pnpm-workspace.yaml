@@ -3,3 +3,10 @@ packages:
 
 # minutes — 10080 = 7 days
 minimumReleaseAge: 10080
+minimumReleaseAgeExclude:
+  - "@cc-consulting-nv/ccsdk"
+# esbuild ships prebuilt binaries; its install script only verifies the binary.
+# Allowed so `tsx` (used by test:integration:business) installs without the
+# ignored-build-scripts warning failing `pnpm` script wrappers.
+allowBuilds:
+  esbuild: true

@@ -317,6 +317,17 @@ async function testFetchBusinessesByCategory() {
     expect(!("average_rating" in raw), "average_rating was normalized to averageRating");
     expect(!("review_count" in raw), "review_count was normalized to reviewCount");
     expect(!("is_verified" in raw), "is_verified was normalized to isVerified");
+
+    // Nested hours: this endpoint deep-camelCases, so `is_open` becomes `isOpen`
+    // here — unlike fetchBusiness (raw passthrough), which keeps `is_open`.
+    // Pin the divergence so the Business.hours dual-key typing stays honest.
+    if (biz.hours && typeof biz.hours === "object") {
+      const day = biz.hours.monday || biz.hours[Object.keys(biz.hours)[0]];
+      if (day && typeof day === "object") {
+        expect("isOpen" in day, "hours[day].is_open is deep-normalized to isOpen on byCategory endpoint");
+        expect(!("is_open" in day), "snake_case is_open does NOT survive on byCategory endpoint");
+      }
+    }
   } else {
     console.log("  ⚠ No businesses in this category — normalization assertions skipped");
   }
