@@ -18,7 +18,7 @@
  * @category Posts
  */
 
-import type { Post } from "./types";
+import type { Post } from "./types.js";
 
 /**
  * Per-call options for {@link watchPostProcessing}.

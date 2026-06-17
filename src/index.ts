@@ -33,15 +33,15 @@
  * @module @social/cc-platform-sdk
  */
 
-export * from "./types";
-export * from "./types/business";
-export * from "./httpClient";
-export * from "./cache/cacheDB";
-export * from "./platformSdk";
-export * from "./query";
-export * from "./realtime";
-export * from "./auth";
-export * from "./persister";
-export * from "./multipartUpload";
-export * from "./blobStore";
-export * from "./postProcessing";
+export * from "./types.js";
+export * from "./types/business.js";
+export * from "./httpClient.js";
+export * from "./cache/cacheDB.js";
+export * from "./platformSdk.js";
+export * from "./query.js";
+export * from "./realtime.js";
+export * from "./auth.js";
+export * from "./persister.js";
+export * from "./multipartUpload.js";
+export * from "./blobStore.js";
+export * from "./postProcessing.js";

@@ -1,4 +1,4 @@
-import type { Ulid } from "../types";
+import type { Ulid } from "../types.js";
 
 /**
  * Blog post status

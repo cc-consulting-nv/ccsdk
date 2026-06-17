@@ -1,13 +1,13 @@
-import { CacheDB, createCache, DEFAULT_DB_NAME } from "./cache/cacheDB";
-import { HttpClient, type HttpClientOptions } from "./httpClient";
-import { HybridTokenProvider, RefreshCoordinator, type SessionStore, type TokenProvider } from "./auth";
-import { MultipartUpload, type MultipartUploadOptions, type UploadResult } from "./multipartUpload";
+import { CacheDB, createCache, DEFAULT_DB_NAME } from "./cache/cacheDB.js";
+import { HttpClient, type HttpClientOptions } from "./httpClient.js";
+import { HybridTokenProvider, RefreshCoordinator, type SessionStore, type TokenProvider } from "./auth.js";
+import { MultipartUpload, type MultipartUploadOptions, type UploadResult } from "./multipartUpload.js";
 import {
   watchPostProcessing,
   type PostProcessingWatcher,
   type WatchPostProcessingOptions,
-} from "./postProcessing";
-import { sanitizeFileName } from "./utils/s3Key";
+} from "./postProcessing.js";
+import { sanitizeFileName } from "./utils/s3Key.js";
 import {
   type ApiEnvelope,
   type AuthTokens,
@@ -100,7 +100,7 @@ import {
   type StoryFeedResponse,
   type StoryViewersResponse,
   type CreateStoryInput,
-} from "./types";
+} from "./types.js";
 
 // ============================================================================
 // Moderation Feed Types (025-moderation-feed)
@@ -7938,8 +7938,8 @@ export class CcPlatformSdk {
    *
    * @category Delegation
    */
-  async getUserManagementLimitStatus(): Promise<ApiEnvelope<import("./types").LimitStatus>> {
-    return this.client.get<ApiEnvelope<import("./types").LimitStatus>>("/v1/user-management/limit-status");
+  async getUserManagementLimitStatus(): Promise<ApiEnvelope<import("./types.js").LimitStatus>> {
+    return this.client.get<ApiEnvelope<import("./types.js").LimitStatus>>("/v1/user-management/limit-status");
   }
 
   /**
@@ -7953,9 +7953,9 @@ export class CcPlatformSdk {
    * @category Delegation
    */
   async createManagedUser(
-    requestData: import("./types").CreateManagedUserRequest,
-  ): Promise<ApiEnvelope<import("./types").CreateManagedUserResponse>> {
-    return this.client.post<ApiEnvelope<import("./types").CreateManagedUserResponse>>(
+    requestData: import("./types.js").CreateManagedUserRequest,
+  ): Promise<ApiEnvelope<import("./types.js").CreateManagedUserResponse>> {
+    return this.client.post<ApiEnvelope<import("./types.js").CreateManagedUserResponse>>(
       "/v1/user-management/managed-users",
       { body: requestData },
     );
@@ -7978,8 +7978,8 @@ export class CcPlatformSdk {
     status?: string;
     cursor?: string;
     limit?: number;
-  }): Promise<ApiEnvelope<import("./types").AssignmentListResponse>> {
-    return this.client.get<ApiEnvelope<import("./types").AssignmentListResponse>>(
+  }): Promise<ApiEnvelope<import("./types.js").AssignmentListResponse>> {
+    return this.client.get<ApiEnvelope<import("./types.js").AssignmentListResponse>>(
       "/v1/user-management/assignments",
       {
         query: {
@@ -8004,8 +8004,8 @@ export class CcPlatformSdk {
    */
   async revokeManagedUserAssignment(
     assignmentUlid: string,
-  ): Promise<ApiEnvelope<import("./types").RevokeAssignmentData>> {
-    return this.client.delete<ApiEnvelope<import("./types").RevokeAssignmentData>>(
+  ): Promise<ApiEnvelope<import("./types.js").RevokeAssignmentData>> {
+    return this.client.delete<ApiEnvelope<import("./types.js").RevokeAssignmentData>>(
       `/v1/user-management/assignments/${encodeURIComponent(assignmentUlid)}`,
     );
   }
@@ -8033,9 +8033,9 @@ export class CcPlatformSdk {
    */
   async issueManagedUserToken(
     assignmentUlid: string,
-    request: import("./types").IssueTokenRequest,
-  ): Promise<ApiEnvelope<import("./types").IssueTokenResponse>> {
-    return this.client.post<ApiEnvelope<import("./types").IssueTokenResponse>>(
+    request: import("./types.js").IssueTokenRequest,
+  ): Promise<ApiEnvelope<import("./types.js").IssueTokenResponse>> {
+    return this.client.post<ApiEnvelope<import("./types.js").IssueTokenResponse>>(
       `/v1/user-management/assignments/${encodeURIComponent(assignmentUlid)}/token`,
       { body: request },
     );
@@ -8056,11 +8056,11 @@ export class CcPlatformSdk {
    */
   async updateManagedUserProfile(
     userUlid: string,
-    data: import("./types").ManagedProfileUpdateRequest,
+    data: import("./types.js").ManagedProfileUpdateRequest,
     actingHeaders: Record<string, string>,
-  ): Promise<ApiEnvelope<import("./types").ManagedProfileUpdateData>> {
+  ): Promise<ApiEnvelope<import("./types.js").ManagedProfileUpdateData>> {
     // Send the update request
-    const response = await this.client.patch<ApiEnvelope<import("./types").ManagedProfileUpdateData>>(
+    const response = await this.client.patch<ApiEnvelope<import("./types.js").ManagedProfileUpdateData>>(
       `/v1/user-management/users/${encodeURIComponent(userUlid)}`,
       {
         body: data,
@@ -8179,8 +8179,8 @@ export class CcPlatformSdk {
       cursor?: string;
       per_page?: number;
     },
-  ): Promise<ApiEnvelope<import("./types").ManagedUserAuditEntry[]>> {
-    return this.client.get<ApiEnvelope<import("./types").ManagedUserAuditEntry[]>>(
+  ): Promise<ApiEnvelope<import("./types.js").ManagedUserAuditEntry[]>> {
+    return this.client.get<ApiEnvelope<import("./types.js").ManagedUserAuditEntry[]>>(
       `/v1/user-management/users/${encodeURIComponent(userUlid)}/audits`,
       {
         query: {
@@ -9196,7 +9196,7 @@ export class CcPlatformSdk {
     featured?: boolean;
     perPage?: number;
     cursor?: string | null;
-  }): Promise<import("./types/business").BusinessListResponse> {
+  }): Promise<import("./types/business.js").BusinessListResponse> {
     const params = new URLSearchParams();
     if (filters?.category) params.append("category", filters.category);
     if (filters?.city) params.append("city", filters.city);
@@ -9209,7 +9209,7 @@ export class CcPlatformSdk {
     const url = `/v1/businesses${queryString ? `?${queryString}` : ""}`;
 
     const response = await this.client.get<{
-      data: import("./types/business").Business[];
+      data: import("./types/business.js").Business[];
       meta?: { next_cursor?: string };
     }>(url);
 
@@ -9229,9 +9229,9 @@ export class CcPlatformSdk {
    *
    * @category Business Directory
    */
-  async fetchBusiness(ulid: string): Promise<import("./types/business").Business | null> {
+  async fetchBusiness(ulid: string): Promise<import("./types/business.js").Business | null> {
     const response = await this.client.get<
-      ApiEnvelope<import("./types/business").Business> | import("./types/business").Business
+      ApiEnvelope<import("./types/business.js").Business> | import("./types/business.js").Business
     >(`/v1/businesses/${ulid}`);
     
     return this.unwrap(response) || null;
@@ -9269,7 +9269,7 @@ export class CcPlatformSdk {
   async searchBusinesses(
     query: string,
     filters?: { city?: string; category?: string; region?: string; perPage?: number; page?: number }
-  ): Promise<import("./types/business").BusinessListResponse> {
+  ): Promise<import("./types/business.js").BusinessListResponse> {
     const params = new URLSearchParams({ q: query });
     if (filters?.city) params.append("city", filters.city);
     if (filters?.category) params.append("category", filters.category);
@@ -9278,7 +9278,7 @@ export class CcPlatformSdk {
     if (filters?.page != null) params.append("page", String(filters.page));
 
     const response = await this.client.get<{
-      data: import("./types/business").Business[];
+      data: import("./types/business.js").Business[];
       found?: number;
       page?: number;
       per_page?: number;
@@ -9312,12 +9312,12 @@ export class CcPlatformSdk {
    *
    * @category Business Directory
    */
-  async fetchFeaturedBusinesses(limit = 6): Promise<import("./types/business").Business[]> {
+  async fetchFeaturedBusinesses(limit = 6): Promise<import("./types/business.js").Business[]> {
     const response = await this.client.get<
-      import("./types/business").Business[]
+      import("./types/business.js").Business[]
     >(`/v1/businesses/featured?limit=${limit}`);
     // API returns a flat array (not wrapped in { data })
-    return Array.isArray(response) ? response : (response as unknown as { data: import("./types/business").Business[] }).data || [];
+    return Array.isArray(response) ? response : (response as unknown as { data: import("./types/business.js").Business[] }).data || [];
   }
 
   /**
@@ -9333,8 +9333,8 @@ export class CcPlatformSdk {
   async setBusinessFeatured(
     ulid: string,
     options?: { featuredUntil?: string }
-  ): Promise<import("./types/business").Business> {
-    return this.client.post<import("./types/business").Business>(
+  ): Promise<import("./types/business.js").Business> {
+    return this.client.post<import("./types/business.js").Business>(
       `/v1/businesses/${ulid}/featured`,
       options?.featuredUntil
         ? { body: { featured_until: options.featuredUntil } }
@@ -9353,8 +9353,8 @@ export class CcPlatformSdk {
    */
   async clearBusinessFeatured(
     ulid: string
-  ): Promise<import("./types/business").Business> {
-    return this.client.delete<import("./types/business").Business>(
+  ): Promise<import("./types/business.js").Business> {
+    return this.client.delete<import("./types/business.js").Business>(
       `/v1/businesses/${ulid}/featured`
     );
   }
@@ -9374,9 +9374,9 @@ export class CcPlatformSdk {
     latitude: number,
     longitude: number,
     radius = 5000
-  ): Promise<import("./types/business").Business[]> {
+  ): Promise<import("./types/business.js").Business[]> {
     const response = await this.client.get<{
-      data: import("./types/business").Business[];
+      data: import("./types/business.js").Business[];
     }>(`/v1/businesses/nearby?lat=${latitude}&lng=${longitude}&radius=${radius}`);
     return response.data || [];
   }
@@ -9396,7 +9396,7 @@ export class CcPlatformSdk {
   async fetchBusinessCategories(options?: {
     parentOnly?: boolean;
     withChildren?: boolean;
-  }): Promise<import("./types/business").BusinessCategory[]> {
+  }): Promise<import("./types/business.js").BusinessCategory[]> {
     const params = new URLSearchParams();
     if (options?.parentOnly) params.append("parent_only", "true");
     if (options?.withChildren) params.append("with_children", "true");
@@ -9408,10 +9408,10 @@ export class CcPlatformSdk {
 
     // Handle both direct array and {data: [...]} wrapped responses
     if (Array.isArray(response)) {
-      return response as import("./types/business").BusinessCategory[];
+      return response as import("./types/business.js").BusinessCategory[];
     }
 
-    const data = (response as { data?: import("./types/business").BusinessCategory[] })?.data;
+    const data = (response as { data?: import("./types/business.js").BusinessCategory[] })?.data;
     return data || [];
   }
 
@@ -9424,14 +9424,14 @@ export class CcPlatformSdk {
    *
    * @category Business Directory
    */
-  async fetchBusinessCategory(slug: string): Promise<import("./types/business").BusinessCategory | null> {
+  async fetchBusinessCategory(slug: string): Promise<import("./types/business.js").BusinessCategory | null> {
     const response = await this.client.get<
-      import("./types/business").BusinessCategory | { data: import("./types/business").BusinessCategory }
+      import("./types/business.js").BusinessCategory | { data: import("./types/business.js").BusinessCategory }
     >(`/v1/business-categories/${slug}`);
 
     // Handle both direct object and {data: {...}} wrapped responses
     if (response && typeof response === 'object' && 'id' in response) {
-      return response as import("./types/business").BusinessCategory;
+      return response as import("./types/business.js").BusinessCategory;
     }
     return (response as any)?.data || null;
   }
@@ -9455,7 +9455,7 @@ export class CcPlatformSdk {
       perPage?: number;
       cursor?: string | null;
     }
-  ): Promise<import("./types/business").BusinessListResponse> {
+  ): Promise<import("./types/business.js").BusinessListResponse> {
     const params = new URLSearchParams();
     if (filters?.city) params.append("city", filters.city);
     if (filters?.region) params.append("region", filters.region);
@@ -9469,7 +9469,7 @@ export class CcPlatformSdk {
     const response = await this.client.get<{
       category?: any;
       businesses: {
-        data: import("./types/business").Business[];
+        data: import("./types/business.js").Business[];
         next_cursor?: string;
       };
     }>(url);
@@ -9507,7 +9507,7 @@ export class CcPlatformSdk {
     city?: string;
     perPage?: number;
     cursor?: string | null;
-  }): Promise<import("./types/business").BusinessEventListResponse> {
+  }): Promise<import("./types/business.js").BusinessEventListResponse> {
     const params = new URLSearchParams();
     if (options?.businessId) params.append("business_id", options.businessId);
     if (options?.upcoming) params.append("upcoming", "true");
@@ -9520,7 +9520,7 @@ export class CcPlatformSdk {
     const url = `/v1/business-events${queryString ? `?${queryString}` : ""}`;
 
     const response = await this.client.get<{
-      data: import("./types/business").BusinessEvent[];
+      data: import("./types/business.js").BusinessEvent[];
       meta?: { next_cursor?: string };
     }>(url);
 
@@ -9540,8 +9540,8 @@ export class CcPlatformSdk {
    *
    * @category Business Directory
    */
-  async fetchBusinessEvent(ulid: string): Promise<import("./types/business").BusinessEvent | null> {
-    const response = await this.client.get<import("./types/business").BusinessEvent>(
+  async fetchBusinessEvent(ulid: string): Promise<import("./types/business.js").BusinessEvent | null> {
+    const response = await this.client.get<import("./types/business.js").BusinessEvent>(
       `/v1/business-events/${ulid}`
     );
     return response || null;
@@ -9565,8 +9565,8 @@ export class CcPlatformSdk {
    * @category Business Directory
    */
   async createBusinessEvent(
-    data: import("./types/business").BusinessEventInput
-  ): Promise<import("./types/business").BusinessEvent> {
+    data: import("./types/business.js").BusinessEventInput
+  ): Promise<import("./types/business.js").BusinessEvent> {
     const body: Record<string, unknown> = {
       business_id: data.businessId,
       title: data.title,
@@ -9595,7 +9595,7 @@ export class CcPlatformSdk {
       if (body[key] === undefined) delete body[key];
     }
 
-    const created = await this.client.post<import("./types/business").BusinessEvent>(
+    const created = await this.client.post<import("./types/business.js").BusinessEvent>(
       "/v1/business-events",
       { body },
     );
@@ -9624,8 +9624,8 @@ export class CcPlatformSdk {
    */
   async updateBusinessEvent(
     ulid: string,
-    data: Partial<import("./types/business").BusinessEventInput>
-  ): Promise<import("./types/business").BusinessEvent> {
+    data: Partial<import("./types/business.js").BusinessEventInput>
+  ): Promise<import("./types/business.js").BusinessEvent> {
     const body: Record<string, unknown> = {};
     if (data.title !== undefined) body.title = data.title;
     if (data.description !== undefined) body.description = data.description;
@@ -9648,7 +9648,7 @@ export class CcPlatformSdk {
     if (data.ticketLink !== undefined) body.ticket_link = data.ticketLink;
     if (data.capacity !== undefined) body.capacity = data.capacity;
 
-    const updated = await this.client.put<import("./types/business").BusinessEvent>(
+    const updated = await this.client.put<import("./types/business.js").BusinessEvent>(
       `/v1/business-events/${ulid}`,
       { body },
     );
@@ -9687,8 +9687,8 @@ export class CcPlatformSdk {
    *
    * @category Business Directory
    */
-  async checkEventFavorite(ulid: string): Promise<import("./types/business").EventSavedCheckResponse> {
-    return this.client.get<import("./types/business").EventSavedCheckResponse>(
+  async checkEventFavorite(ulid: string): Promise<import("./types/business.js").EventSavedCheckResponse> {
+    return this.client.get<import("./types/business.js").EventSavedCheckResponse>(
       `/v1/business-events/${encodeURIComponent(ulid)}/favorite`
     );
   }
@@ -9704,8 +9704,8 @@ export class CcPlatformSdk {
    *
    * @category Business Directory
    */
-  async saveEventFavorite(ulid: string): Promise<import("./types/business").EventSavedCheckResponse> {
-    return this.client.post<import("./types/business").EventSavedCheckResponse>(
+  async saveEventFavorite(ulid: string): Promise<import("./types/business.js").EventSavedCheckResponse> {
+    return this.client.post<import("./types/business.js").EventSavedCheckResponse>(
       `/v1/business-events/${encodeURIComponent(ulid)}/favorite`
     );
   }
@@ -9732,8 +9732,8 @@ export class CcPlatformSdk {
    *
    * @category Business Directory
    */
-  async fetchMyEventFavorites(): Promise<import("./types/business").EventFavoritesListResponse> {
-    return this.client.get<import("./types/business").EventFavoritesListResponse>(
+  async fetchMyEventFavorites(): Promise<import("./types/business.js").EventFavoritesListResponse> {
+    return this.client.get<import("./types/business.js").EventFavoritesListResponse>(
       "/v1/users/me/event-favorites"
     );
   }
@@ -9761,7 +9761,7 @@ export class CcPlatformSdk {
       rating?: number;
       verifiedOnly?: boolean;
     }
-  ): Promise<import("./types/business").BusinessReviewListResponse> {
+  ): Promise<import("./types/business.js").BusinessReviewListResponse> {
     const params = new URLSearchParams();
     if (options?.perPage) params.append("per_page", String(options.perPage));
     if (options?.cursor) params.append("cursor", options.cursor);
@@ -9773,7 +9773,7 @@ export class CcPlatformSdk {
     const url = `/v1/businesses/${businessUlid}/reviews${queryString ? `?${queryString}` : ""}`;
 
     const response = await this.client.get<{
-      data: import("./types/business").BusinessReview[];
+      data: import("./types/business.js").BusinessReview[];
       pagination?: { nextCursor?: string | null; hasMore?: boolean };
     }>(url);
 
@@ -9799,7 +9799,7 @@ export class CcPlatformSdk {
   async fetchUserReviews(
     userUlid: string,
     options?: { cursor?: string | null; perPage?: number }
-  ): Promise<import("./types/business").BusinessReviewListResponse> {
+  ): Promise<import("./types/business.js").BusinessReviewListResponse> {
     const params = new URLSearchParams();
     if (options?.perPage) params.append("per_page", String(options.perPage));
     if (options?.cursor) params.append("cursor", options.cursor);
@@ -9808,7 +9808,7 @@ export class CcPlatformSdk {
     const url = `/v1/users/${encodeURIComponent(userUlid)}/reviews${queryString ? `?${queryString}` : ""}`;
 
     const response = await this.client.get<{
-      data: import("./types/business").BusinessReview[];
+      data: import("./types/business.js").BusinessReview[];
       pagination?: { nextCursor?: string | null; hasMore?: boolean };
     }>(url);
 
@@ -9831,9 +9831,9 @@ export class CcPlatformSdk {
    */
   async fetchUserBusinessCollections(
     userUlid: string
-  ): Promise<import("./types/business").BusinessCollection[]> {
+  ): Promise<import("./types/business.js").BusinessCollection[]> {
     const response = await this.client.get<{
-      data: import("./types/business").BusinessCollection[];
+      data: import("./types/business.js").BusinessCollection[];
     }>(`/v1/users/${encodeURIComponent(userUlid)}/business-collections`);
     return response.data || [];
   }
@@ -9850,9 +9850,9 @@ export class CcPlatformSdk {
    *
    * @category Business Directory
    */
-  async fetchBusinessCollections(): Promise<import("./types/business").BusinessCollection[]> {
+  async fetchBusinessCollections(): Promise<import("./types/business.js").BusinessCollection[]> {
     const response = await this.client.get<{
-      data: import("./types/business").BusinessCollection[];
+      data: import("./types/business.js").BusinessCollection[];
     }>("/v1/users/me/business-collections");
     return response.data || [];
   }
@@ -9867,9 +9867,9 @@ export class CcPlatformSdk {
    * @category Business Directory
    */
   async createBusinessCollection(
-    data: import("./types/business").BusinessCollectionInput
-  ): Promise<import("./types/business").BusinessCollection> {
-    return this.client.post<import("./types/business").BusinessCollection>(
+    data: import("./types/business.js").BusinessCollectionInput
+  ): Promise<import("./types/business.js").BusinessCollection> {
+    return this.client.post<import("./types/business.js").BusinessCollection>(
       "/v1/users/me/business-collections",
       { body: this.serializeCollectionPayload(data) }
     );
@@ -9887,9 +9887,9 @@ export class CcPlatformSdk {
    */
   async updateBusinessCollection(
     collectionId: string,
-    data: Partial<import("./types/business").BusinessCollectionInput>
-  ): Promise<import("./types/business").BusinessCollection> {
-    return this.client.put<import("./types/business").BusinessCollection>(
+    data: Partial<import("./types/business.js").BusinessCollectionInput>
+  ): Promise<import("./types/business.js").BusinessCollection> {
+    return this.client.put<import("./types/business.js").BusinessCollection>(
       `/v1/users/me/business-collections/${encodeURIComponent(collectionId)}`,
       { body: this.serializeCollectionPayload(data) }
     );
@@ -9910,7 +9910,7 @@ export class CcPlatformSdk {
   }
 
   private serializeCollectionPayload(
-    data: Partial<import("./types/business").BusinessCollectionInput>
+    data: Partial<import("./types/business.js").BusinessCollectionInput>
   ): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     if (data.name !== undefined) out.name = data.name;
@@ -9964,7 +9964,7 @@ export class CcPlatformSdk {
   async fetchCollectionBusinesses(
     collectionId: string,
     options?: { cursor?: string | null; perPage?: number }
-  ): Promise<import("./types/business").BusinessCollectionBusinessesResponse> {
+  ): Promise<import("./types/business.js").BusinessCollectionBusinessesResponse> {
     const params = new URLSearchParams();
     if (options?.perPage) params.append("per_page", String(options.perPage));
     if (options?.cursor) params.append("cursor", options.cursor);
@@ -9973,7 +9973,7 @@ export class CcPlatformSdk {
     const url = `/v1/users/me/business-collections/${encodeURIComponent(collectionId)}/businesses${queryString ? `?${queryString}` : ""}`;
 
     const response = await this.client.get<{
-      data: import("./types/business").Business[];
+      data: import("./types/business.js").Business[];
       pagination?: { nextCursor?: string | null; hasMore?: boolean };
     }>(url);
 
@@ -9999,7 +9999,7 @@ export class CcPlatformSdk {
     userUlid: string,
     collectionId: string,
     options?: { cursor?: string | null; perPage?: number }
-  ): Promise<import("./types/business").BusinessCollectionBusinessesResponse> {
+  ): Promise<import("./types/business.js").BusinessCollectionBusinessesResponse> {
     const params = new URLSearchParams();
     if (options?.perPage) params.append("per_page", String(options.perPage));
     if (options?.cursor) params.append("cursor", options.cursor);
@@ -10008,7 +10008,7 @@ export class CcPlatformSdk {
     const url = `/v1/users/${encodeURIComponent(userUlid)}/business-collections/${encodeURIComponent(collectionId)}/businesses${queryString ? `?${queryString}` : ""}`;
 
     const response = await this.client.get<{
-      data: import("./types/business").Business[];
+      data: import("./types/business.js").Business[];
       pagination?: { nextCursor?: string | null; hasMore?: boolean };
     }>(url);
 
@@ -10030,7 +10030,7 @@ export class CcPlatformSdk {
    */
   async checkBusinessSaved(
     businessId: string
-  ): Promise<import("./types/business").BusinessSavedCheckResponse> {
+  ): Promise<import("./types/business.js").BusinessSavedCheckResponse> {
     const response = await this.client.get<{ collectionIds: string[] }>(
       `/v1/users/me/business-collections/check/${encodeURIComponent(businessId)}`
     );
@@ -10045,9 +10045,9 @@ export class CcPlatformSdk {
    *
    * @category Business Directory
    */
-  async fetchRecentlyViewedBusinesses(): Promise<import("./types/business").RecentlyViewedBusiness[]> {
+  async fetchRecentlyViewedBusinesses(): Promise<import("./types/business.js").RecentlyViewedBusiness[]> {
     const response = await this.client.get<{
-      data: import("./types/business").RecentlyViewedBusiness[];
+      data: import("./types/business.js").RecentlyViewedBusiness[];
     }>("/v1/users/me/recently-viewed-businesses");
     return response.data || [];
   }
@@ -10065,7 +10065,7 @@ export class CcPlatformSdk {
    */
   async fetchMyReviews(
     options?: { cursor?: string | null; perPage?: number }
-  ): Promise<import("./types/business").BusinessReviewListResponse> {
+  ): Promise<import("./types/business.js").BusinessReviewListResponse> {
     const params = new URLSearchParams();
     if (options?.perPage) params.append("per_page", String(options.perPage));
     if (options?.cursor) params.append("cursor", options.cursor);
@@ -10074,7 +10074,7 @@ export class CcPlatformSdk {
     const url = `/v1/users/me/reviews${queryString ? `?${queryString}` : ""}`;
 
     const response = await this.client.get<{
-      data: import("./types/business").BusinessReview[];
+      data: import("./types/business.js").BusinessReview[];
       pagination?: { nextCursor?: string | null; hasMore?: boolean };
     }>(url);
 
@@ -10100,9 +10100,9 @@ export class CcPlatformSdk {
    * @category Business Directory
    */
   async createBusiness(
-    data: import("./types/business").BusinessInput
-  ): Promise<import("./types/business").Business> {
-    const created = await this.client.post<import("./types/business").Business>(
+    data: import("./types/business.js").BusinessInput
+  ): Promise<import("./types/business.js").Business> {
+    const created = await this.client.post<import("./types/business.js").Business>(
       "/v1/businesses",
       { body: data },
     );
@@ -10131,9 +10131,9 @@ export class CcPlatformSdk {
    */
   async updateBusiness(
     ulid: string,
-    data: import("./types/business").BusinessInput
-  ): Promise<import("./types/business").Business> {
-    const updated = await this.client.put<import("./types/business").Business>(
+    data: import("./types/business.js").BusinessInput
+  ): Promise<import("./types/business.js").Business> {
+    const updated = await this.client.put<import("./types/business.js").Business>(
       `/v1/businesses/${ulid}`,
       { body: data }
     );
@@ -10167,9 +10167,9 @@ export class CcPlatformSdk {
    *
    * @category Business Directory
    */
-  async fetchMyBusinesses(): Promise<import("./types/business").Business[]> {
+  async fetchMyBusinesses(): Promise<import("./types/business.js").Business[]> {
     const response = await this.client.get<{
-      data: import("./types/business").Business[];
+      data: import("./types/business.js").Business[];
     }>("/v1/me/businesses");
     return response.data ?? [];
   }
@@ -10184,9 +10184,9 @@ export class CcPlatformSdk {
    *
    * @category Business Directory
    */
-  async fetchMyBusinessesAnalytics(): Promise<import("./types/business").BusinessAnalytics> {
+  async fetchMyBusinessesAnalytics(): Promise<import("./types/business.js").BusinessAnalytics> {
     const response = await this.client.get<{
-      data: import("./types/business").BusinessAnalytics;
+      data: import("./types/business.js").BusinessAnalytics;
     }>("/v1/me/businesses/analytics");
     return response.data;
   }
@@ -10211,9 +10211,9 @@ export class CcPlatformSdk {
    */
   async requestBusinessClaim(
     businessId: string,
-    data: import("./types/business").BusinessClaimInput,
+    data: import("./types/business.js").BusinessClaimInput,
     document?: File | null,
-  ): Promise<import("./types/business").BusinessClaimResponse> {
+  ): Promise<import("./types/business.js").BusinessClaimResponse> {
     const formData = new FormData();
     formData.append("name", data.name);
     formData.append("email", data.email);
@@ -10222,7 +10222,7 @@ export class CcPlatformSdk {
     if (data.message) formData.append("message", data.message);
     if (document) formData.append("document", document);
 
-    return this.client.post<import("./types/business").BusinessClaimResponse>(
+    return this.client.post<import("./types/business.js").BusinessClaimResponse>(
       `/v1/businesses/${businessId}/claim/verify`,
       { body: formData },
     );
@@ -10243,8 +10243,8 @@ export class CcPlatformSdk {
     businessId: string,
     pendingId: string,
     verificationCode: string,
-  ): Promise<import("./types/business").BusinessClaimVerifyResponse> {
-    return this.client.post<import("./types/business").BusinessClaimVerifyResponse>(
+  ): Promise<import("./types/business.js").BusinessClaimVerifyResponse> {
+    return this.client.post<import("./types/business.js").BusinessClaimVerifyResponse>(
       `/v1/businesses/${businessId}/claim`,
       { body: { pending_id: pendingId, verification_code: verificationCode } },
     );
@@ -10266,9 +10266,9 @@ export class CcPlatformSdk {
    */
   async submitBusinessReview(
     businessUlid: string,
-    data: import("./types/business").BusinessReviewInput
-  ): Promise<import("./types/business").BusinessReview> {
-    return this.client.post<import("./types/business").BusinessReview>(
+    data: import("./types/business.js").BusinessReviewInput
+  ): Promise<import("./types/business.js").BusinessReview> {
+    return this.client.post<import("./types/business.js").BusinessReview>(
       `/v1/businesses/${businessUlid}/reviews`,
       { body: data }
     );
@@ -10287,8 +10287,8 @@ export class CcPlatformSdk {
   async markBusinessReviewHelpful(
     businessUlid: string,
     reviewUlid: string
-  ): Promise<import("./types/business").BusinessReviewHelpfulResponse> {
-    return this.client.post<import("./types/business").BusinessReviewHelpfulResponse>(
+  ): Promise<import("./types/business.js").BusinessReviewHelpfulResponse> {
+    return this.client.post<import("./types/business.js").BusinessReviewHelpfulResponse>(
       `/v1/businesses/${businessUlid}/reviews/${reviewUlid}/helpful`,
       { body: {} }
     );
@@ -10307,8 +10307,8 @@ export class CcPlatformSdk {
   async removeBusinessReviewHelpful(
     businessUlid: string,
     reviewUlid: string
-  ): Promise<import("./types/business").BusinessReviewHelpfulResponse> {
-    return this.client.delete<import("./types/business").BusinessReviewHelpfulResponse>(
+  ): Promise<import("./types/business.js").BusinessReviewHelpfulResponse> {
+    return this.client.delete<import("./types/business.js").BusinessReviewHelpfulResponse>(
       `/v1/businesses/${businessUlid}/reviews/${reviewUlid}/helpful`
     );
   }
@@ -10326,8 +10326,8 @@ export class CcPlatformSdk {
   async markBusinessReviewNotHelpful(
     businessUlid: string,
     reviewUlid: string
-  ): Promise<import("./types/business").BusinessReviewHelpfulResponse> {
-    return this.client.post<import("./types/business").BusinessReviewHelpfulResponse>(
+  ): Promise<import("./types/business.js").BusinessReviewHelpfulResponse> {
+    return this.client.post<import("./types/business.js").BusinessReviewHelpfulResponse>(
       `/v1/businesses/${businessUlid}/reviews/${reviewUlid}/not-helpful`,
       { body: {} }
     );
@@ -10346,8 +10346,8 @@ export class CcPlatformSdk {
   async removeBusinessReviewNotHelpful(
     businessUlid: string,
     reviewUlid: string
-  ): Promise<import("./types/business").BusinessReviewHelpfulResponse> {
-    return this.client.delete<import("./types/business").BusinessReviewHelpfulResponse>(
+  ): Promise<import("./types/business.js").BusinessReviewHelpfulResponse> {
+    return this.client.delete<import("./types/business.js").BusinessReviewHelpfulResponse>(
       `/v1/businesses/${businessUlid}/reviews/${reviewUlid}/not-helpful`
     );
   }
@@ -10366,9 +10366,9 @@ export class CcPlatformSdk {
   async updateBusinessReview(
     businessUlid: string,
     reviewUlid: string,
-    data: import("./types/business").BusinessReviewUpdateInput
-  ): Promise<import("./types/business").BusinessReview> {
-    return this.client.put<import("./types/business").BusinessReview>(
+    data: import("./types/business.js").BusinessReviewUpdateInput
+  ): Promise<import("./types/business.js").BusinessReview> {
+    return this.client.put<import("./types/business.js").BusinessReview>(
       `/v1/businesses/${businessUlid}/reviews/${reviewUlid}`,
       { body: data }
     );
@@ -10402,8 +10402,8 @@ export class CcPlatformSdk {
     businessUlid: string,
     reviewUlid: string,
     response: string
-  ): Promise<import("./types/business").BusinessReview> {
-    return this.client.post<import("./types/business").BusinessReview>(
+  ): Promise<import("./types/business.js").BusinessReview> {
+    return this.client.post<import("./types/business.js").BusinessReview>(
       `/v1/businesses/${businessUlid}/reviews/${reviewUlid}/respond`,
       { body: { response } }
     );
@@ -10447,8 +10447,8 @@ export class CcPlatformSdk {
    */
   async submitBusinessContact(
     businessId: string,
-    input: import("./types/business").BusinessContactInput
-  ): Promise<import("./types/business").BusinessContactResponse> {
+    input: import("./types/business.js").BusinessContactInput
+  ): Promise<import("./types/business.js").BusinessContactResponse> {
     const { recaptchaToken, ...rest } = input;
     const raw = await this.client.post<{
       success?: boolean;
@@ -10512,7 +10512,7 @@ export class CcPlatformSdk {
    */
   async geocodeCity(
     query: string
-  ): Promise<import("./types/business").GeocodeCityResult | null> {
+  ): Promise<import("./types/business.js").GeocodeCityResult | null> {
     const raw = await this.client.get<{
       latitude?: number;
       longitude?: number;
@@ -10541,9 +10541,9 @@ export class CcPlatformSdk {
    *
    * @category Business Directory
    */
-  async fetchBusinessAnalytics(businessId: string): Promise<import("./types/business").BusinessAnalytics> {
+  async fetchBusinessAnalytics(businessId: string): Promise<import("./types/business.js").BusinessAnalytics> {
     const response = await this.client.get<{
-      data: import("./types/business").BusinessAnalytics;
+      data: import("./types/business.js").BusinessAnalytics;
     }>(`/v1/businesses/${businessId}/analytics/dashboard`);
     return response.data;
   }

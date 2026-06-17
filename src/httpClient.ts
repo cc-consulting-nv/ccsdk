@@ -1,5 +1,5 @@
 import { decode as msgpackDecode } from "@msgpack/msgpack";
-import { type AuthTokens, type ActingContext } from "./types";
+import { type AuthTokens, type ActingContext } from "./types.js";
 
 /**
  * Configuration options for the HTTP client.

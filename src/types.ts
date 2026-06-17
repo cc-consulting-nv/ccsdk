@@ -2451,4 +2451,4 @@ export interface StoryViewersResponse {
 }
 
 // Export blog types
-export * from "./types/blog";
+export * from "./types/blog.js";

@@ -1,4 +1,4 @@
-import type { AuthTokens } from "./types";
+import type { AuthTokens } from "./types.js";
 
 /**
  * Interface for token storage and retrieval.
