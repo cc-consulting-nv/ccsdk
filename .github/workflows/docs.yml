@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       should_run: ${{ steps.decide.outputs.should_run }}
     steps:
@@ -44,7 +44,7 @@ jobs:
   build:
     needs: check
     if: needs.check.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v6
 
@@ -73,7 +73,7 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: build
     steps:
       - name: Deploy to GitHub Pages
