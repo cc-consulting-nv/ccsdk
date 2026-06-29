@@ -155,11 +155,12 @@ async function testFetchBusinessAnalytics() {
     // Check required fields exist
     const requiredFields = [
       "totalViews",
-      "profileClicks",
+      "saves",
       "phoneCalls",
       "emailInquiries",
       "websiteClicks",
       "directionRequests",
+      "contactForms",
     ];
     const missingFields = requiredFields.filter(
       (f) => !(f in analytics)
@@ -173,7 +174,7 @@ async function testFetchBusinessAnalytics() {
     // Check trends object
     if (analytics.trends && typeof analytics.trends === "object") {
       success("has trends object");
-      const trendFields = ["views", "profileClicks", "phoneCalls", "emailInquiries"];
+      const trendFields = ["views", "saves", "phoneCalls", "emailInquiries", "websiteClicks", "directionRequests", "contactForms"];
       const missingTrends = trendFields.filter(
         (f) => !(f in analytics.trends)
       );
@@ -234,11 +235,12 @@ async function testFetchMyBusinessesAnalytics() {
     // Check required fields
     const requiredFields = [
       "totalViews",
-      "profileClicks",
+      "saves",
       "phoneCalls",
       "emailInquiries",
       "websiteClicks",
       "directionRequests",
+      "contactForms",
     ];
     const missingFields = requiredFields.filter((f) => !(f in analytics));
     if (missingFields.length === 0) {
