@@ -483,6 +483,8 @@ export interface BusinessAnalytics {
   websiteClicks: number;
   /** Direction request clicks */
   directionRequests: number;
+  /** Contact form submissions */
+  contactForms: number;
   /** Week-over-week trends */
   trends: {
     views: number;
@@ -491,6 +493,7 @@ export interface BusinessAnalytics {
     emailInquiries: number;
     websiteClicks: number;
     directionRequests: number;
+    contactForms: number;
   };
 }
 
