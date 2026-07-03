@@ -42,6 +42,9 @@ import {
   type TrendingUser,
   type TrendingHashtag,
   type TrendingSong,
+  type ArtistEntitlements,
+  type ArtistSubscriptionCheckoutInput,
+  type ArtistSubscriptionCheckoutResult,
   type SignupConfig,
   type DemographicResponseInput,
   type AgreementAcceptanceInput,
@@ -7195,6 +7198,90 @@ export class CcPlatformSdk {
       ApiEnvelope<{ message: string; enabledCount: number }>
     >("/v1/users/me/genre-preferences/reset");
     return this.unwrap<{ message: string; enabledCount: number }>(response);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Artist Catalog Entitlements (AI Artist Hub)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Get the authenticated user's artist catalog entitlements.
+   *
+   * Returns plan flags plus hosted song count and storage usage for AI Artist Hub.
+   *
+   * @category Users
+   *
+   * @example
+   * ```typescript
+   * const entitlements = await sdk.getArtistEntitlements();
+   * console.log(`${entitlements.songsUsed}/${entitlements.songsLimit ?? '∞'} songs`);
+   * ```
+   */
+  async getArtistEntitlements(): Promise<ArtistEntitlements> {
+    const response = await this.client.get<ApiEnvelope<Record<string, unknown>>>(
+      "/v1/users/me/entitlements",
+    );
+    const raw = this.unwrap<Record<string, unknown>>(response);
+    return this.normalizeArtistEntitlements(raw);
+  }
+
+  private normalizeArtistEntitlements(raw: Record<string, unknown>): ArtistEntitlements {
+    const data = snakeToCamelObject(raw) as Partial<ArtistEntitlements>;
+    const songsLimit =
+      data.songsLimit === null || raw.songs_limit === null
+        ? null
+        : Number(data.songsLimit ?? raw.songs_limit ?? 10);
+
+    return {
+      artistPro: Boolean(data.artistPro),
+      artistStudio: Boolean(data.artistStudio),
+      songsUsed: Number(data.songsUsed ?? 0),
+      songsLimit,
+      storageBytesUsed: Number(data.storageBytesUsed ?? 0),
+      storageBytesLimit: Number(data.storageBytesLimit ?? 0),
+    };
+  }
+
+  /**
+   * Start Stripe Checkout for Artist Pro or Artist Studio.
+   *
+   * @category Users
+   */
+  async startArtistSubscriptionCheckout(
+    input: ArtistSubscriptionCheckoutInput,
+  ): Promise<ArtistSubscriptionCheckoutResult> {
+    const response = await this.client.post<ApiEnvelope<Record<string, unknown>>>(
+      "/v1/users/me/artist-subscription/checkout",
+      {
+        body: {
+          plan: input.plan,
+          success_url: input.successUrl,
+          cancel_url: input.cancelUrl,
+        },
+      },
+    );
+    const raw = this.unwrap<Record<string, unknown>>(response);
+    const checkoutUrl = String(raw.checkout_url ?? raw.checkoutUrl ?? "");
+    if (!checkoutUrl) {
+      throw new Error("Checkout URL missing from server response.");
+    }
+    return { checkoutUrl };
+  }
+
+  /**
+   * Confirm Artist subscription after Stripe redirect.
+   *
+   * Syncs the subscription when webhooks have not arrived yet (common in local dev).
+   *
+   * @category Users
+   */
+  async confirmArtistSubscriptionCheckout(sessionId: string): Promise<ArtistEntitlements> {
+    const response = await this.client.post<ApiEnvelope<Record<string, unknown>>>(
+      "/v1/users/me/artist-subscription/confirm",
+      { body: { session_id: sessionId } },
+    );
+    const raw = this.unwrap<Record<string, unknown>>(response);
+    return this.normalizeArtistEntitlements(raw);
   }
 
   /**

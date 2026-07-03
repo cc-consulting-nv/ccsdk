@@ -1419,6 +1419,8 @@ export interface NotificationType {
  * @category Settings
  */
 export interface AppSettings {
+  /** Tenant slug (e.g. songs, unbounded) */
+  siteSlug?: string;
   /** Site configuration */
   siteSettings?: SiteSettings;
   /** Available reactions */
@@ -1510,6 +1512,35 @@ export interface TrendingSong {
   username: string;
   coverImage?: string;
   playCount: number;
+}
+
+/** Artist catalog entitlements from GET /v1/users/me/entitlements (AI Artist Hub) */
+export interface ArtistEntitlements {
+  artistPro: boolean;
+  artistStudio: boolean;
+  songsUsed: number;
+  songsLimit: number | null;
+  storageBytesUsed: number;
+  storageBytesLimit: number;
+}
+
+/** Artist Pro / Studio plan slug for Stripe checkout */
+export type ArtistSubscriptionPlan =
+  | "artist_pro"
+  | "artist_studio"
+  | "pro"
+  | "studio";
+
+/** Input for POST /v1/users/me/artist-subscription/checkout */
+export interface ArtistSubscriptionCheckoutInput {
+  plan: ArtistSubscriptionPlan;
+  successUrl: string;
+  cancelUrl: string;
+}
+
+/** Response from artist subscription checkout */
+export interface ArtistSubscriptionCheckoutResult {
+  checkoutUrl: string;
 }
 
 // ============================================
