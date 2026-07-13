@@ -1890,6 +1890,13 @@ export class CcPlatformSdk {
     // Add limit parameter (capped at 100 by API)
     queryParams.limit = String(Math.min(limit, 100));
 
+    // A cursor-less fetch is page 1 — a fresh view of the head of the feed. Its
+    // ULIDs REPLACE the cached list rather than union into it, so that a post the
+    // server has stopped returning (deleted, hidden, moderated) actually leaves
+    // the cache. Unioning kept such ULIDs forever, and the next hydration would
+    // resurrect the post from cache. Cursor pages still append.
+    const isFirstPage = !cursor;
+
     const response = await this.client.get<ApiEnvelope<{ ulid: Ulid }[]>>(baseEndpoint, {
       query: Object.keys(queryParams).length > 0 ? queryParams : undefined,
     });
@@ -1937,7 +1944,11 @@ export class CcPlatformSdk {
           return acc;
         }, {});
         await cache.setPosts(mapped);
-        await cache.appendToFeedResource(cacheKey, ulids, nextCursor ?? null);
+        if (isFirstPage) {
+          await cache.setFeedResource(cacheKey, ulids, nextCursor ?? null, true);
+        } else {
+          await cache.appendToFeedResource(cacheKey, ulids, nextCursor ?? null);
+        }
       }
       return { ulids, posts, nextCursor: nextCursor ?? null };
     }
@@ -2023,7 +2034,11 @@ export class CcPlatformSdk {
         .filter((post): post is Post => Boolean(post));
 
       const cache = await this.cachePromise;
-      await cache.appendToFeedResource(cacheKey, ulids, nextCursor ?? null);
+      if (isFirstPage) {
+        await cache.setFeedResource(cacheKey, ulids, nextCursor ?? null, true);
+      } else {
+        await cache.appendToFeedResource(cacheKey, ulids, nextCursor ?? null);
+      }
 
       // Hydrate users based on hints from feed items
       const hints = collection
