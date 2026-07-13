@@ -67,6 +67,22 @@ class MockCache {
     });
   }
 
+  async setFeedResource(route, ulids, cursor, replace = false) {
+    if (replace) {
+      this.feedResources.set(route, { route, ulids: [...ulids], cursor: cursor ?? null });
+      return;
+    }
+    const existing = this.feedResources.get(route);
+    const combined = existing
+      ? Array.from(new Set([...ulids, ...existing.ulids]))
+      : [...ulids];
+    this.feedResources.set(route, {
+      route,
+      ulids: combined,
+      cursor: cursor ?? existing?.cursor ?? null,
+    });
+  }
+
   async getFeedResource(route) {
     return this.clone(this.feedResources.get(route) ?? null);
   }
@@ -819,4 +835,76 @@ test("followUser caches full profile with both followersCount and followingCount
   assert.equal(cached.followersCount, 7, "followersCount should be present");
   assert.equal(cached.followingCount, 42, "followingCount should be present");
   assert.equal(cached.displayName, "Me", "displayName should be cached");
+});
+
+test("fetchFeedPage drops ULIDs the server no longer returns on a page-1 refetch", async () => {
+  const cache = new MockCache();
+
+  // A post that was in the feed and is still cached locally — e.g. one an admin
+  // just deleted. Its body lives in the post cache and its ULID in the feed row.
+  await cache.setPost("deleted-post", {
+    id: "deleted-post",
+    ulid: "deleted-post",
+    title: "deleted",
+  });
+  await cache.appendToFeedResource(
+    "/v1/songs/feed/trending",
+    ["deleted-post", "kept-post"],
+    null,
+  );
+
+  // Server no longer returns the deleted post.
+  const { sdk } = createSdk(async (url) => {
+    if (url.startsWith(`${baseUrl}/v1/songs/feed/trending`)) {
+      return new Response(JSON.stringify({
+        data: [{ ulid: "kept-post" }],
+      }), { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/posts`) {
+      return new Response(JSON.stringify({
+        data: [{ id: "kept-post", ulid: "kept-post", title: "kept" }],
+      }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, cache);
+
+  const page = await sdk.fetchTrendingFeed();
+
+  assert.deepEqual(page.ulids, ["kept-post"]);
+
+  // The whole point: a cursor-less refetch REPLACES the cached list, so the
+  // deleted ULID is gone. Unioning would have kept it forever and the next
+  // hydration would resurrect the post from cache.
+  const cached = await cache.getFeedResource("/v1/songs/feed/trending");
+  assert.deepEqual(cached.ulids, ["kept-post"]);
+  assert.ok(!cached.ulids.includes("deleted-post"));
+});
+
+test("fetchFeedPage still appends when paginating with a cursor", async () => {
+  const cache = new MockCache();
+  await cache.appendToFeedResource("/v1/songs/feed/trending", ["page-1-post"], "cursor-1");
+
+  const { sdk } = createSdk(async (url) => {
+    if (url.startsWith(`${baseUrl}/v1/songs/feed/trending`)) {
+      return new Response(JSON.stringify({
+        data: [{ ulid: "page-2-post" }],
+      }), { status: 200 });
+    }
+
+    if (url === `${baseUrl}/v1/posts`) {
+      return new Response(JSON.stringify({
+        data: [{ id: "page-2-post", ulid: "page-2-post", title: "page 2" }],
+      }), { status: 200 });
+    }
+
+    throw new Error(`Unexpected request: ${url}`);
+  }, cache);
+
+  await sdk.fetchTrendingFeed("cursor-1");
+
+  // Page 2 must not wipe page 1 — infinite scroll depends on accumulation.
+  const cached = await cache.getFeedResource("/v1/songs/feed/trending");
+  assert.deepEqual(cached.ulids, ["page-1-post", "page-2-post"]);
 });
