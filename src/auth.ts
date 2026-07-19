@@ -208,6 +208,9 @@ export interface RefreshHandler {
  */
 export class HybridTokenProvider implements TokenProvider {
   private accessToken: string | null = null;
+  // Access-token expiry lives in memory next to the access token — it's
+  // short-lived and meaningless once the in-memory access token is gone.
+  private expiresAt: string | null = null;
   private readonly storage: StorageLike;
   private readonly refreshTokenKey: string;
 
@@ -221,6 +224,10 @@ export class HybridTokenProvider implements TokenProvider {
 
     if (initialTokens?.accessToken) {
       this.accessToken = initialTokens.accessToken;
+    }
+
+    if (initialTokens?.expiresAt) {
+      this.expiresAt = initialTokens.expiresAt;
     }
 
     if (initialTokens?.refreshToken) {
@@ -242,18 +249,28 @@ export class HybridTokenProvider implements TokenProvider {
     if (refreshToken) {
       result.refreshToken = refreshToken;
     }
+    if (this.expiresAt) {
+      result.expiresAt = this.expiresAt;
+    }
     return result;
   }
 
   setTokens(tokens: AuthTokens | null): void {
     if (!tokens) {
       this.accessToken = null;
+      this.expiresAt = null;
       this.storage.removeItem(this.refreshTokenKey);
       return;
     }
 
     if (tokens.accessToken) {
       this.accessToken = tokens.accessToken;
+    }
+
+    // Track expiry with the access token: a new access token carries a new
+    // expiry, and one without an expiresAt clears the stale value.
+    if (tokens.accessToken) {
+      this.expiresAt = tokens.expiresAt ?? null;
     }
 
     if (tokens.refreshToken) {
@@ -263,6 +280,7 @@ export class HybridTokenProvider implements TokenProvider {
 
   clearTokens(): void {
     this.accessToken = null;
+    this.expiresAt = null;
     this.storage.removeItem(this.refreshTokenKey);
   }
 }
