@@ -102,6 +102,8 @@ const feedOptions = createMusicFeedInfiniteQueryOptions(sdk);
 - Auth helpers
   - `MemoryTokenProvider`, `StorageTokenProvider`, `HybridTokenProvider`, `RefreshCoordinator`
   - Session helpers: `setSession`, `restoreSession`, `clearSession`, `refreshSession`
+  - Session readiness: `ready()` (await before firing authed requests on load)
+  - Token validity: `isAccessTokenValid(skewMs?)`, `isAccessTokenExpired(skewMs?)` (expiry-aware, vs presence-only `isAuthenticated()`)
 - Cache utilities
   - `createCache(ttlMs?)`
   - `CacheDB` (if you want to provide your own instance)
