@@ -7,7 +7,7 @@
  *
  * @example
  * ```typescript
- * import { createPostQueryOptions, createMusicFeedInfiniteQueryOptions, queryKeys } from '@social/cc-platform-sdk';
+ * import { createPostQueryOptions, createMusicFeedInfiniteQueryOptions, queryKeys } from '@cc-consulting-nv/ccsdk';
  *
  * // In React:
  * const { data: post } = useQuery(createPostQueryOptions(sdk, postUlid));

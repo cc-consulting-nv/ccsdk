@@ -1504,6 +1504,45 @@ test("restoreSession does not refresh a live stored token", async () => {
   assert.equal(calls.length, 0, "no network round-trip for a live token");
 });
 
+test("restoreSession mints access when only a refresh token is stored", async () => {
+  // Cookie-mode / hard-reload: session store keeps refresh_token only; access
+  // lives in MemoryTokenProvider and is gone. ready()/restoreSession must mint
+  // a bearer so consumers do not need ensureSessionReady glue.
+  const { fetchImpl, calls } = createMockFetch({
+    access_token: "minted-access",
+    refresh_token: "rotated-refresh",
+    expires_in: 3600,
+  });
+  const sessionStore = createMockSessionStore({
+    refreshToken: "stored-refresh",
+  });
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  const result = await sdk.restoreSession();
+
+  assert.equal(result.accessToken, "minted-access");
+  assert.equal(sdk.getTokens()?.accessToken, "minted-access");
+  assert.equal(calls.length, 1, "hit /auth/refresh once");
+  assert.equal(calls[0].url, `${baseUrl}/auth/refresh`);
+});
+
+test("ready() mints access for a refresh-only stored session", async () => {
+  const { fetchImpl, calls } = createMockFetch({
+    access_token: "minted-access",
+    refresh_token: "rotated-refresh",
+    expires_in: 3600,
+  });
+  const sessionStore = createMockSessionStore({
+    refreshToken: "stored-refresh",
+  });
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  await sdk.ready();
+
+  assert.equal(sdk.getTokens()?.accessToken, "minted-access");
+  assert.equal(calls.length, 1);
+});
+
 test("restoreSession refreshes when the provider holds the same token but no expiresAt", async () => {
   // Divergence case: in-memory provider already has the stored access token but
   // without its expiresAt (legacy token pre-dating the field, or a seeded

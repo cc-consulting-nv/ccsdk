@@ -83,9 +83,15 @@ Preferred option A shipped:
 ready(): Promise<void>
 ```
 
-Also: `restoreSession()` **refreshes when the restored token is expired**
-(reuses the `refreshSessionInFlight` dedup) so its resolved token is live, not
-merely present.
+Also: `restoreSession()` **refreshes when the restored token is not live**
+(reuses the `refreshSessionInFlight` dedup) so its resolved token is a usable
+bearer, not merely present:
+
+- expired access (`expiresAt` in the past)
+- **refresh-only store** (cookie-mode reload: no access token, only refresh)
+- unknown expiry (missing `expiresAt` → not provably valid)
+
+Shipped through 1.2.0 for expiry; **refresh-only mint completed in 1.2.2**.
 
 ---
 
