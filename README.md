@@ -13,14 +13,14 @@ Cache-aware TypeScript SDK for the CC-API that mirrors the Social UI's IndexedDB
 
 ## Installation
 
-This package is published to GitHub Packages. You need to configure npm to use GitHub Packages for the `@closedcircuitlogin` scope.
+This package is published to GitHub Packages. Configure npm to use GitHub Packages for the `@cc-consulting-nv` scope.
 
 ### 1. Configure npm registry
 
 Create or update `.npmrc` in your project root:
 
 ```
-@closedcircuitlogin:registry=https://npm.pkg.github.com
+@cc-consulting-nv:registry=https://npm.pkg.github.com
 //npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
 ```
 
@@ -45,19 +45,19 @@ export GITHUB_TOKEN=ghp_your_token_here
 
 ```bash
 # npm
-npm install @closedcircuitlogin/cc-platform-sdk
+npm install @cc-consulting-nv/ccsdk
 
 # pnpm
-pnpm add @closedcircuitlogin/cc-platform-sdk
+pnpm add @cc-consulting-nv/ccsdk
 
 # yarn
-yarn add @closedcircuitlogin/cc-platform-sdk
+yarn add @cc-consulting-nv/ccsdk
 ```
 
 ## Quickstart
 
 ```ts
-import { CcPlatformSdk, createMusicFeedInfiniteQueryOptions, createPostQueryOptions } from "@closedcircuitlogin/cc-platform-sdk";
+import { CcPlatformSdk, createMusicFeedInfiniteQueryOptions, createPostQueryOptions } from "@cc-consulting-nv/ccsdk";
 import { QueryClient } from "@tanstack/query-core";
 
 const sdk = new CcPlatformSdk({

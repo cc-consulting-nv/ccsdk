@@ -34,7 +34,7 @@ ccsdk/
 │       └── cacheDB.ts         # IndexedDB cache layer (posts, users, feeds, notifications)
 ├── tests/
 │   ├── httpClient.test.js     # Unit tests
-│   └── integration.js         # Integration tests (requires live API)
+│   └── integration/           # Live-API integration tests (pnpm test:integration)
 ├── dist/                      # Compiled output (ESM + declarations)
 ├── package.json
 ├── tsconfig.json
@@ -380,9 +380,9 @@ async getNewFeature(id: string): Promise<NewFeatureType> {
 
 ## Testing
 
-- **Unit tests:** `tests/httpClient.test.js` — Tests HTTP client behavior
-- **Integration tests:** `tests/integration.js` — Tests against a live API (requires credentials)
-- **Run:** `pnpm test` for unit tests, `pnpm test:integration` for integration
+- **Unit tests:** `tests/*.test.js` — e.g. HTTP client, auth/session, cache
+- **Integration tests:** `tests/integration/` — Live API (requires credentials); entry: `tests/integration/integration.js`
+- **Run:** `pnpm test` for unit tests; `API_TOKEN=… pnpm test:integration` for the smoke integration script
 
 ## Publishing
 

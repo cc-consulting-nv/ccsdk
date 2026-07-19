@@ -1,9 +1,14 @@
 # Auth / session-restore SDK gaps (feed empty-on-reload bug)
 
+> **Status: DONE (shipped in 1.2.0, PR #150)**  
+> Gap 1 and Gap 2 are implemented. Consumers can migrate off UI compensation
+> code (see [UI cleanup](#after-these-land--ui-cleanup-gunclub-ui)). Keep this
+> file as historical context; do not re-implement the proposed APIs.
+
 Written 2026-07-19 after fixing a gunclub-ui bug where a hard reload showed
 **"Welcome to Gun Club"** (empty feed) to a logged-in user. Root cause was
-UI-side and fully fixed there (gunclub-ui PR #580), but the fix exists only
-because the SDK leaves two things to every consumer. Implementing the changes
+UI-side and fully fixed there (gunclub-ui PR #580), but the fix existed only
+because the SDK left two things to every consumer. Implementing the changes
 below lets the UI delete its compensation code.
 
 ## Context: what the UI had to work around
@@ -26,25 +31,21 @@ The two SDK changes below remove the need for the UI to model any of this itself
 
 ---
 
-## Gap 1 — `getTokens()` / `isAuthenticated()` ignore expiry
+## Gap 1 — `getTokens()` / `isAuthenticated()` ignore expiry — **DONE**
 
-`AuthTokens` already carries `expiresAt` (ISO 8601, `src/types.ts:41`), but nothing
-reads it:
+`AuthTokens` already carries `expiresAt` (ISO 8601), but nothing used to read it:
 
-- `MemoryTokenProvider.getTokens()` (`src/auth.ts:65`) returns the raw stored object.
-- `StorageTokenProvider.getTokens()` (`src/auth.ts:115`) same.
-- `CcPlatformSdk.getTokens()` (`src/platformSdk.ts:916`) just proxies the provider.
-- `CcPlatformSdk.isAuthenticated()` (`src/platformSdk.ts:920`) is a **presence**
-  check: `Boolean(tokens?.accessToken)` — an expired token reads as authenticated.
+- `MemoryTokenProvider.getTokens()` returns the raw stored object.
+- `StorageTokenProvider.getTokens()` same.
+- `CcPlatformSdk.getTokens()` just proxies the provider.
+- `CcPlatformSdk.isAuthenticated()` is a **presence** check:
+  `Boolean(tokens?.accessToken)` — an expired token reads as authenticated.
 
 Consequence for consumers: no way to ask "is this token still valid?". The UI's
-`onRefreshTokens` had to *always* refresh on 401 rather than trusting the in-memory
-token, because it couldn't tell a live token from an expired one.
+`onRefreshTokens` had to *always* refresh on 401 rather than trusting the
+in-memory token, because it couldn't tell a live token from an expired one.
 
-### Proposed change
-
-Add expiry-aware helpers on the SDK (do **not** change `getTokens()`'s return shape —
-keep it a raw accessor):
+### Shipped API (1.2.0)
 
 ```ts
 /** True if there is an access token AND it has not passed its expiresAt. */
@@ -54,40 +55,26 @@ isAccessTokenValid(skewMs = 30_000): boolean
 isAccessTokenExpired(skewMs = 30_000): boolean
 ```
 
-- Read `AuthTokens.expiresAt`; treat missing `expiresAt` as "unknown → not
-  provably valid" (return false from `isAccessTokenValid` so callers refresh).
+- Reads `AuthTokens.expiresAt`; missing `expiresAt` is "unknown → not
+  provably valid" (false from `isAccessTokenValid` so callers refresh).
 - `skewMs` clock-skew buffer so a token about to expire counts as expired.
-- Then make `isAuthenticated()` continue to mean "has a token" (back-compat),
-  but document the distinction and point callers at `isAccessTokenValid()` for
-  the stricter check. Do not silently change `isAuthenticated()` semantics —
-  existing callers rely on presence.
-
-This lets `onRefreshTokens` skip the network round-trip when the token is still
-valid, and lets any consumer gate on validity instead of presence.
+- `isAuthenticated()` remains presence-only (back-compat). Callers that need
+  validity use `isAccessTokenValid()`.
 
 ---
 
-## Gap 2 — no "session restore complete" signal
+## Gap 2 — no "session restore complete" signal — **DONE**
 
-`restoreSession()` (`src/platformSdk.ts:883`) resolves with tokens-or-null but:
+Previously `restoreSession()` resolved with tokens-or-null but:
 
-- Does **not** validate expiry — returns a stored token even if `expiresAt` is
-  past (see Gap 1). A caller that awaits `restoreSession()` can still hold an
-  expired token afterward.
-- There is **no** event/observable/ready-promise a consumer can await for
+- Did **not** validate expiry — returned a stored token even if `expiresAt` was
+  past (see Gap 1).
+- There was **no** event/observable/ready-promise a consumer could await for
   "in-memory bearer is now populated (or definitively absent)".
 
-Consequence: the UI hand-rolled `sessionRestored` to answer "is it safe to fire
-authed requests yet?". Every consumer that renders authed data on load has to
-re-derive this.
+### Shipped API (1.2.0)
 
-### Proposed change
-
-Pick one (A preferred):
-
-**A. `ready()` / `whenReady` promise.**
-Expose a promise that resolves once the SDK has completed its first
-restore+refresh attempt (token populated, or guest confirmed):
+Preferred option A shipped:
 
 ```ts
 /** Resolves after the first restore/refresh settles. Safe to await before
@@ -96,37 +83,32 @@ restore+refresh attempt (token populated, or guest confirmed):
 ready(): Promise<void>
 ```
 
-**B. Event.**
-Emit `session-restored` (payload `{ authenticated: boolean }`) after the first
-restore/refresh settles, via the SDK's existing event mechanism.
-
-Also: `restoreSession()` should **refresh when the restored token is expired**
-(reuse the `refreshSessionInFlight` dedup at `src/platformSdk.ts:1522`) so its
-resolved token is always live, not merely present. That folds Gap 1's validity
-check into the restore path.
+Also: `restoreSession()` **refreshes when the restored token is expired**
+(reuses the `refreshSessionInFlight` dedup) so its resolved token is live, not
+merely present.
 
 ---
 
 ## After these land — UI cleanup (gunclub-ui)
 
-Once Gap 1 + Gap 2 ship, gunclub-ui can:
+Once Gap 1 + Gap 2 ship (now shipped), gunclub-ui can:
 
 - Delete the `sessionRestored` ref in `useAuth.ts`; gate the feed on
-  `await sdk.ready()` / the `session-restored` event instead.
+  `await sdk.ready()` instead.
 - Drop the `authService.getTokens()` localStorage fallback confusion by reading
   SDK validity directly.
 - Simplify `onRefreshTokens` to refresh only when `!sdk.isAccessTokenValid()`.
 
-Coordinate the UI cleanup PR with the SDK version bump. Related open SDK work:
-signout/cache gaps (ccsdk#138) and the "public cache API" note in gunclub-ui
-`CLAUDE.md` (quote-post media). Same theme: the UI is compensating for
-session/cache lifecycle the SDK should own.
+Coordinate the UI cleanup PR with the SDK version bump (≥ 1.2.0). Related open
+SDK work: signout/cache gaps (ccsdk#138) and the "public cache API" note in
+gunclub-ui `CLAUDE.md` (quote-post media). Same theme: the UI is compensating
+for session/cache lifecycle the SDK should own.
 
-## Priority
+## Priority (historical)
 
 - **Gap 1** first — small, self-contained, unblocks the 401 refresh simplification.
 - **Gap 2** next — bigger surface (public API + restore-path refresh), removes the
   UI's `sessionRestored` entirely.
 
-Neither is a correctness bug in the SDK today; both are missing affordances that
-push lifecycle logic into every consumer.
+Neither was a correctness bug in the SDK; both were missing affordances that
+pushed lifecycle logic into every consumer. Both are now shipped.

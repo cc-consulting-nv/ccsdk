@@ -22,7 +22,7 @@
     "lint": "echo \"lint not configured for sdk\"",
     "test": "pnpm build && node --loader ./tests/extension-loader.mjs --test $(ls tests/*.test.js)",
     "test:coverage": "pnpm build && npx c8 --reporter=text --include='dist/**' --exclude='dist/index.js' --extensions '.ts' -- node --loader ./tests/extension-loader.mjs --test $(ls tests/*.test.js)",
-    "test:integration": "node ./tests/integration.js",
+    "test:integration": "tsx tests/integration/integration.js",
     "test:integration:business": "tsx tests/integration/business-crud.integration.js",
     "docs": "typedoc --options typedoc.html.json",
     "docs:html": "typedoc --options typedoc.html.json",
