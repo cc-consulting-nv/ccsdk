@@ -469,7 +469,7 @@ export interface CcPlatformSdkOptions {
  *
  * @example
  * ```typescript
- * import { CcPlatformSdk, HybridTokenProvider } from '@social/cc-platform-sdk';
+ * import { CcPlatformSdk, HybridTokenProvider } from '@cc-consulting-nv/ccsdk';
  *
  * // Create SDK instance
  * const sdk = new CcPlatformSdk({
@@ -883,22 +883,26 @@ export class CcPlatformSdk {
   /**
    * Restore any previously persisted session into the active token provider.
    *
-   * If the restored access token is expired (per `expiresAt`), this refreshes
-   * it so the resolved token is live, not merely present. Refresh is skipped
-   * when there is nothing to refresh with (no refresh token / cookie).
+   * If the restored access token is not live (expired, missing, or missing
+   * `expiresAt`), this refreshes so the resolved token is a usable bearer —
+   * not merely a stored refresh token. Covers cookie-mode reloads that persist
+   * only a refresh token. Refresh is skipped when there is nothing to refresh
+   * with (no refresh token / cookie).
    */
   async restoreSession(): Promise<AuthTokens | null> {
     const restored = await this.restoreStoredSession();
+    if (!restored) {
+      return null;
+    }
 
-    // Fold Gap 1's validity check into the restore path: a stored-but-expired
-    // token gets refreshed here so callers awaiting restoreSession() never hold
-    // a dead bearer. refreshToken() reuses the refreshSessionInFlight dedup and
-    // calls restoreStoredSession() (NOT this method) internally, so no loop.
-    if (
-      restored &&
-      this.isTokenExpired(restored) &&
-      (restored.refreshToken || this.useRefreshCookie)
-    ) {
+    // Refresh when there is no provably live access token:
+    // - expired access (expiresAt in the past)
+    // - refresh-only store (no accessToken after cookie-mode reload)
+    // - unknown expiry (missing expiresAt → isAccessTokenValid is false)
+    // refreshToken() reuses refreshSessionInFlight and calls
+    // restoreStoredSession() (NOT this method) internally, so no loop.
+    const canRefresh = Boolean(restored.refreshToken || this.useRefreshCookie);
+    if (canRefresh && !this.isTokenValid(restored)) {
       const refreshed = await this.refreshToken();
       if (refreshed) return refreshed;
     }

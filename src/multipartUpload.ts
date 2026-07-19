@@ -7,7 +7,7 @@
  *
  * @example
  * ```typescript
- * import { MultipartUpload } from '@social/cc-platform-sdk';
+ * import { MultipartUpload } from '@cc-consulting-nv/ccsdk';
  *
  * const upload = new MultipartUpload(httpClient, {
  *   file: largeVideoFile,

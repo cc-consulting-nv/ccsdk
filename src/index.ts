@@ -30,7 +30,7 @@
  * ```
  *
  * @packageDocumentation
- * @module @social/cc-platform-sdk
+ * @module @cc-consulting-nv/ccsdk
  */
 
 export * from "./types.js";

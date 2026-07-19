@@ -7,7 +7,7 @@
  *
  * @example
  * ```typescript
- * import { createDexieQueryPersister } from '@social/cc-platform-sdk';
+ * import { createDexieQueryPersister } from '@cc-consulting-nv/ccsdk';
  * import { persistQueryClient } from '@tanstack/query-persist-client-core';
  *
  * const cache = new CacheDB();
@@ -59,7 +59,7 @@ export interface QueryPersisterShape {
  *
  * @example
  * ```typescript
- * import { createDexieQueryPersister, CacheDB } from '@social/cc-platform-sdk';
+ * import { createDexieQueryPersister, CacheDB } from '@cc-consulting-nv/ccsdk';
  * import { persistQueryClient } from '@tanstack/query-persist-client-core';
  *
  * const cache = new CacheDB();
