@@ -551,6 +551,9 @@ export class CcPlatformSdk {
   // Session refresh - single-flight request deduplication
   private refreshSessionInFlight: Promise<AuthTokens | null> | null = null;
 
+  // ready() memoization - the first restore/refresh attempt, run once.
+  private readyPromise: Promise<void> | null = null;
+
   // Sign-out epoch - bumped at sign-out (local or broadcast from another
   // tab). In-flight token refreshes capture it at start and refuse to
   // persist tokens if it changed, so a refresh that resolves mid-logout
@@ -879,8 +882,36 @@ export class CcPlatformSdk {
 
   /**
    * Restore any previously persisted session into the active token provider.
+   *
+   * If the restored access token is expired (per `expiresAt`), this refreshes
+   * it so the resolved token is live, not merely present. Refresh is skipped
+   * when there is nothing to refresh with (no refresh token / cookie).
    */
   async restoreSession(): Promise<AuthTokens | null> {
+    const restored = await this.restoreStoredSession();
+
+    // Fold Gap 1's validity check into the restore path: a stored-but-expired
+    // token gets refreshed here so callers awaiting restoreSession() never hold
+    // a dead bearer. refreshToken() reuses the refreshSessionInFlight dedup and
+    // calls restoreStoredSession() (NOT this method) internally, so no loop.
+    if (
+      restored &&
+      this.isTokenExpired(restored) &&
+      (restored.refreshToken || this.useRefreshCookie)
+    ) {
+      const refreshed = await this.refreshToken();
+      if (refreshed) return refreshed;
+    }
+
+    return restored;
+  }
+
+  /**
+   * Raw restore: load persisted tokens into the in-memory provider without any
+   * expiry-driven refresh. The refresh path calls this to avoid re-entering
+   * restoreSession()'s refresh logic.
+   */
+  private async restoreStoredSession(): Promise<AuthTokens | null> {
     const currentTokens = this.getTokens();
     if (!this.sessionStore) {
       return this.hasAuthTokens(currentTokens) ? currentTokens : null;
@@ -907,6 +938,28 @@ export class CcPlatformSdk {
   }
 
   /**
+   * Resolves after the first restore/refresh attempt settles (token populated,
+   * or guest confirmed). Safe to await before firing authenticated requests on
+   * app load. Idempotent — returns the same settled promise on later calls and
+   * never rejects (a failed restore just resolves to a guest state).
+   *
+   * @example
+   * ```typescript
+   * await sdk.ready();
+   * // in-memory bearer is now populated (or the user is definitively a guest)
+   * ```
+   */
+  ready(): Promise<void> {
+    if (!this.readyPromise) {
+      this.readyPromise = this.restoreSession().then(
+        () => undefined,
+        () => undefined,
+      );
+    }
+    return this.readyPromise;
+  }
+
+  /**
    * Clear the active session and remove any persisted tokens.
    */
   async clearSession(): Promise<void> {
@@ -917,9 +970,57 @@ export class CcPlatformSdk {
     return this.tokens.getTokens();
   }
 
+  /**
+   * Whether a token is present. This is a **presence** check only — an expired
+   * access token still reads as authenticated. For a validity check that
+   * respects `expiresAt`, use {@link isAccessTokenValid}.
+   */
   isAuthenticated(): boolean {
     const tokens = this.tokens.getTokens();
     return Boolean(tokens?.accessToken);
+  }
+
+  /**
+   * True if there is an access token AND it has not passed its `expiresAt`.
+   *
+   * Missing `expiresAt` is treated as "unknown → not provably valid" and
+   * returns false, so callers refresh rather than trust an unverifiable token.
+   *
+   * @param skewMs - Clock-skew buffer; a token expiring within this window
+   *   counts as already expired (default 30s).
+   */
+  isAccessTokenValid(skewMs = 30_000): boolean {
+    return this.isTokenValid(this.tokens.getTokens(), skewMs);
+  }
+
+  /**
+   * Expiry check for a specific token object (not the in-memory provider).
+   * Missing token/`expiresAt`/NaN date → false from both valid and expired:
+   * the "unknown" state, so neither helper falsely asserts liveness or death.
+   */
+  private isTokenValid(tokens: AuthTokens | null, skewMs = 30_000): boolean {
+    if (!tokens?.accessToken || !tokens.expiresAt) return false;
+    const expiresAt = new Date(tokens.expiresAt).getTime();
+    if (Number.isNaN(expiresAt)) return false;
+    return Date.now() + skewMs < expiresAt;
+  }
+
+  private isTokenExpired(tokens: AuthTokens | null, skewMs = 30_000): boolean {
+    if (!tokens?.accessToken || !tokens.expiresAt) return false;
+    const expiresAt = new Date(tokens.expiresAt).getTime();
+    if (Number.isNaN(expiresAt)) return false;
+    return Date.now() + skewMs >= expiresAt;
+  }
+
+  /**
+   * True if a token exists but its `expiresAt` is in the past (needs refresh).
+   * Returns false when there is no token, or when expiry is unknown.
+   *
+   * @param skewMs - Clock-skew buffer; a token expiring within this window
+   *   counts as already expired (default 30s).
+   */
+  isAccessTokenExpired(skewMs = 30_000): boolean {
+    return this.isTokenExpired(this.tokens.getTokens(), skewMs);
   }
 
   /**
@@ -1552,7 +1653,7 @@ export class CcPlatformSdk {
     // If a sign-out begins while this refresh is in flight, the epoch
     // advances and the refreshed tokens must be discarded, not persisted.
     const epochAtStart = this.signOutEpoch;
-    const currentTokens = await this.restoreSession();
+    const currentTokens = await this.restoreStoredSession();
     if (!currentTokens?.refreshToken && !this.useRefreshCookie) return null;
 
     // Always send the refresh token in the body when we have one, even with
@@ -7869,9 +7970,29 @@ export class CcPlatformSdk {
       throw new InvalidAuthResponseError(context);
     }
 
-    return refreshToken
-      ? { accessToken, refreshToken }
-      : { accessToken };
+    // Derive an absolute expiry. API sends either `expires_at` (ISO) or
+    // `expires_in` (seconds from now); prefer the absolute form when present.
+    let expiresAt: string | undefined;
+    if (typeof response.expires_at === "string") {
+      expiresAt = response.expires_at;
+    } else if (typeof response.expiresAt === "string") {
+      expiresAt = response.expiresAt;
+    } else {
+      const expiresIn =
+        typeof response.expires_in === "number"
+          ? response.expires_in
+          : typeof response.expiresIn === "number"
+            ? response.expiresIn
+            : undefined;
+      if (expiresIn !== undefined) {
+        expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+      }
+    }
+
+    const tokens: AuthTokens = { accessToken };
+    if (refreshToken) tokens.refreshToken = refreshToken;
+    if (expiresAt) tokens.expiresAt = expiresAt;
+    return tokens;
   }
 
   private extractNextCursor(payload: ApiEnvelope<unknown>): string | null | undefined {

@@ -17,6 +17,8 @@ export interface AuthTokens {
   accessToken?: string;
   /** Refresh token for obtaining new access tokens */
   refreshToken?: string;
+  /** ISO 8601 timestamp when the access token expires (if known) */
+  expiresAt?: string;
 }
 
 /**

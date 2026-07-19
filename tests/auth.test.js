@@ -783,19 +783,19 @@ test("refreshToken restores persisted session before refreshing", async () => {
 
   const result = await sdk.refreshToken();
 
-  assert.deepEqual(result, {
-    accessToken: "new-access-token",
-    refreshToken: "new-refresh-token",
-  });
+  assert.equal(result.accessToken, "new-access-token");
+  assert.equal(result.refreshToken, "new-refresh-token");
+  // expires_in: 3600 is now captured as an absolute expiresAt.
+  assert.ok(result.expiresAt, "expiresAt derived from expires_in");
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, `${baseUrl}/auth/refresh`);
   assert.deepEqual(JSON.parse(calls[0].init.body), {
     refresh_token: "stored-refresh-token",
   });
-  assert.deepEqual(sessionStore.getSnapshot(), {
-    accessToken: "new-access-token",
-    refreshToken: "new-refresh-token",
-  });
+  const snapshot = sessionStore.getSnapshot();
+  assert.equal(snapshot.accessToken, "new-access-token");
+  assert.equal(snapshot.refreshToken, "new-refresh-token");
+  assert.ok(snapshot.expiresAt, "persisted session carries derived expiresAt");
 });
 
 test("refreshToken clears tokens and returns null on failure", async () => {
@@ -1397,4 +1397,181 @@ test("isActing returns false and clears expired context", async () => {
 
   // Context should be auto-cleared
   assert.equal(sdk.getActingContext(), null);
+});
+
+// ---------------------------------------------------------------------------
+// Access-token validity helpers (Gap 1)
+// ---------------------------------------------------------------------------
+
+test("isAccessTokenValid true for a live token, false once expired", async () => {
+  const { fetchImpl } = createMockFetch({});
+  const future = new Date(Date.now() + 300_000).toISOString();
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    tokens: { accessToken: "t", expiresAt: future },
+  });
+
+  assert.equal(sdk.isAccessTokenValid(), true);
+  assert.equal(sdk.isAccessTokenExpired(), false);
+
+  const past = new Date(Date.now() - 1000).toISOString();
+  sdk.setTokens({ accessToken: "t", expiresAt: past });
+  assert.equal(sdk.isAccessTokenValid(), false);
+  assert.equal(sdk.isAccessTokenExpired(), true);
+});
+
+test("isAccessTokenValid false when expiresAt is unknown", async () => {
+  const { fetchImpl } = createMockFetch({});
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    tokens: { accessToken: "t" }, // no expiresAt
+  });
+
+  // Unknown expiry is not provably valid -> callers should refresh.
+  assert.equal(sdk.isAccessTokenValid(), false);
+  // ...but it isn't provably expired either.
+  assert.equal(sdk.isAccessTokenExpired(), false);
+  // Presence check still passes (back-compat).
+  assert.equal(sdk.isAuthenticated(), true);
+});
+
+test("skewMs treats an about-to-expire token as expired", async () => {
+  const { fetchImpl } = createMockFetch({});
+  const soon = new Date(Date.now() + 10_000).toISOString(); // 10s out
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    tokens: { accessToken: "t", expiresAt: soon },
+  });
+
+  assert.equal(sdk.isAccessTokenValid(30_000), false); // 30s skew
+  assert.equal(sdk.isAccessTokenValid(5_000), true); // 5s skew
+});
+
+// ---------------------------------------------------------------------------
+// ready() + restore-when-expired (Gap 2)
+// ---------------------------------------------------------------------------
+
+test("extractAuthTokens derives expiresAt from expires_in", async () => {
+  const { fetchImpl } = createMockFetch({
+    access_token: "a",
+    refresh_token: "r",
+    expires_in: 3600,
+  });
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl });
+
+  const tokens = await sdk.login("u@e.com", "pw");
+  assert.ok(tokens.expiresAt);
+  const skew = new Date(tokens.expiresAt).getTime() - Date.now();
+  // ~1h out, allow generous slack for test timing.
+  assert.ok(skew > 3_500_000 && skew < 3_700_000, `expiresAt ~1h: ${skew}ms`);
+});
+
+test("restoreSession refreshes a stored-but-expired token", async () => {
+  const { fetchImpl, calls } = createMockFetch({
+    access_token: "fresh-access",
+    refresh_token: "fresh-refresh",
+    expires_in: 3600,
+  });
+  const sessionStore = createMockSessionStore({
+    accessToken: "stale-access",
+    refreshToken: "stored-refresh",
+    expiresAt: new Date(Date.now() - 1000).toISOString(), // expired
+  });
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  const result = await sdk.restoreSession();
+
+  assert.equal(result.accessToken, "fresh-access");
+  assert.equal(calls.length, 1, "hit /auth/refresh once");
+  assert.equal(calls[0].url, `${baseUrl}/auth/refresh`);
+});
+
+test("restoreSession does not refresh a live stored token", async () => {
+  const { fetchImpl, calls } = createMockFetch({});
+  const sessionStore = createMockSessionStore({
+    accessToken: "live-access",
+    refreshToken: "stored-refresh",
+    expiresAt: new Date(Date.now() + 300_000).toISOString(), // live
+  });
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  const result = await sdk.restoreSession();
+
+  assert.equal(result.accessToken, "live-access");
+  assert.equal(calls.length, 0, "no network round-trip for a live token");
+});
+
+test("restoreSession refreshes when the provider holds the same token but no expiresAt", async () => {
+  // Divergence case: in-memory provider already has the stored access token but
+  // without its expiresAt (legacy token pre-dating the field, or a seeded
+  // Memory/Storage provider). restoreStoredSession's tokensChanged check skips
+  // reinstall, so the gate must read the RETURNED object's expiresAt, not the
+  // in-memory provider — else it hands back a dead bearer without refreshing.
+  const { fetchImpl, calls } = createMockFetch({
+    access_token: "fresh-access",
+    refresh_token: "fresh-refresh",
+    expires_in: 3600,
+  });
+  const expiredAt = new Date(Date.now() - 1000).toISOString();
+  let provider = {
+    accessToken: "stale-access",
+    refreshToken: "stored-refresh",
+    expiresAt: null, // no expiry known in memory
+  };
+  const tokenProvider = {
+    getTokens: () =>
+      provider.accessToken || provider.refreshToken ? { ...provider } : null,
+    setTokens: (t) => {
+      provider = t
+        ? { accessToken: t.accessToken ?? null, refreshToken: t.refreshToken ?? null, expiresAt: t.expiresAt ?? null }
+        : { accessToken: null, refreshToken: null, expiresAt: null };
+    },
+    clearTokens: () => {
+      provider = { accessToken: null, refreshToken: null, expiresAt: null };
+    },
+  };
+  const sessionStore = createMockSessionStore({
+    accessToken: "stale-access", // same access token as in memory
+    refreshToken: "stored-refresh",
+    expiresAt: expiredAt, // but store knows it is expired
+  });
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, tokenProvider, sessionStore });
+
+  const result = await sdk.restoreSession();
+
+  assert.equal(result.accessToken, "fresh-access", "returned a refreshed, live token");
+  assert.equal(calls.length, 1, "refreshed instead of returning the stale token");
+});
+
+test("ready() runs the first restore once and is idempotent", async () => {
+  const { fetchImpl, calls } = createMockFetch({
+    access_token: "fresh-access",
+    refresh_token: "fresh-refresh",
+    expires_in: 3600,
+  });
+  const sessionStore = createMockSessionStore({
+    accessToken: "stale-access",
+    refreshToken: "stored-refresh",
+    expiresAt: new Date(Date.now() - 1000).toISOString(),
+  });
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  await sdk.ready();
+  await sdk.ready(); // second await must not trigger another restore/refresh
+
+  assert.equal(calls.length, 1, "restore/refresh ran exactly once");
+  assert.equal(sdk.getTokens().accessToken, "fresh-access");
+});
+
+test("ready() resolves for a guest (no stored session)", async () => {
+  const { fetchImpl, calls } = createMockFetch({});
+  const sessionStore = createMockSessionStore(null);
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  await sdk.ready(); // must not hang or throw
+  assert.equal(calls.length, 0);
+  assert.equal(sdk.isAuthenticated(), false);
 });
