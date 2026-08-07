@@ -5500,13 +5500,47 @@ export class CcPlatformSdk {
     }
   }
 
+  /**
+   * Normalize a timestamp to epoch milliseconds.
+   *
+   * The API sends epoch fields as whole SECONDS (Carbon->timestamp), but both
+   * `UserProfile.updatedAt` and the hint are typed `string | number`, and
+   * `fetchUserProfileById` is public — so a caller can hand us milliseconds.
+   * Scaling by magnitude instead of by position makes both units safe: anything
+   * below 1e11 is seconds (that boundary is year 5138), anything above is
+   * already milliseconds. Returns NaN for values that aren't usable timestamps.
+   */
+  private toEpochMs(value: string | number | undefined): number {
+    if (value === undefined || value === null || value === "") return NaN;
+    if (typeof value === "number") {
+      if (!Number.isFinite(value) || value <= 0) return NaN;
+      return value < 1e11 ? value * 1000 : value;
+    }
+    // A numeric string is an epoch the server JSON-stringified, not a date;
+    // Date.parse would return NaN and silently drop the update.
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber) && value.trim() !== "") return this.toEpochMs(asNumber);
+    return Date.parse(value);
+  }
+
   private isUserStale(user: UserProfile, hintUpdatedAt?: string | number): boolean {
     if (!hintUpdatedAt) return false;
-    const cachedAt = typeof user.updatedAt === "string" ? Date.parse(user.updatedAt) : Number(user.updatedAt || 0);
-    const hintAt =
-      typeof hintUpdatedAt === "string" ? Date.parse(hintUpdatedAt) : Number(hintUpdatedAt);
-    if (!cachedAt || !hintAt) return false;
-    return hintAt > cachedAt;
+    const cachedAt = this.toEpochMs(user.updatedAt);
+    const hintAt = this.toEpochMs(hintUpdatedAt);
+    if (!Number.isFinite(cachedAt) || !Number.isFinite(hintAt)) return false;
+    // An epoch hint carries only whole seconds, while a cached ISO string keeps
+    // milliseconds, so comparing them raw makes a hint from the same second as the
+    // cache write read as older and swallows the update. Drop to seconds on both
+    // sides so the precisions line up. An ISO hint has full precision on both
+    // sides already and must NOT be floored — that would discard a genuinely newer
+    // sub-second update.
+    //
+    // ponytail: an epoch hint still loses a touch landing in the same second as the
+    // cache write. Bounded by the 30-min soft TTL; fixing it properly means the API
+    // sending millisecond precision, not worth a payload change for <1s of lag.
+    const hintIsIso = typeof hintUpdatedAt === "string" && !Number.isFinite(Number(hintUpdatedAt));
+    if (hintIsIso) return hintAt > cachedAt;
+    return Math.floor(hintAt / 1000) > Math.floor(cachedAt / 1000);
   }
 
   private async hydrateUsersFromHints(
