@@ -328,7 +328,7 @@ export interface PlaylistMedia {
   order?: number;
   /** Last update timestamp */
   updatedAt?: string;
-  /** Last update timestamp as epoch milliseconds */
+  /** Last update timestamp as epoch SECONDS (the API sends Carbon->timestamp; multiply by 1000 for Date) */
   updatedAtEpoch?: number;
 }
 
@@ -620,7 +620,7 @@ export interface UserProfile {
   backgroundVariants?: ImageVariants | null;
   /** Last update timestamp */
   updatedAt?: string | number;
-  /** Last update timestamp as epoch milliseconds */
+  /** Last update timestamp as epoch SECONDS (the API sends Carbon->timestamp; multiply by 1000 for Date) */
   updatedAtEpoch?: number;
   /** User's bio/description */
   bio?: string;
@@ -788,7 +788,7 @@ export interface AudioSearchResult {
   avatar?: string;
   /** Last update timestamp (ISO 8601) */
   updatedAt?: string;
-  /** Last update timestamp as epoch milliseconds */
+  /** Last update timestamp as epoch SECONDS (the API sends Carbon->timestamp; multiply by 1000 for Date) */
   updatedAtEpoch?: number;
   /** Additional properties from API */
   [key: string]: unknown;
