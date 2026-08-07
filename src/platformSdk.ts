@@ -5504,8 +5504,19 @@ export class CcPlatformSdk {
     if (!hintUpdatedAt) return false;
     const cachedAt = typeof user.updatedAt === "string" ? Date.parse(user.updatedAt) : Number(user.updatedAt || 0);
     const hintAt =
-      typeof hintUpdatedAt === "string" ? Date.parse(hintUpdatedAt) : Number(hintUpdatedAt);
+      typeof hintUpdatedAt === "string" ? Date.parse(hintUpdatedAt) : Number(hintUpdatedAt) * 1000;
     if (!cachedAt || !hintAt) return false;
+    // A numeric hint is a whole-second epoch (the API sends Carbon->timestamp), while the
+    // cached copy keeps sub-second precision from an ISO string. Comparing them directly
+    // compares a floored second against an unfloored one, so a hint from the same second as
+    // the cache write reads as older and the update is swallowed. Floor both sides.
+    //
+    // ponytail: this still loses a touch that lands in the same second as the cache write —
+    // sub-second staleness, self-correcting on the next feed load. Fixing it properly means
+    // the API sending millisecond precision; not worth a payload change for <1s of lag.
+    if (typeof hintUpdatedAt === "number") {
+      return Math.floor(hintAt / 1000) > Math.floor(cachedAt / 1000);
+    }
     return hintAt > cachedAt;
   }
 
