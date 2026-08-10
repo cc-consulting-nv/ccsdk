@@ -1400,6 +1400,96 @@ test("isActing returns false and clears expired context", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// actingContext persistence via injected StorageLike (React Native support)
+// ---------------------------------------------------------------------------
+
+/** In-memory StorageLike, standing in for MMKV/AsyncStorage on React Native. */
+function makeMemoryStorage(initial = {}) {
+  const map = new Map(Object.entries(initial));
+  return {
+    map,
+    getItem: (k) => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => { map.set(k, v); },
+    removeItem: (k) => { map.delete(k); },
+  };
+}
+
+test("setActingContext persists to injected storage", async () => {
+  const { fetchImpl } = createMockFetch({});
+  const storage = makeMemoryStorage();
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, storage });
+
+  sdk.setActingContext(sampleActingContext);
+
+  const raw = storage.getItem("actingContext");
+  assert.ok(raw, "actingContext should be written to injected storage");
+  assert.equal(JSON.parse(raw).managedUserUlid, sampleActingContext.managedUserUlid);
+});
+
+test("acting context survives a restart when storage is injected", async () => {
+  const { fetchImpl } = createMockFetch({});
+  const storage = makeMemoryStorage();
+
+  const first = new CcPlatformSdk({ baseUrl, fetchImpl, storage });
+  first.setActingContext(sampleActingContext);
+
+  // Fresh instance sharing the same storage == an app restart. This is the
+  // silent failure on React Native: without injection nothing throws, the
+  // selection just vanishes.
+  const second = new CcPlatformSdk({ baseUrl, fetchImpl, storage });
+  const restored = second.getActingContext();
+
+  assert.ok(restored, "acting context should be restored from storage");
+  assert.equal(restored.managedUserUlid, sampleActingContext.managedUserUlid);
+  assert.equal(restored.token, sampleActingContext.token);
+});
+
+test("clearActingContext removes the persisted copy", async () => {
+  const { fetchImpl } = createMockFetch({});
+  const storage = makeMemoryStorage();
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, storage });
+
+  sdk.setActingContext(sampleActingContext);
+  sdk.clearActingContext();
+
+  assert.equal(storage.getItem("actingContext"), null);
+  assert.equal(new CcPlatformSdk({ baseUrl, fetchImpl, storage }).getActingContext(), null);
+});
+
+test("setActingContext(null) removes the persisted copy", async () => {
+  const { fetchImpl } = createMockFetch({});
+  const storage = makeMemoryStorage();
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, storage });
+
+  sdk.setActingContext(sampleActingContext);
+  sdk.setActingContext(null);
+
+  assert.equal(storage.getItem("actingContext"), null);
+});
+
+test("corrupt persisted acting context is discarded, not thrown", async () => {
+  const { fetchImpl } = createMockFetch({});
+  const storage = makeMemoryStorage({ actingContext: "{not valid json" });
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, storage });
+
+  assert.equal(sdk.getActingContext(), null);
+  assert.equal(storage.getItem("actingContext"), null, "bad entry should be cleared");
+});
+
+test("acting context does not persist without storage or localStorage", async () => {
+  const { fetchImpl } = createMockFetch({});
+  // No storage option and no localStorage in Node: the no-op fallback applies.
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl });
+
+  sdk.setActingContext(sampleActingContext);
+
+  // Still works in memory for the life of the instance...
+  assert.equal(sdk.getActingContext().token, sampleActingContext.token);
+  // ...but a fresh instance starts clean, and nothing throws.
+  assert.equal(new CcPlatformSdk({ baseUrl, fetchImpl }).getActingContext(), null);
+});
+
+// ---------------------------------------------------------------------------
 // Access-token validity helpers (Gap 1)
 // ---------------------------------------------------------------------------
 

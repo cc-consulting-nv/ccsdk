@@ -1,6 +1,6 @@
-import { CacheDB, createCache, DEFAULT_DB_NAME } from "./cache/cacheDB.js";
+import { type CacheAdapter, createCache, DEFAULT_DB_NAME } from "./cache/cacheDB.js";
 import { HttpClient, type HttpClientOptions } from "./httpClient.js";
-import { HybridTokenProvider, RefreshCoordinator, type SessionStore, type TokenProvider } from "./auth.js";
+import { HybridTokenProvider, RefreshCoordinator, type SessionStore, type StorageLike, type TokenProvider } from "./auth.js";
 import { MultipartUpload, type MultipartUploadOptions, type UploadResult } from "./multipartUpload.js";
 import {
   watchPostProcessing,
@@ -404,14 +404,26 @@ export interface CcPlatformSdkOptions {
   /** Token storage provider (default: HybridTokenProvider) */
   tokenProvider?: TokenProvider;
   /**
+   * Synchronous key-value storage used for the default token provider and for
+   * persisting the acting context across restarts.
+   *
+   * Defaults to `localStorage` where available, and to an in-memory no-op
+   * store otherwise. React Native has no `localStorage`, so pass a
+   * `StorageLike` (e.g. MMKV) or acting-context selection will silently fail
+   * to survive app restarts.
+   */
+  storage?: StorageLike;
+  /**
    * Optional async session store for persisting tokens outside the token provider.
    * Use this for native secure storage or other async persistence backends.
    */
   sessionStore?: SessionStore;
   /**
-   * Optional Dexie-backed cache. If omitted, a new cache instance is created.
+   * Optional cache implementation. If omitted, a Dexie/IndexedDB-backed cache
+   * is created. Supply a platform-specific {@link CacheAdapter} on React
+   * Native, where IndexedDB does not exist.
    */
-  cache?: CacheDB;
+  cache?: CacheAdapter;
   /**
    * Optional database name for the IndexedDB cache. Default: "CcPlatformSdkCache"
    * Use a unique name per app to avoid cache collisions (e.g., "MusicCatalogCache")
@@ -493,7 +505,7 @@ export class CcPlatformSdk {
   static readonly SDK_VERSION = "2.0.0";
   private readonly tokens: TokenProvider;
   private readonly sessionStore?: SessionStore;
-  private readonly cachePromise: Promise<CacheDB>;
+  private readonly cachePromise: Promise<CacheAdapter>;
   private readonly client: HttpClient;
   private readonly refreshCoordinator = new RefreshCoordinator();
   private readonly postBatchDelay = 100;
@@ -502,7 +514,7 @@ export class CcPlatformSdk {
     Ulid,
     Array<{ resolve: (post: Post) => void; reject: (err: unknown) => void }>
   > = new Map();
-  private postBatchTimer: number | null = null;
+  private postBatchTimer: ReturnType<typeof setTimeout> | null = null;
 
   // User profile batching - debounce and batch up to 20 ULIDs
   private readonly userBatchDelay = 50;
@@ -537,7 +549,7 @@ export class CcPlatformSdk {
     resolve: (data: Record<string, unknown>) => void;
     reject: (err: unknown) => void;
   }> = [];
-  private engagementBatchTimer: number | null = null;
+  private engagementBatchTimer: ReturnType<typeof setTimeout> | null = null;
   private engagementInFlight: Promise<Record<string, unknown>> | null = null;
 
   // Notification counts - single-flight request deduplication
@@ -585,6 +597,10 @@ export class CcPlatformSdk {
   // Acting context for delegated user access
   private actingContext: ActingContext | null = null;
 
+  // Synchronous key-value storage backing token persistence and actingContext.
+  // Never undefined: falls back to a no-op store where no platform storage exists.
+  private readonly storage: StorageLike;
+
   // Logging state - check option first, then environment variable
   private readonly enableLogging: boolean;
   private readonly useRefreshCookie: boolean;
@@ -594,14 +610,20 @@ export class CcPlatformSdk {
     this.enableLogging = options.enableLogging !== undefined 
       ? options.enableLogging 
       : isLoggingEnabled();
-    // Use HybridTokenProvider by default (access token in memory, refresh token in localStorage)
-    // This is more secure as access tokens are cleared on page refresh
-    this.tokens = options.tokenProvider ?? new HybridTokenProvider(
+    // Injected storage > localStorage > no-op. Resolved once and shared by the
+    // default token provider and actingContext persistence, so a React Native
+    // consumer passing `storage` gets both without a second option.
+    this.storage = options.storage ?? (
       typeof localStorage !== "undefined" ? localStorage : {
         getItem: () => null,
         setItem: () => { },
         removeItem: () => { },
-      },
+      }
+    );
+    // Use HybridTokenProvider by default (access token in memory, refresh token in storage)
+    // This is more secure as access tokens are cleared on page refresh
+    this.tokens = options.tokenProvider ?? new HybridTokenProvider(
+      this.storage,
       options.tokens,
     );
     this.sessionStore = options.sessionStore;
@@ -1035,13 +1057,11 @@ export class CcPlatformSdk {
   setActingContext(context: ActingContext | null): void {
     this.actingContext = context;
 
-    // Persist to localStorage so it survives page reloads
-    if (typeof localStorage !== "undefined") {
-      if (context) {
-        localStorage.setItem("actingContext", JSON.stringify(context));
-      } else {
-        localStorage.removeItem("actingContext");
-      }
+    // Persist so it survives page reloads / app restarts
+    if (context) {
+      this.storage.setItem("actingContext", JSON.stringify(context));
+    } else {
+      this.storage.removeItem("actingContext");
     }
   }
 
@@ -1054,17 +1074,15 @@ export class CcPlatformSdk {
       return this.actingContext;
     }
 
-    // Try to load from localStorage if not in memory
-    if (typeof localStorage !== "undefined") {
-      const stored = localStorage.getItem("actingContext");
-      if (stored) {
-        try {
-          this.actingContext = JSON.parse(stored);
-          return this.actingContext;
-        } catch {
-          // Invalid JSON, clear it
-          localStorage.removeItem("actingContext");
-        }
+    // Try to load from storage if not in memory
+    const stored = this.storage.getItem("actingContext");
+    if (stored) {
+      try {
+        this.actingContext = JSON.parse(stored);
+        return this.actingContext;
+      } catch {
+        // Invalid JSON, clear it
+        this.storage.removeItem("actingContext");
       }
     }
 
@@ -1077,10 +1095,8 @@ export class CcPlatformSdk {
   clearActingContext(): void {
     this.actingContext = null;
 
-    // Remove from localStorage
-    if (typeof localStorage !== "undefined") {
-      localStorage.removeItem("actingContext");
-    }
+    // Remove from storage
+    this.storage.removeItem("actingContext");
   }
 
   /**
@@ -1845,7 +1861,7 @@ export class CcPlatformSdk {
       clearTimeout(this.postBatchTimer);
     }
 
-    this.postBatchTimer = window.setTimeout(() => {
+    this.postBatchTimer = setTimeout(() => {
       this.flushPostBatch(cache).catch((err) => {
         this.log("[SDK] flushPostBatch (debounce) unexpected error:", err);
       });
@@ -1871,7 +1887,7 @@ export class CcPlatformSdk {
     return results;
   }
 
-  private async flushPostBatch(cache: CacheDB): Promise<void> {
+  private async flushPostBatch(cache: CacheAdapter): Promise<void> {
     const idsToFetch = Array.from(this.postBatchQueue);
     this.postBatchQueue.clear();
     this.postBatchTimer = null;
@@ -3244,7 +3260,7 @@ export class CcPlatformSdk {
       }
 
       // Debounce the actual API call
-      this.engagementBatchTimer = window.setTimeout(() => {
+      this.engagementBatchTimer = setTimeout(() => {
         this.flushEngagementBatch();
       }, this.engagementBatchDelay);
     });

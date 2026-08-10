@@ -11,6 +11,9 @@
 // `extends`-ed (TS2507). The named export keeps the constructor type.
 import { Dexie, type EntityTable, liveQuery, type Observable } from "dexie";
 import { type FeedPage, type Group, type Post, type Ulid, type UserProfile } from "../types.js";
+import type { CacheAdapter } from "./cacheAdapter.js";
+
+export type { CacheAdapter };
 
 /**
  * Default soft-refresh TTL (30 minutes). Entries older than this are still
@@ -33,7 +36,7 @@ export { liveQuery, type Observable };
  * @category Cache
  * @internal
  */
-interface CacheEntry<T> {
+export interface CacheEntry<T> {
   /** Unique identifier for the cached item */
   id: Ulid;
   /** The cached data */
@@ -59,7 +62,7 @@ interface CacheEntry<T> {
  * @category Cache
  * @internal
  */
-interface FeedResource {
+export interface FeedResource {
   /** Route identifier for the feed (e.g., "/v1/feed/trending") */
   route: string;
   /** Array of post ULIDs in this feed */
@@ -77,7 +80,7 @@ interface FeedResource {
  * @category Cache
  * @internal
  */
-interface NotificationFeedResource {
+export interface NotificationFeedResource {
   /** Route identifier */
   route: string;
   /** User ID this feed belongs to */
@@ -226,7 +229,8 @@ function isDexieConnectionLost(err: unknown): boolean {
 }
 
 /**
- * IndexedDB-based cache for the CC Platform SDK.
+ * IndexedDB-based cache for the CC Platform SDK. The default
+ * {@link CacheAdapter} on the web.
  *
  * Provides offline-first caching for posts, users, feeds, and notifications
  * with configurable TTL and LRU-style access tracking.
@@ -244,7 +248,7 @@ function isDexieConnectionLost(err: unknown): boolean {
  *
  * @category Cache
  */
-export class CacheDB {
+export class DexieCacheAdapter implements CacheAdapter {
   private db: PlatformCacheDB;
   private readonly dbName?: string;
   private readonly ttlMs: number;
@@ -1259,8 +1263,30 @@ export async function createCache(
   maxCapacity?: number,
   refreshTtlMs?: number,
   trimIntervalMs?: number,
-): Promise<CacheDB> {
-  const cache = new CacheDB(ttlMs, dbName, maxCapacity, refreshTtlMs, trimIntervalMs);
+  adapter?: CacheAdapter,
+): Promise<CacheAdapter> {
+  const cache = adapter
+    ?? new DexieCacheAdapter(ttlMs, dbName, maxCapacity, refreshTtlMs, trimIntervalMs);
   await cache.open();
   return cache;
 }
+
+/**
+ * The Dexie/IndexedDB cache implementation.
+ *
+ * @deprecated Renamed to {@link DexieCacheAdapter} now that the cache sits
+ * behind the {@link CacheAdapter} interface. Type annotations should prefer
+ * `CacheAdapter`; use `DexieCacheAdapter` when you specifically need the
+ * IndexedDB implementation. Retained so existing consumers keep compiling.
+ *
+ * @category Cache
+ */
+export const CacheDB = DexieCacheAdapter;
+
+/**
+ * @deprecated Use {@link CacheAdapter} for annotations, or
+ * {@link DexieCacheAdapter} for the IndexedDB implementation specifically.
+ *
+ * @category Cache
+ */
+export type CacheDB = DexieCacheAdapter;

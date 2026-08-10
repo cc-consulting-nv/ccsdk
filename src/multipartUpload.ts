@@ -31,6 +31,7 @@
 import type { HttpClient } from "./httpClient.js";
 import { sanitizeFileName } from "./utils/s3Key.js";
 import type { BlobStore } from "./blobStore.js";
+import { type ConnectivitySource, defaultConnectivitySource } from "./platform/connectivity.js";
 
 /**
  * Detailed progress information for a multipart upload.
@@ -102,10 +103,16 @@ export interface MultipartUploadOptions {
   /** Stable id used as the BlobStore key. Defaults to a generated id. */
   jobId?: string;
   /**
-   * Wait for `online` event before retrying parts when navigator.onLine is
-   * false. Defaults to true in the browser.
+   * Wait for the network to come back before retrying parts while the
+   * connectivity source reports offline. Defaults to true in the browser.
    */
   awaitOnline?: boolean;
+  /**
+   * Source of network connectivity state. Defaults to a `navigator.onLine` +
+   * window `online` event implementation, which is inert where those globals
+   * are missing. Supply a NetInfo-backed source on React Native.
+   */
+  connectivity?: ConnectivitySource;
   /**
    * Reports terminal errors with structured context, e.g. for Sentry.
    * Called in addition to onError.
@@ -236,6 +243,7 @@ export class MultipartUpload {
   private blobStore: BlobStore | null;
   private jobId: string;
   private awaitOnline: boolean;
+  private connectivity: ConnectivitySource;
   private onProgress: (percentage: number, uploadedParts: number, totalParts: number) => void;
   private onByteProgress: (progress: MultipartProgress) => void;
   private onComplete: (location: string) => void;
@@ -270,6 +278,7 @@ export class MultipartUpload {
     this.blobStore = options.blobStore ?? null;
     this.jobId = options.jobId ?? `up_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     this.awaitOnline = options.awaitOnline ?? true;
+    this.connectivity = options.connectivity ?? defaultConnectivitySource;
     this.onProgress = options.onProgress || (() => {});
     this.onByteProgress = options.onByteProgress || (() => {});
     this.onComplete = options.onComplete || (() => {});
@@ -429,7 +438,7 @@ export class MultipartUpload {
             this.updateProgress();
             if (this.aborted) return;
             // Don't burn a retry on a known-dead network.
-            if (typeof navigator !== "undefined" && navigator.onLine === false) {
+            if (!this.connectivity.isOnline()) {
               attempt--;
               await this.waitForOnline();
               continue;
@@ -483,16 +492,21 @@ export class MultipartUpload {
 
   private waitForOnline(): Promise<void> {
     if (!this.awaitOnline) return Promise.resolve();
-    if (typeof navigator === "undefined" || navigator.onLine !== false) {
-      return Promise.resolve();
-    }
-    if (typeof window === "undefined") return Promise.resolve();
+    if (this.connectivity.isOnline()) return Promise.resolve();
     return new Promise((resolve) => {
+      // ponytail: resolve() before unsubscribe() is deliberate — a source whose
+      // subscribe fires synchronously would otherwise leave `unsubscribe`
+      // undefined at call time. Unsubscribe must tolerate being called twice.
+      let unsubscribe: (() => void) | undefined;
+      let settled = false;
       const onOnline = () => {
-        window.removeEventListener("online", onOnline);
+        if (settled) return;
+        settled = true;
         resolve();
+        unsubscribe?.();
       };
-      window.addEventListener("online", onOnline);
+      unsubscribe = this.connectivity.onOnline(onOnline);
+      if (settled) unsubscribe();
     });
   }
 
