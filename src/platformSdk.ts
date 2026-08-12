@@ -1463,6 +1463,7 @@ export class CcPlatformSdk {
 
     await this.client.post("/sendMagicLink", {
       body,
+      skipAuth: true,
     });
   }
 
@@ -1505,6 +1506,7 @@ export class CcPlatformSdk {
 
     await this.client.post("/sendAuthCode", {
       body,
+      skipAuth: true,
     });
   }
 
