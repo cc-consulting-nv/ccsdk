@@ -597,6 +597,11 @@ export class CcPlatformSdk {
   // Acting context for delegated user access
   private actingContext: ActingContext | null = null;
 
+  // Storage key for the persisted acting context. Namespaced by dbName so that
+  // sibling instances (one per profile, under SessionManager) never read or
+  // clobber each other's acting context.
+  private readonly actingContextKey: string;
+
   // Synchronous key-value storage backing token persistence and actingContext.
   // Never undefined: falls back to a no-op store where no platform storage exists.
   private readonly storage: StorageLike;
@@ -629,6 +634,7 @@ export class CcPlatformSdk {
     this.sessionStore = options.sessionStore;
     this.useRefreshCookie = options.useRefreshCookie === true;
     this.cachePromise = options.cache ? Promise.resolve(options.cache) : createCache(undefined, options.dbName);
+    this.actingContextKey = `actingContext:${options.dbName ?? DEFAULT_DB_NAME}`;
 
     const clientOptions: HttpClientOptions = {
       baseUrl: options.baseUrl.replace(/\/$/, ""),
@@ -1059,9 +1065,9 @@ export class CcPlatformSdk {
 
     // Persist so it survives page reloads / app restarts
     if (context) {
-      this.storage.setItem("actingContext", JSON.stringify(context));
+      this.storage.setItem(this.actingContextKey, JSON.stringify(context));
     } else {
-      this.storage.removeItem("actingContext");
+      this.storage.removeItem(this.actingContextKey);
     }
   }
 
@@ -1075,14 +1081,14 @@ export class CcPlatformSdk {
     }
 
     // Try to load from storage if not in memory
-    const stored = this.storage.getItem("actingContext");
+    const stored = this.storage.getItem(this.actingContextKey);
     if (stored) {
       try {
         this.actingContext = JSON.parse(stored);
         return this.actingContext;
       } catch {
         // Invalid JSON, clear it
-        this.storage.removeItem("actingContext");
+        this.storage.removeItem(this.actingContextKey);
       }
     }
 
@@ -1096,7 +1102,7 @@ export class CcPlatformSdk {
     this.actingContext = null;
 
     // Remove from storage
-    this.storage.removeItem("actingContext");
+    this.storage.removeItem(this.actingContextKey);
   }
 
   /**
@@ -1463,6 +1469,7 @@ export class CcPlatformSdk {
 
     await this.client.post("/sendMagicLink", {
       body,
+      skipAuth: true,
     });
   }
 
@@ -1505,6 +1512,7 @@ export class CcPlatformSdk {
 
     await this.client.post("/sendAuthCode", {
       body,
+      skipAuth: true,
     });
   }
 

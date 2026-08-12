@@ -13,6 +13,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { CcPlatformSdk } from "../dist/platformSdk.js";
 import { HybridTokenProvider } from "../dist/auth.js";
+import { DEFAULT_DB_NAME } from "../dist/cache/cacheDB.js";
 
 const baseUrl = "https://api.example.com";
 
@@ -1403,6 +1404,10 @@ test("isActing returns false and clears expired context", async () => {
 // actingContext persistence via injected StorageLike (React Native support)
 // ---------------------------------------------------------------------------
 
+// Acting context is namespaced by dbName so sibling per-profile instances never
+// share one entry. These SDKs pass no dbName, so they land on the default.
+const ACTING_CONTEXT_KEY = `actingContext:${DEFAULT_DB_NAME}`;
+
 /** In-memory StorageLike, standing in for MMKV/AsyncStorage on React Native. */
 function makeMemoryStorage(initial = {}) {
   const map = new Map(Object.entries(initial));
@@ -1421,7 +1426,7 @@ test("setActingContext persists to injected storage", async () => {
 
   sdk.setActingContext(sampleActingContext);
 
-  const raw = storage.getItem("actingContext");
+  const raw = storage.getItem(ACTING_CONTEXT_KEY);
   assert.ok(raw, "actingContext should be written to injected storage");
   assert.equal(JSON.parse(raw).managedUserUlid, sampleActingContext.managedUserUlid);
 });
@@ -1452,7 +1457,7 @@ test("clearActingContext removes the persisted copy", async () => {
   sdk.setActingContext(sampleActingContext);
   sdk.clearActingContext();
 
-  assert.equal(storage.getItem("actingContext"), null);
+  assert.equal(storage.getItem(ACTING_CONTEXT_KEY), null);
   assert.equal(new CcPlatformSdk({ baseUrl, fetchImpl, storage }).getActingContext(), null);
 });
 
@@ -1464,16 +1469,16 @@ test("setActingContext(null) removes the persisted copy", async () => {
   sdk.setActingContext(sampleActingContext);
   sdk.setActingContext(null);
 
-  assert.equal(storage.getItem("actingContext"), null);
+  assert.equal(storage.getItem(ACTING_CONTEXT_KEY), null);
 });
 
 test("corrupt persisted acting context is discarded, not thrown", async () => {
   const { fetchImpl } = createMockFetch({});
-  const storage = makeMemoryStorage({ actingContext: "{not valid json" });
+  const storage = makeMemoryStorage({ [ACTING_CONTEXT_KEY]: "{not valid json" });
   const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, storage });
 
   assert.equal(sdk.getActingContext(), null);
-  assert.equal(storage.getItem("actingContext"), null, "bad entry should be cleared");
+  assert.equal(storage.getItem(ACTING_CONTEXT_KEY), null, "bad entry should be cleared");
 });
 
 test("acting context does not persist without storage or localStorage", async () => {
