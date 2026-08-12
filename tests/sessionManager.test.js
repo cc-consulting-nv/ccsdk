@@ -39,6 +39,8 @@ function createApi() {
   const calls = [];
   /** Bearers the API should start rejecting, to simulate a revoked session. */
   const denied = new Set();
+  /** ULID -> gate promise; lets a test hold one account's logout mid-flight. */
+  const logoutGates = new Map();
 
   function addAccount(email, ulid, username, displayName) {
     accounts.set(email, {
@@ -92,6 +94,13 @@ function createApi() {
       );
     }
 
+    if (path === "/v1/auth/logout") {
+      const account = [...accounts.values()].find((a) => a.accessToken === bearer);
+      const gate = account ? logoutGates.get(account.ulid) : undefined;
+      if (gate) await gate;
+      return new Response(JSON.stringify({ data: {} }), { status: 200 });
+    }
+
     return new Response(JSON.stringify({ data: {} }), { status: 200 });
   };
 
@@ -102,6 +111,18 @@ function createApi() {
     /** Start rejecting this bearer, as the server would after a revocation. */
     revoke: (bearer) => denied.add(bearer),
     callsTo: (path) => calls.filter((c) => c.path === path),
+    /**
+     * Hold this ULID's logout open until the returned release() is called, so a
+     * test can deterministically interleave two removals.
+     */
+    blockLogout(ulid) {
+      let release;
+      logoutGates.set(ulid, new Promise((r) => { release = r; }));
+      return () => {
+        logoutGates.delete(ulid);
+        release();
+      };
+    },
   };
 }
 
@@ -561,6 +582,109 @@ test("remove is a no-op for an unknown profile", async () => {
 
   assert.equal(manager.list().length, 1);
   assert.equal(manager.activeProfileUlid, "01ALICE");
+
+  await manager.dispose();
+});
+
+test("concurrent removes both take effect", async () => {
+  // Regression: remove() captured the splice index before awaiting a network
+  // logout. A second remove() landing in that window shifted the array, so the
+  // first spliced a stale index — leaving a profile signed out but still listed,
+  // and (if it had been active) still selected as the active profile.
+  const prefix = uniquePrefix("remove-concurrent");
+  const api = createApi();
+  api.addAccount("alice@example.com", "01ALICE", "alice", "Alice");
+  api.addAccount("bob@example.com", "01BOB", "bob", "Bob");
+  api.addAccount("carol@example.com", "01CAROL", "carol", "Carol");
+
+  const stores = createStoreFactory();
+  const registry = createRegistry();
+  const manager = createManager({ api, stores, registry, prefix });
+  await manager.ready();
+
+  // Registered in this order, so internal order is [ALICE, BOB, CAROL].
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+  await manager.addProfile((sdk) => sdk.login("bob@example.com", "pw"));
+  await manager.addProfile((sdk) => sdk.login("carol@example.com", "pw"));
+
+  // Hold Carol's logout open, start her removal, then let Alice's finish first.
+  const releaseCarol = api.blockLogout("01CAROL");
+  const carolRemoval = manager.remove("01CAROL");
+  await manager.remove("01ALICE");
+  releaseCarol();
+  await carolRemoval;
+
+  const remaining = manager.list().map((p) => p.ulid);
+  assert.deepEqual(remaining, ["01BOB"], "both removals applied");
+  assert.equal(manager.activeProfileUlid, "01BOB", "a removed profile is never left active");
+  assert.deepEqual(
+    registry.peek().profiles.map((p) => p.ulid),
+    ["01BOB"],
+    "the persisted registry matches, so a reload cannot resurrect a removed profile",
+  );
+
+  await manager.dispose();
+});
+
+test("acting context does not leak between profiles sharing one storage backend", async () => {
+  // Regression: the acting context was persisted under a fixed "actingContext"
+  // key. Every profile instance falls back to the same platform storage
+  // (localStorage in a browser), so one profile's delegated-access context was
+  // readable — and clobberable — by its siblings. The key is namespaced by
+  // dbName, which the manager already makes unique per profile.
+  const prefix = uniquePrefix("acting-context");
+  const api = createApi();
+  api.addAccount("alice@example.com", "01ALICE", "alice", "Alice");
+  api.addAccount("bob@example.com", "01BOB", "bob", "Bob");
+
+  // One storage backend behind every profile — what localStorage is in a
+  // browser. Without this the SDK falls back to a no-op store in Node and the
+  // leak is invisible, so the assertions below would pass either way.
+  const shared = new Map();
+  const storage = {
+    getItem: (k) => (shared.has(k) ? shared.get(k) : null),
+    setItem: (k, v) => { shared.set(k, String(v)); },
+    removeItem: (k) => { shared.delete(k); },
+  };
+
+  const stores = createStoreFactory();
+  const registry = createRegistry();
+  const manager = createManager({
+    api,
+    stores,
+    registry,
+    prefix,
+    sdkOptions: { fetchImpl: api.fetchImpl, storage },
+  });
+  await manager.ready();
+
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+  await manager.addProfile((sdk) => sdk.login("bob@example.com", "pw"));
+
+  await manager.switchTo("01ALICE");
+  const alice = manager.active;
+  await manager.switchTo("01BOB");
+  const bob = manager.active;
+  assert.ok(alice && bob && alice !== bob, "each profile gets its own instance");
+
+  alice.setActingContext({
+    managedUserUlid: "01MANAGED",
+    token: "acting-token-alice",
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+
+  assert.equal(bob.getActingContext(), null, "Bob must not see Alice's acting context");
+  assert.equal(alice.getActingContext()?.token, "acting-token-alice");
+
+  // And the reverse: Bob setting his own must not disturb Alice's.
+  bob.setActingContext({
+    managedUserUlid: "01OTHER",
+    token: "acting-token-bob",
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+
+  assert.equal(alice.getActingContext()?.token, "acting-token-alice");
+  assert.equal(bob.getActingContext()?.token, "acting-token-bob");
 
   await manager.dispose();
 });

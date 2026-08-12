@@ -129,6 +129,11 @@ export interface ProfileRegistryStore {
  * per account (token provider, session store, cache database) are owned by the
  * manager and therefore excluded.
  *
+ * `storage` is deliberately NOT excluded: React Native has no `localStorage`,
+ * so consumers must be able to inject one backend for every profile. Keys that
+ * would otherwise collide across profiles are namespaced by `dbName`, which the
+ * manager makes unique per account.
+ *
  * @category Authentication
  */
 export type SharedSdkOptions = Omit<
@@ -440,8 +445,7 @@ export class SessionManager {
   async remove(profileUlid: string): Promise<void> {
     await this.ready();
 
-    const index = this.profiles.findIndex((p) => p.ulid === profileUlid);
-    if (index === -1) return;
+    if (!this.profiles.some((p) => p.ulid === profileUlid)) return;
 
     const sdk = this.instanceFor(profileUlid);
     try {
@@ -468,7 +472,12 @@ export class SessionManager {
       this.instances.delete(profileUlid);
     }
 
-    this.profiles.splice(index, 1);
+    // Re-resolve the index: teardown above awaits, and a concurrent remove()
+    // can splice this array in the meantime. An index captured before those
+    // awaits would point at the wrong profile, or past the end — leaving the
+    // profile signed out but still listed, and still selectable as active.
+    const index = this.profiles.findIndex((p) => p.ulid === profileUlid);
+    if (index !== -1) this.profiles.splice(index, 1);
 
     if (this.activeUlid === profileUlid) {
       const next = this.list()[0] ?? null;
