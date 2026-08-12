@@ -103,6 +103,7 @@ const feedOptions = createMusicFeedInfiniteQueryOptions(sdk);
   - `MemoryTokenProvider`, `StorageTokenProvider`, `HybridTokenProvider`, `RefreshCoordinator`
   - Session helpers: `setSession`, `restoreSession`, `clearSession`, `refreshSession`
   - Session readiness: `ready()` (await before firing authed requests on load)
+  - Multi-profile switching: `SessionManager`, `createStorageProfileRegistry`
   - Token validity: `isAccessTokenValid(skewMs?)`, `isAccessTokenExpired(skewMs?)` (expiry-aware, vs presence-only `isAuthenticated()`)
 - Cache utilities
   - `createCache(ttlMs?)`
@@ -140,6 +141,50 @@ const sdk = new CcPlatformSdk({
   },
 });
 ```
+
+### Multi-Profile Session Switching
+
+`SessionManager` keeps several accounts signed in at once and swaps the active one (Facebook/Instagram style). Each account gets its own `CcPlatformSdk`, its own token storage, and its own IndexedDB cache database, so no viewer-specific state leaks between profiles.
+
+```ts
+import { SessionManager } from "@cc-consulting-nv/ccsdk";
+
+const sessions = new SessionManager({
+  baseUrl: "https://api.example.com",
+  // Called once per account. Namespace your keys by profileId, and wrap this
+  // if the platform requires encryption at rest.
+  createSessionStore: (profileId) => ({
+    async loadTokens() {
+      return await secureStore.get(`session:${profileId}`);
+    },
+    async saveTokens(tokens) {
+      await secureStore.set(`session:${profileId}`, tokens);
+    },
+    async clearTokens() {
+      await secureStore.delete(`session:${profileId}`);
+    },
+  }),
+});
+
+await sessions.ready();          // restores the last active profile
+sessions.active;                 // the active account's CcPlatformSdk
+sessions.list();                 // profiles for the switcher UI
+
+// Add an account — drive any auth flow into the staged instance
+await sessions.addProfile((sdk) => sdk.login(email, password));
+
+await sessions.switchTo(userUlid);
+await sessions.remove(userUlid); // signs out only that account
+```
+
+Notes:
+
+- Profile identity is the account's user ULID. Re-adding a known account re-installs fresh tokens and switches to it, which is how you recover a profile whose refresh was rejected (`isTokenExpired`).
+- Each profile's cache database is named `${dbNamePrefix}:${userUlid}`.
+- Registry records carry display metadata only, never tokens, so the default `localStorage` registry is safe. Override with `registryStore`.
+- A switch in one tab is followed by the others; opt out with `disableCrossTabSync: true`.
+- Maximum profile counts and badge/role gating are deliberately **not** enforced here — that is app policy.
+- Use one TanStack Query client per profile. `queryKeys` have no account dimension, so a shared client would serve one account's cached data to another.
 
 ### Cookie-Backed Web Refresh
 

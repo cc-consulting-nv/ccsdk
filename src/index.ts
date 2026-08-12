@@ -39,6 +39,7 @@ export * from "./httpClient.js";
 export * from "./cache/cacheDB.js";
 export * from "./cache/cacheAdapter.js";
 export * from "./platformSdk.js";
+export * from "./sessionManager.js";
 export * from "./query.js";
 export * from "./realtime.js";
 export * from "./auth.js";

@@ -25,6 +25,7 @@ ccsdk/
 │   ├── platformSdk.ts         # CcPlatformSdk class (main SDK, ~5000 lines)
 │   ├── httpClient.ts          # HttpClient with auth header injection + refresh
 │   ├── auth.ts                # Token providers (Memory, Storage, Hybrid) + RefreshCoordinator
+│   ├── sessionManager.ts      # SessionManager — multi-profile account switcher
 │   ├── types.ts               # All TypeScript interfaces and type definitions
 │   ├── types/blog.ts          # Blog-specific types
 │   ├── query.ts               # TanStack Query helpers (queryKeys, options creators, prefetch)
@@ -109,6 +110,35 @@ Three token provider strategies:
 3. **`HybridTokenProvider`** (default) — Access token in memory, refresh token in localStorage
 
 The `RefreshCoordinator` deduplicates concurrent 401→refresh flows.
+
+### Multi-Profile Sessions (`SessionManager`)
+
+A `CcPlatformSdk` instance is **single-session by construction** — tokens, the refresh coordinator, the sign-out epoch, the cross-tab channel, and every batch/dedup queue belong to one session. The cache is single-viewer too: `posts`/`users` rows embed viewer-specific engagement (`liked`, `bookmarked`, `userReaction`, follow/block/mute) and `feedResources` is keyed by bare route strings like `"bookmarks"`.
+
+`SessionManager` (`src/sessionManager.ts`) therefore keeps **one SDK instance per signed-in account** rather than swapping sessions inside one instance:
+
+```typescript
+const sessions = new SessionManager({
+  baseUrl,
+  createSessionStore: (profileId) => /* per-profile SessionStore */,
+});
+await sessions.ready();
+sessions.active;                                 // active account's CcPlatformSdk
+await sessions.addProfile((sdk) => sdk.login(email, pw));
+await sessions.switchTo(userUlid);
+await sessions.remove(userUlid);
+```
+
+Key invariants to preserve when touching this file:
+
+- **Profile identity is the user ULID.** It keys the token store, the cache `dbName` (`${dbNamePrefix}:${ulid}`), and dedupe of "already signed in".
+- **Per-profile SDKs must use `MemoryTokenProvider`.** The default `HybridTokenProvider` writes to one shared `refresh_token` localStorage key, so profiles would clobber each other. Persistence is the injected per-profile `SessionStore`'s job.
+- **`addProfile` stages the login** on a throwaway SDK (cache `${dbNamePrefix}:staging`) because the ULID is only knowable after authenticating. Failures must leave the registry untouched. Staging is serialized, since the staging DB name is fixed.
+- The registry holds **no tokens** — display metadata only — so the default localStorage store is fine.
+- Policy (max profiles, badge gating, encryption at rest) is deliberately the consumer's. Encryption belongs in `createSessionStore`.
+- This is **not** acting-context/delegation (`setActingContext`); do not conflate them.
+
+Consumers need one TanStack Query client per profile: `queryKeys` have no account dimension.
 
 ### HTTP Client
 
