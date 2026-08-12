@@ -8,6 +8,7 @@ import {
   type WatchPostProcessingOptions,
 } from "./postProcessing.js";
 import { sanitizeFileName } from "./utils/s3Key.js";
+import { resolveMimeType, validateMediaFile, type MediaType } from "./media.js";
 import {
   type ApiEnvelope,
   type AuthTokens,
@@ -2549,7 +2550,9 @@ export class CcPlatformSdk {
 
     if (file.size < DIRECT_UPLOAD_THRESHOLD) {
       // Direct upload using presigned URL
-      const contentType = file.type || "application/octet-stream";
+      // Falls back to the extension when the browser reports no type (iOS
+      // camera roll / share sheet), so R2 stores a usable Content-Type.
+      const contentType = resolveMimeType(file) || "application/octet-stream";
       const { url: presignedUrl, key: finalKey, publicUrl } = await this.getPresignedUploadUrl(contentType, {
         key,
       });
@@ -2604,67 +2607,16 @@ export class CcPlatformSdk {
     return watchPostProcessing(this, ulid, options);
   }
 
+  /**
+   * @deprecated Use the exported {@link validateMediaFile} instead — it is the
+   * shared source of truth and handles files whose `File.type` is empty.
+   */
   private validateMediaFile(
     file: File,
-    mediaType?: "audio" | "image" | "video" | "file",
+    mediaType?: MediaType,
     maxBytesOverride?: number
   ): string | null {
-    const MAX_SIZE_AUDIO = 100 * 1024 * 1024; // 100MB
-    const MAX_SIZE_IMAGE = 20 * 1024 * 1024;  // 20MB
-    const MAX_SIZE_VIDEO = 500 * 1024 * 1024; // 500MB
-    const MAX_SIZE_DEFAULT = 100 * 1024 * 1024; // 100MB
-
-    const formatBytes = (bytes: number): string => {
-      const gb = bytes / (1024 * 1024 * 1024);
-      if (gb >= 1) return `${gb.toFixed(gb >= 10 ? 0 : 1)}GB`;
-      const mb = bytes / (1024 * 1024);
-      return `${Math.round(mb)}MB`;
-    };
-
-    const effectiveMax = (defaultMax: number): number =>
-      typeof maxBytesOverride === "number" && maxBytesOverride > 0
-        ? maxBytesOverride
-        : defaultMax;
-
-    switch (mediaType) {
-      case "audio": {
-        const max = effectiveMax(MAX_SIZE_AUDIO);
-        if (file.size > max) {
-          return `Audio file exceeds the ${formatBytes(max)} upload limit`;
-        }
-        if (!file.type.startsWith("audio/")) {
-          return "Please select a valid audio file";
-        }
-        return null;
-      }
-      case "image": {
-        const max = effectiveMax(MAX_SIZE_IMAGE);
-        if (file.size > max) {
-          return `Image exceeds the ${formatBytes(max)} upload limit`;
-        }
-        if (!file.type.startsWith("image/")) {
-          return "Please select a valid image file";
-        }
-        return null;
-      }
-      case "video": {
-        const max = effectiveMax(MAX_SIZE_VIDEO);
-        if (file.size > max) {
-          return `Video exceeds the ${formatBytes(max)} upload limit`;
-        }
-        if (!file.type.startsWith("video/")) {
-          return "Please select a valid video file";
-        }
-        return null;
-      }
-      default: {
-        const max = effectiveMax(MAX_SIZE_DEFAULT);
-        if (file.size > max) {
-          return `File exceeds the ${formatBytes(max)} upload limit`;
-        }
-        return null;
-      }
-    }
+    return validateMediaFile(file, mediaType, maxBytesOverride);
   }
 
   // ─────────────────────────────────────────────────────────────────────────

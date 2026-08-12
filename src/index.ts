@@ -45,3 +45,4 @@ export * from "./persister.js";
 export * from "./multipartUpload.js";
 export * from "./blobStore.js";
 export * from "./postProcessing.js";
+export * from "./media.js";
