@@ -5,6 +5,19 @@ packages:
 minimumReleaseAge: 10080
 minimumReleaseAgeExclude:
   - "@cc-consulting-nv/ccsdk"
+# Transitive DoS/ReDoS advisories in dev tooling. Pinned here rather than by
+# bumping direct deps — nothing above these is itself vulnerable, and the
+# direct deps have no release carrying the fix.
+overrides:
+  "brace-expansion@>=2.0.0 <3.0.0": ">=2.1.2"
+  "brace-expansion@>=3.0.0": ">=5.0.7"
+  "minimatch@>=9.0.0 <10.0.0": ">=9.0.7"
+  linkify-it: ">=5.0.2"
+  markdown-it: ">=14.2.0"
+  socket.io-parser: ">=4.2.7"
+  ws: ">=8.21.0"
+  esbuild: ">=0.28.1"
+
 # esbuild ships prebuilt binaries; its install script only verifies the binary.
 # Allowed so `tsx` (used by test:integration:business) installs without the
 # ignored-build-scripts warning failing `pnpm` script wrappers.
