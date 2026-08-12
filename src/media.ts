@@ -18,7 +18,10 @@ export type MediaType = "audio" | "image" | "video" | "file";
 const EXTENSION_MIME: Record<string, string> = {
   // video
   mp4: "video/mp4",
-  m4v: "video/x-m4v",
+  // .m4v is Apple's MPEG-4 container variant. video/x-m4v is the widely-seen
+  // convention but is unregistered; video/mp4 is the registered type and is
+  // what gets sent to R2 as Content-Type for files with no reported type.
+  m4v: "video/mp4",
   mov: "video/quicktime",
   webm: "video/webm",
   mpeg: "video/mpeg",

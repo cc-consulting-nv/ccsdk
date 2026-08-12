@@ -24,8 +24,15 @@ test("resolveMimeType: prefers the browser-reported type", () => {
 test("resolveMimeType: falls back to the extension when type is empty", () => {
   // The iOS camera-roll / share-sheet case that broke video upload.
   assert.equal(resolveMimeType(makeFile("IMG_0001.MOV", "")), "video/quicktime");
-  assert.equal(resolveMimeType(makeFile("clip.m4v", "")), "video/x-m4v");
+  // .m4v resolves to the registered video/mp4, not the unregistered x- form.
+  assert.equal(resolveMimeType(makeFile("clip.m4v", "")), "video/mp4");
   assert.equal(resolveMimeType(makeFile("photo.HEIC", "")), "image/heic");
+});
+
+test("resolveMimeType: a reported x- type is passed through unchanged", () => {
+  // Only the extension fallback normalises; a browser-reported type is trusted
+  // as-is, so this still reaches R2 as the Content-Type the browser chose.
+  assert.equal(resolveMimeType(makeFile("clip.m4v", "video/x-m4v")), "video/x-m4v");
 });
 
 test("resolveMimeType: empty string when neither source yields a type", () => {
@@ -41,7 +48,8 @@ test("detectMediaType: infers from an extension-derived type", () => {
 });
 
 test("validateMediaFile: accepts iOS video types the old exact-match list rejected", () => {
-  // video/x-m4v and an empty type were both rejected before issue #157.
+  // Both were rejected by the old exact-match allowlist (issue #157). x-m4v is
+  // unregistered but still in circulation, so a browser reporting it must pass.
   assert.equal(validateMediaFile(makeFile("clip.m4v", "video/x-m4v"), "video"), null);
   assert.equal(validateMediaFile(makeFile("IMG_0001.MOV", ""), "video"), null);
   assert.equal(validateMediaFile(makeFile("clip.3gp", "video/3gpp"), "video"), null);
