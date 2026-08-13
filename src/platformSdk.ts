@@ -952,15 +952,17 @@ export class CcPlatformSdk {
 
     const storedTokens = await this.sessionStore.loadTokens();
     if (this.hasAuthTokens(storedTokens)) {
+      const resolved = this.mergeStoredSession(currentTokens, storedTokens);
       const tokensChanged =
         !this.hasAuthTokens(currentTokens) ||
-        currentTokens.accessToken !== storedTokens.accessToken ||
-        currentTokens.refreshToken !== storedTokens.refreshToken;
+        currentTokens.accessToken !== resolved.accessToken ||
+        currentTokens.refreshToken !== resolved.refreshToken ||
+        currentTokens.expiresAt !== resolved.expiresAt;
 
       if (tokensChanged) {
-        this.setTokens(storedTokens);
+        this.setTokens(resolved);
       }
-      return storedTokens;
+      return resolved;
     }
 
     if (this.hasAuthTokens(currentTokens)) {
@@ -968,6 +970,33 @@ export class CcPlatformSdk {
     }
 
     return null;
+  }
+
+  /**
+   * Reconcile a stored snapshot against what is already in memory.
+   *
+   * A refresh-only store must not destroy a live in-memory access token. Hosts
+   * that keep the bearer out of persistent storage — refresh-cookie mode, or a
+   * deliberate "persist refresh only" policy — produce a snapshot with no
+   * `accessToken` by design, not because the session ended. Overwriting memory
+   * with it forced a network refresh on every restore, and left no bearer at
+   * all whenever that refresh could not run. Under {@link SessionManager} that
+   * is how switching to a background profile produced a session with no token
+   * and a failing `/me`.
+   *
+   * A stored access token still wins: another tab may have refreshed and
+   * persisted a newer one. The stored refresh token also wins, since it may
+   * have been rotated after the in-memory copy was taken.
+   */
+  private mergeStoredSession(current: AuthTokens | null, stored: AuthTokens): AuthTokens {
+    if (stored.accessToken) return stored;
+    if (!current?.accessToken) return stored;
+
+    return {
+      accessToken: current.accessToken,
+      expiresAt: current.expiresAt,
+      refreshToken: stored.refreshToken ?? current.refreshToken,
+    };
   }
 
   /**
@@ -990,6 +1019,40 @@ export class CcPlatformSdk {
       );
     }
     return this.readyPromise;
+  }
+
+  /**
+   * Resolve a usable bearer for this session, restoring and refreshing if needed.
+   *
+   * Unlike {@link ready}, this is **not** memoized — it re-evaluates on every
+   * call. `ready()` answers "has the first restore settled?" once and forever,
+   * so a session that settled as a guest, or whose bearer was cleared while it
+   * sat idle, can never be revived by awaiting it again. Use this when a session
+   * must be live *now*: {@link SessionManager} calls it when a background
+   * profile becomes active again.
+   *
+   * A token whose expiry is unknown counts as not live and triggers a refresh,
+   * matching {@link restoreSession}. If the refresh is rejected outright (4xx)
+   * the session is cleared and this returns `null`.
+   *
+   * @returns Live tokens including an `accessToken`, or `null` if none could be
+   *   established — the caller should treat that as needing re-authentication.
+   *
+   * @example
+   * ```typescript
+   * const tokens = await sdk.ensureLiveSession();
+   * if (!tokens) redirectToLogin();
+   * ```
+   */
+  async ensureLiveSession(): Promise<AuthTokens | null> {
+    if (this.isAccessTokenValid()) {
+      return this.getTokens();
+    }
+
+    await this.restoreSession();
+
+    const tokens = this.getTokens();
+    return tokens?.accessToken ? tokens : null;
   }
 
   /**
