@@ -28,6 +28,15 @@
  * This is **not** acting-context / delegation (`setActingContext`), which keeps
  * one authenticated manager acting on a managed user's behalf.
  *
+ * ## Session storage
+ *
+ * Each profile's session lives in the store returned by
+ * {@link SessionManagerOptions.createSessionStore}, keyed by that account's
+ * ULID. That per-profile store is the carrier that makes switching work — **not**
+ * an httpOnly refresh cookie, which can only ever describe one session and will
+ * hand back the last-authenticated account's bearer on a cookie-first host. See
+ * {@link SessionManagerOptions.createSessionStore} for what to persist.
+ *
  * @example
  * ```typescript
  * const sessions = new SessionManager({
@@ -153,8 +162,24 @@ export interface SessionManagerOptions {
    * Builds the token persistence for one profile. Called once per account with
    * that account's ULID. **This is the encryption-at-rest boundary** — whatever
    * this returns is where tokens land, so wrap it if the platform requires
-   * encrypted storage. Keys must be namespaced by `profileId`, or accounts will
-   * overwrite each other.
+   * encrypted storage.
+   *
+   * **Required:** every key must be namespaced by `profileId`, or accounts will
+   * overwrite each other's tokens.
+   *
+   * **Recommended:** persist `accessToken` and `expiresAt` alongside
+   * `refreshToken`. A refresh-only store works — the manager mints a bearer from
+   * the refresh token on demand — but it costs a `/auth/refresh` round trip
+   * whenever a profile is restored, and without `expiresAt` the SDK cannot tell
+   * a live bearer from a dead one, so it refreshes defensively.
+   *
+   * **Do not rely on an httpOnly refresh cookie as the carrier.** A single
+   * cookie cannot represent several concurrent sessions; it names whichever
+   * account authenticated last, so a cookie-first host will answer a refresh for
+   * profile A with profile B's bearer. `useRefreshCookie` is safe to leave on for
+   * single-session back-compat, because the SDK always sends `refresh_token` in
+   * the body and prefers each profile's own stored session, but the per-profile
+   * store is what actually makes switching correct.
    */
   createSessionStore: (profileId: string) => SessionStore;
   /**
@@ -406,12 +431,20 @@ export class SessionManager {
   /**
    * Make another signed-in account active.
    *
-   * Restores that profile's session (refreshing an expired access token when it
-   * can) before resolving, so the returned SDK is ready to use.
+   * Guarantees a live bearer before resolving: the target session is restored,
+   * and refreshed from its own stored refresh token if its access token is
+   * missing, expired, or of unknown age. The returned SDK always has
+   * `getTokens()?.accessToken`.
+   *
+   * If no bearer can be established — the stored refresh token is gone, or the
+   * server rejected it — the profile is flagged {@link ProfileRecord.needsReauth}
+   * and this throws instead of activating a session that cannot make requests.
+   * The previously active profile stays active, so the caller can surface a
+   * re-authentication prompt without first losing the working account.
    *
    * @param profileUlid - ULID of the profile to activate
-   * @returns That profile's SDK
-   * @throws If the profile is not signed in
+   * @returns That profile's SDK, with a usable access token
+   * @throws If the profile is not signed in, or its session cannot be revived
    */
   async switchTo(profileUlid: string): Promise<CcPlatformSdk> {
     await this.ready();
@@ -422,10 +455,16 @@ export class SessionManager {
     }
 
     const sdk = this.instanceFor(profileUlid);
-    await sdk.ready();
+
+    if (!(await this.hydrate(profileUlid))) {
+      await this.persist();
+      throw new Error(
+        `Cannot switch to profile ${profileUlid}: its session could not be restored. ` +
+          `Check ProfileListItem.isTokenExpired — if set, the account must sign in again.`,
+      );
+    }
 
     record.lastActiveAt = this.nextActiveStamp();
-    this.syncTokenState(record, sdk);
     this.activeUlid = profileUlid;
     await this.persist();
 
@@ -483,11 +522,9 @@ export class SessionManager {
       const next = this.list()[0] ?? null;
       this.activeUlid = next?.ulid ?? null;
       if (this.activeUlid) {
-        try {
-          await this.instanceFor(this.activeUlid).ready();
-        } catch {
-          // Fall through — the new active profile will read as unauthenticated.
-        }
+        // Best-effort: a profile promoted by a removal may itself need re-auth,
+        // which hydrate() records. The removal must still complete either way.
+        await this.hydrate(this.activeUlid);
       }
     }
 
@@ -572,11 +609,10 @@ export class SessionManager {
     }
 
     if (this.activeUlid && this.activeUlid !== previousActive) {
-      try {
-        await this.instanceFor(this.activeUlid).ready();
-      } catch {
-        // Guest state.
-      }
+      // Following another tab's switch. This tab may already hold a settled
+      // instance for that profile, so hydrate() rather than ready() — otherwise
+      // the follower ends up pointing at a session with no bearer.
+      await this.hydrate(this.activeUlid);
     }
 
     this.notify();
@@ -729,6 +765,47 @@ export class SessionManager {
    * clears on a 4xx refresh), so a session that still has a token is not the one
    * that was rejected. This keeps a stale flag from stranding a working profile.
    */
+  /**
+   * Bring a profile's session up, then reconcile its record with the outcome.
+   *
+   * Pairs the memoized `ready()` with the non-memoized
+   * {@link CcPlatformSdk.ensureLiveSession}. `ready()` only reports whether the
+   * *first* restore settled, so an instance that came up as a guest — or whose
+   * bearer was cleared while it sat in the background — must be re-hydrated
+   * rather than trusted. This is what makes a second switch to the same profile
+   * work.
+   *
+   * A failure is only recorded as {@link ProfileRecord.needsReauth} when nothing
+   * is left to refresh with. The SDK clears the session on a definitive 4xx but
+   * keeps it on a transient 5xx or a network error, so a brief outage does not
+   * permanently badge an account that is actually fine.
+   *
+   * @returns True when the session ended up holding a usable access token.
+   */
+  private async hydrate(profileUlid: string): Promise<boolean> {
+    const sdk = this.instanceFor(profileUlid);
+    const record = this.profiles.find((p) => p.ulid === profileUlid);
+
+    let accessToken: string | undefined;
+    try {
+      await sdk.ready();
+      accessToken = (await sdk.ensureLiveSession())?.accessToken;
+    } catch {
+      accessToken = undefined;
+    }
+
+    if (record) {
+      if (accessToken) {
+        this.syncTokenState(record, sdk);
+      } else if (!sdk.getTokens()?.refreshToken) {
+        record.needsReauth = true;
+        record.tokenExpiresAt = undefined;
+      }
+    }
+
+    return Boolean(accessToken);
+  }
+
   private syncTokenState(record: ProfileRecord, sdk: CcPlatformSdk): void {
     const tokens = sdk.getTokens();
     record.tokenExpiresAt = tokens?.expiresAt;
