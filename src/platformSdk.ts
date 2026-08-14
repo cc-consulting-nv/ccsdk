@@ -106,6 +106,13 @@ import {
   type CreateStoryInput,
 } from "./types.js";
 
+/**
+ * OAuth2 error code returned when a refresh token is rejected. Passport answers
+ * this after rotating the token, so it is the signal that a concurrent refresh
+ * won the race rather than that the session ended.
+ */
+const OAUTH_INVALID_GRANT = "invalid_grant";
+
 // ============================================================================
 // Moderation Feed Types (025-moderation-feed)
 // ============================================================================
@@ -1799,18 +1806,40 @@ export class CcPlatformSdk {
       // the same user) can win the race and leave this call holding a revoked
       // token. That answers `invalid_grant` — but the session is alive, it just
       // moved. If the shared store now holds a different refresh token, adopt
-      // it instead of logging the user out. Gated on `invalid_grant`
-      // specifically: a deliberate remote sign-out must still clear.
+      // it instead of logging the user out.
+      //
+      // Gated on `invalid_grant` specifically: only an OAuth grant rejection
+      // indicates a rotation race. Generic 401/400 rejections have no rotated
+      // token to adopt and must fall through to the clear below. Must stay
+      // ahead of that clear — this is the branch that pre-empts it.
       if (status === 400 || status === 401) {
         const payload = (error as any)?.payload;
-        const isInvalidGrant = payload && typeof payload === "object" && payload.error === "invalid_grant";
-        if (isInvalidGrant && this.signOutEpoch === epochAtStart) {
+        const isInvalidGrant = payload && typeof payload === "object" && payload.error === OAUTH_INVALID_GRANT;
+        // A rotation can only have been lost if we actually sent a refresh
+        // token. In `useRefreshCookie` mode `currentTokens.refreshToken` is
+        // routinely undefined, and without this guard every stored token reads
+        // as "different" and gets adopted unconditionally.
+        const sentRefreshToken = currentTokens?.refreshToken;
+        if (isInvalidGrant && sentRefreshToken && this.signOutEpoch === epochAtStart) {
           const stored = await this.sessionStore?.loadTokens();
-          if (stored?.refreshToken && stored.refreshToken !== currentTokens?.refreshToken) {
+          // The rotation revoked the whole grant family, so the access token we
+          // hold in memory is dead too — a stored snapshot without its own
+          // bearer buys nothing and would leave `isAuthenticated()` true over a
+          // revoked token. Require both halves before adopting.
+          if (stored?.refreshToken && stored.accessToken && stored.refreshToken !== sentRefreshToken) {
             // ponytail: last-writer-wins adoption. If two instances both lose
             // to a third rotation a clear is still possible — rare, and strictly
             // better than today. Cross-instance mutex if that ever bites.
-            await this.updateSession(stored);
+            try {
+              await this.updateSession(stored);
+            } catch {
+              // updateSession throws when a sign-out landed mid-persist; that
+              // sign-out owns the final state. Fall through to return null
+              // rather than rejecting — every other path here returns null, and
+              // a throw would reach httpClient.refreshTokens() as the logout
+              // cascade this whole branch exists to prevent.
+              return null;
+            }
             return stored;
           }
         }

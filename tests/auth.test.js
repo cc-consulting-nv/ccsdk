@@ -896,6 +896,143 @@ test("refreshToken still clears on a non-invalid_grant 401 even if the store cha
   assert.equal(sessionStore.getSnapshot(), null);
 });
 
+test("refreshToken does not adopt a refresh-only stored snapshot", async () => {
+  // The rotation revoked the whole grant family, so our in-memory access token
+  // is dead too. A stored snapshot with no bearer of its own cannot revive the
+  // session — adopting it would leave isAuthenticated() true over a dead token.
+  const sessionStore = createMockSessionStore({
+    accessToken: "old-access-token",
+    refreshToken: "old-refresh-token",
+  });
+
+  const fetchImpl = async () => {
+    await sessionStore.saveTokens({ refreshToken: "rotated-refresh-token" });
+    return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
+  };
+
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  const result = await sdk.refreshToken();
+
+  assert.equal(result, null, "a bearer-less snapshot is not an adoptable session");
+  assert.ok(!sdk.isAuthenticated(), "must not report a session over a revoked token");
+  assert.equal(sessionStore.getSnapshot(), null);
+});
+
+test("refreshToken does not adopt in useRefreshCookie mode when no refresh token was sent", async () => {
+  // In cookie mode currentTokens.refreshToken is routinely undefined. Without
+  // the sentRefreshToken guard every stored token reads as "different" and gets
+  // adopted unconditionally.
+  const sessionStore = createMockSessionStore({ accessToken: "old-access-token" });
+
+  const fetchImpl = async () => {
+    await sessionStore.saveTokens({
+      accessToken: "unrelated-access-token",
+      refreshToken: "unrelated-refresh-token",
+    });
+    return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
+  };
+
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore, useRefreshCookie: true });
+
+  const result = await sdk.refreshToken();
+
+  assert.equal(result, null, "no refresh token sent means no rotation was lost");
+  assert.ok(!sdk.isAuthenticated());
+});
+
+test("refreshToken still clears on a 403 carrying an invalid_grant payload", async () => {
+  // Pins the narrow 400/401 status gate: only those two statuses are rotation
+  // races. A 403 is an authorization decision, not a rotated grant.
+  const sessionStore = createMockSessionStore({
+    accessToken: "old-access-token",
+    refreshToken: "old-refresh-token",
+  });
+
+  const fetchImpl = async () => {
+    await sessionStore.saveTokens({
+      accessToken: "rotated-access-token",
+      refreshToken: "rotated-refresh-token",
+    });
+    return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 403 });
+  };
+
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  const result = await sdk.refreshToken();
+
+  assert.equal(result, null);
+  assert.ok(!sdk.isAuthenticated());
+  assert.equal(sessionStore.getSnapshot(), null);
+});
+
+test("refreshToken does not adopt when a sign-out cleared the session mid-flight", async () => {
+  // A sign-out that lands while the refresh is in flight owns the final state;
+  // adoption must not resurrect the session it is tearing down.
+  const sessionStore = createMockSessionStore({
+    accessToken: "old-access-token",
+    refreshToken: "old-refresh-token",
+  });
+
+  let sdk;
+  const fetchImpl = async (url) => {
+    if (String(url).includes("/auth/refresh")) {
+      await sdk.signOut();
+      return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
+    }
+    return new Response(JSON.stringify({}), { status: 200 });
+  };
+
+  sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  const result = await sdk.refreshToken();
+
+  assert.equal(result, null, "sign-out wins over adoption");
+  assert.ok(!sdk.isAuthenticated());
+  assert.equal(sessionStore.getSnapshot(), null);
+});
+
+test("refreshToken does not adopt when a remote sign-out lands mid-flight", async () => {
+  // Another tab signed out while our refresh was in flight. Adoption must not
+  // resurrect it — otherwise updateSession() would lift the remoteSignedOut
+  // latch and re-arm refreshes for a session another tab just ended.
+  // Defence is layered: onRemoteSignOut() clears the shared store (so there is
+  // nothing left to adopt) and bumps signOutEpoch. The store-clear is what
+  // fires first; the epoch conjunct is belt-and-braces behind it.
+  const dbName = `adopt-remote-signout-${Date.now()}`;
+  const sessionStore = createMockSessionStore({
+    accessToken: "old-access-token",
+    refreshToken: "old-refresh-token",
+  });
+
+  const other = new CcPlatformSdk({
+    baseUrl,
+    dbName,
+    fetchImpl: async () => new Response(JSON.stringify({}), { status: 200 }),
+  });
+
+  const fetchImpl = async (url) => {
+    if (String(url).includes("/auth/refresh")) {
+      await sessionStore.saveTokens({
+        accessToken: "rotated-access-token",
+        refreshToken: "rotated-refresh-token",
+      });
+      // Broadcast the sign-out and let the channel callback run.
+      await other.signOut();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
+    }
+    return new Response(JSON.stringify({}), { status: 200 });
+  };
+
+  const sdk = new CcPlatformSdk({ baseUrl, dbName, fetchImpl, sessionStore });
+
+  const result = await sdk.refreshToken();
+
+  assert.equal(result, null, "a remote sign-out must win over adoption");
+  assert.ok(!sdk.isAuthenticated());
+});
+
 test("refreshToken returns null without clearing the session on malformed success payload", async () => {
   const { fetchImpl } = createMockFetch({});
 
