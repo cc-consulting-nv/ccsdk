@@ -101,9 +101,16 @@ function createApi() {
     }
 
     if (path === "/v1/users/me") {
-      const account = [...accounts.values()].find((a) => a.accessToken === bearer);
+      let account = [...accounts.values()].find((a) => a.accessToken === bearer);
       if (!account || denied.has(bearer)) {
         return new Response(JSON.stringify({ message: "Unauthenticated" }), { status: 401 });
+      }
+      // Delegated access: the real API answers as the managed user when the
+      // acting headers are present, even though the bearer is the operator's.
+      const actingUlid = init.headers?.["X-Acting-User-ULID"];
+      if (actingUlid) {
+        const managed = [...accounts.values()].find((a) => a.ulid === actingUlid);
+        if (managed) account = managed;
       }
       return new Response(
         JSON.stringify({
@@ -635,6 +642,112 @@ test("a shared refresh cookie cannot hand one profile another account's session"
     "01ALICE",
     "the active session answered as Alice, not as the cookie's owner",
   );
+
+  await manager.dispose();
+});
+
+test("a shared refresh cookie cannot activate the wrong account when the bearer is gone", async () => {
+  // The sibling test above never forces a refresh — Alice's own live bearer
+  // short-circuits it. Clear that bearer and the cookie-first host becomes the
+  // only thing answering, so /auth/refresh hands back Bob's session under
+  // Alice's name. Presence of a token is not proof of ownership: the switch
+  // must fail rather than silently serve the wrong account's data.
+  const prefix = uniquePrefix("shared-cookie-hollow");
+  const api = createApi();
+  api.addAccount("alice@example.com", "01ALICE", "alice", "Alice");
+  api.addAccount("bob@example.com", "01BOB", "bob", "Bob");
+
+  const cookie = { ulid: null };
+  const fetchImpl = async (url, init = {}) => {
+    const path = new URL(url).pathname;
+
+    if (path === "/auth/refresh") {
+      // Ignores the body refresh_token, as a legacy cookie-only host does.
+      if (!cookie.ulid) {
+        return new Response(JSON.stringify({ message: "No session cookie" }), { status: 401 });
+      }
+      return new Response(
+        JSON.stringify({
+          token_type: "Bearer",
+          expires_in: 3600,
+          access_token: `access-${cookie.ulid}`,
+          refresh_token: `refresh-${cookie.ulid}`,
+        }),
+        { status: 200 },
+      );
+    }
+
+    if (path === "/v1/auth/login") {
+      const body = JSON.parse(init.body);
+      cookie.ulid = body.email.startsWith("alice") ? "01ALICE" : "01BOB";
+    }
+
+    return api.fetchImpl(url, init);
+  };
+
+  const stores = createRefreshOnlyStoreFactory();
+  const registry = createRegistry();
+  const manager = createManager({
+    api,
+    stores,
+    registry,
+    prefix,
+    sdkOptions: { fetchImpl, useRefreshCookie: true },
+  });
+  await manager.ready();
+
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+  await manager.addProfile((sdk) => sdk.login("bob@example.com", "pw"));
+
+  const alice = await manager.switchTo("01ALICE");
+  await manager.switchTo("01BOB");
+
+  // Now the cookie names Bob and Alice has nothing of her own left to present.
+  alice.setTokens(null);
+
+  await assert.rejects(() => manager.switchTo("01ALICE"), /could not be restored/);
+
+  assert.equal(manager.activeProfileUlid, "01BOB", "did not activate the impostor session");
+  assert.notEqual(
+    alice.getTokens()?.accessToken,
+    "access-01BOB",
+    "Alice's instance must not be left holding Bob's bearer",
+  );
+  assert.equal(manager.get("01ALICE").isTokenExpired, true, "flagged for re-auth");
+
+  await manager.dispose();
+});
+
+test("switching while acting as a managed user does not sign the operator out", async () => {
+  // Acting-as stamps X-Acting-User-ULID on every request, so /v1/users/me
+  // answers as the *managed* user. The ownership check must not read that as
+  // one profile holding another's session — doing so clears a healthy session
+  // and drops the operator out of the app mid-delegation.
+  const { api, manager } = await setupTwoAccounts(uniquePrefix("acting"));
+  api.addAccount("managed@example.com", "01MANAGED", "managed", "Blah Blah");
+
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+  await manager.addProfile((sdk) => sdk.login("bob@example.com", "pw"));
+
+  const alice = await manager.switchTo("01ALICE");
+
+  // Alice starts acting as a managed user, then her bearer needs a refresh.
+  alice.setActingContext({
+    token: "acting-token",
+    managedUserUlid: "01MANAGED",
+    managedUserName: "Blah Blah",
+    expiresAt: new Date(Date.now() + 600_000).toISOString(),
+  });
+
+  await manager.switchTo("01BOB");
+  alice.setTokens(null);
+
+  const revived = await manager.switchTo("01ALICE");
+
+  assert.equal(manager.activeProfileUlid, "01ALICE", "the switch was not refused");
+  assert.equal(revived.getTokens()?.accessToken, "access-01ALICE");
+  assert.equal(manager.get("01ALICE").isTokenExpired, false, "not badged for re-auth");
+  assert.ok(revived.getActingContext(), "acting context survived the switch");
 
   await manager.dispose();
 });

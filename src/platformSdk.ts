@@ -1051,8 +1051,10 @@ export class CcPlatformSdk {
 
     await this.restoreSession();
 
+    // restoreSession() falls through to the stored tokens when a refresh fails
+    // transiently, so presence alone does not mean the bearer is usable.
     const tokens = this.getTokens();
-    return tokens?.accessToken ? tokens : null;
+    return tokens?.accessToken && this.isAccessTokenValid() ? tokens : null;
   }
 
   /**

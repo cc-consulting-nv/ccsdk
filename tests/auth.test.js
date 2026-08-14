@@ -1740,6 +1740,28 @@ test("ensureLiveSession returns null when there is nothing to restore", async ()
   assert.equal(await sdk.ensureLiveSession(), null);
 });
 
+test("ensureLiveSession returns null when the refresh fails and the bearer is expired", async () => {
+  // restoreSession() falls through to the stored tokens when a refresh fails
+  // transiently (5xx), so an expired access token is still *present* afterwards.
+  // ensureLiveSession promises a live bearer or null — presence is not liveness,
+  // and handing this one back sends the caller straight into a 401.
+  const { fetchImpl, calls } = createMockFetch({ message: "Bad gateway" }, 502);
+  const sessionStore = createMockSessionStore({
+    accessToken: "STALE-ACCESS",
+    refreshToken: "stored-refresh",
+    expiresAt: new Date(Date.now() - 60_000).toISOString(),
+  });
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  assert.equal(await sdk.ensureLiveSession(), null);
+  assert.ok(calls.length > 0, "it did try to refresh");
+  assert.equal(sdk.isAccessTokenValid(), false);
+  // A 5xx does not revoke anything, so the persisted refresh token must survive
+  // for the next attempt. (The in-memory copy is separately dropped by
+  // mergeStoredSession — tracked apart from this fix.)
+  assert.equal(sessionStore.getSnapshot()?.refreshToken, "stored-refresh");
+});
+
 test("ready() mints access for a refresh-only stored session", async () => {
   const { fetchImpl, calls } = createMockFetch({
     access_token: "minted-access",

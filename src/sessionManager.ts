@@ -789,7 +789,17 @@ export class SessionManager {
     let accessToken: string | undefined;
     try {
       await sdk.ready();
+      const before = sdk.getTokens()?.accessToken;
       accessToken = (await sdk.ensureLiveSession())?.accessToken;
+      // A refresh minted a *new* bearer. Nothing in /auth/refresh binds that
+      // bearer to the profile we asked for: on a host with a single shared
+      // httpOnly refresh cookie, credentials:'include' lets the cookie decide
+      // the account, so this profile can come back holding someone else's
+      // session. Prove ownership before we treat it as this profile's.
+      if (accessToken && accessToken !== before && !(await this.ownsSession(sdk, profileUlid))) {
+        await sdk.clearSession();
+        accessToken = undefined;
+      }
     } catch {
       accessToken = undefined;
     }
@@ -804,6 +814,30 @@ export class SessionManager {
     }
 
     return Boolean(accessToken);
+  }
+
+  /**
+   * Whether the session `sdk` currently holds actually belongs to
+   * `profileUlid`. Costs one `/v1/users/me` round-trip, so `hydrate()` only
+   * asks after a refresh minted a bearer we did not start with.
+   *
+   * An unresolvable identity (network error, or a `null` response) counts as
+   * NOT owned: a session we cannot attribute must not be activated as this
+   * profile.
+   */
+  private async ownsSession(sdk: CcPlatformSdk, profileUlid: string): Promise<boolean> {
+    // Acting-as deliberately decouples the bearer's owner from the identity the
+    // API reports: httpClient stamps X-Acting-User-ULID onto every request, so
+    // /v1/users/me answers as the *managed* user. It is not an ownership oracle
+    // here, and treating the mismatch as a bleed would sign the operator out
+    // mid-delegation.
+    if (sdk.getActingContext()) return true;
+
+    try {
+      return (await sdk.getCurrentUser())?.ulid === profileUlid;
+    } catch {
+      return false;
+    }
   }
 
   private syncTokenState(record: ProfileRecord, sdk: CcPlatformSdk): void {
