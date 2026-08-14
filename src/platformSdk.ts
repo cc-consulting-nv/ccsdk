@@ -1794,6 +1794,28 @@ export class CcPlatformSdk {
         }
       }
 
+      // Passport rotates refresh tokens and revokes the old one, so a
+      // concurrent refresh (another tab, or another SessionManager instance for
+      // the same user) can win the race and leave this call holding a revoked
+      // token. That answers `invalid_grant` — but the session is alive, it just
+      // moved. If the shared store now holds a different refresh token, adopt
+      // it instead of logging the user out. Gated on `invalid_grant`
+      // specifically: a deliberate remote sign-out must still clear.
+      if (status === 400 || status === 401) {
+        const payload = (error as any)?.payload;
+        const isInvalidGrant = payload && typeof payload === "object" && payload.error === "invalid_grant";
+        if (isInvalidGrant && this.signOutEpoch === epochAtStart) {
+          const stored = await this.sessionStore?.loadTokens();
+          if (stored?.refreshToken && stored.refreshToken !== currentTokens?.refreshToken) {
+            // ponytail: last-writer-wins adoption. If two instances both lose
+            // to a third rotation a clear is still possible — rare, and strictly
+            // better than today. Cross-instance mutex if that ever bites.
+            await this.updateSession(stored);
+            return stored;
+          }
+        }
+      }
+
       // Clear session on definitive auth rejection (4xx) — the refresh token
       // is invalid/expired/revoked and recovery is not possible.
       // Don't clear on 5xx — those are transient and the caller may retry.

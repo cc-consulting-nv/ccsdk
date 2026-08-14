@@ -821,6 +821,81 @@ test("refreshToken clears tokens and returns null on failure", async () => {
   assert.ok(!sdk.isAuthenticated());
 });
 
+test("refreshToken adopts a rotated refresh token instead of clearing on invalid_grant", async () => {
+  // Another instance/tab won the refresh race: it rotated the token (persisting
+  // the new one to the shared store) and Passport revoked ours.
+  const sessionStore = createMockSessionStore({
+    accessToken: "old-access-token",
+    refreshToken: "old-refresh-token",
+  });
+
+  const fetchImpl = async () => {
+    // The winner's rotation lands while our request is in flight.
+    await sessionStore.saveTokens({
+      accessToken: "rotated-access-token",
+      refreshToken: "rotated-refresh-token",
+    });
+    return new Response(
+      JSON.stringify({
+        error: "invalid_grant",
+        error_description: "The refresh token is invalid.",
+        hint: "Token has been revoked",
+      }),
+      { status: 400 },
+    );
+  };
+
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  const result = await sdk.refreshToken();
+
+  assert.equal(result?.refreshToken, "rotated-refresh-token");
+  assert.equal(sdk.getTokens().accessToken, "rotated-access-token");
+  assert.ok(sdk.isAuthenticated(), "session survives losing the rotation race");
+  assert.equal(sessionStore.getSnapshot().refreshToken, "rotated-refresh-token");
+});
+
+test("refreshToken still clears on invalid_grant when the stored token is unchanged", async () => {
+  // Genuinely dead session: nobody rotated, so the store still holds our token.
+  const sessionStore = createMockSessionStore({
+    accessToken: "old-access-token",
+    refreshToken: "old-refresh-token",
+  });
+  const { fetchImpl } = createMockFetch({ error: "invalid_grant" }, 400);
+
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  const result = await sdk.refreshToken();
+
+  assert.equal(result, null);
+  assert.ok(!sdk.isAuthenticated());
+  assert.equal(sessionStore.getSnapshot(), null, "dead session is cleared");
+});
+
+test("refreshToken still clears on a non-invalid_grant 401 even if the store changed", async () => {
+  // Deliberate remote sign-out must log out, regardless of a rotated store.
+  const sessionStore = createMockSessionStore({
+    accessToken: "old-access-token",
+    refreshToken: "old-refresh-token",
+  });
+
+  const fetchImpl = async () => {
+    await sessionStore.saveTokens({
+      accessToken: "rotated-access-token",
+      refreshToken: "rotated-refresh-token",
+    });
+    return new Response(JSON.stringify({ message: "Unauthenticated." }), { status: 401 });
+  };
+
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  const result = await sdk.refreshToken();
+
+  assert.equal(result, null);
+  assert.ok(!sdk.isAuthenticated());
+  assert.equal(sessionStore.getSnapshot(), null);
+});
+
 test("refreshToken returns null without clearing the session on malformed success payload", async () => {
   const { fetchImpl } = createMockFetch({});
 
