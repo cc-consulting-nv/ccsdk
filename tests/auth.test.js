@@ -12,7 +12,7 @@ import "fake-indexeddb/auto";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CcPlatformSdk } from "../dist/platformSdk.js";
-import { HybridTokenProvider } from "../dist/auth.js";
+import { HybridTokenProvider, MemoryTokenProvider } from "../dist/auth.js";
 import { DEFAULT_DB_NAME } from "../dist/cache/cacheDB.js";
 
 const baseUrl = "https://api.example.com";
@@ -1619,6 +1619,147 @@ test("restoreSession mints access when only a refresh token is stored", async ()
   assert.equal(sdk.getTokens()?.accessToken, "minted-access");
   assert.equal(calls.length, 1, "hit /auth/refresh once");
   assert.equal(calls[0].url, `${baseUrl}/auth/refresh`);
+});
+
+test("restoreSession keeps a live in-memory bearer when the store holds refresh only", async () => {
+  // Refresh-cookie hosts (and any "persist refresh only" policy) produce a
+  // snapshot with no access token by design, not because the session ended.
+  // Overwriting memory with it destroyed a perfectly good bearer, forced a
+  // network refresh on every restore, and left nothing at all when that refresh
+  // could not run — which is how a multi-profile switch produced a dead session.
+  const { fetchImpl, calls } = createMockFetch({});
+  const sessionStore = createMockSessionStore({ refreshToken: "stored-refresh" });
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    sessionStore,
+    tokenProvider: new MemoryTokenProvider({
+      accessToken: "live-access",
+      refreshToken: "memory-refresh",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    }),
+  });
+
+  const result = await sdk.restoreSession();
+
+  assert.equal(result.accessToken, "live-access", "kept the live bearer");
+  assert.equal(sdk.getTokens()?.accessToken, "live-access");
+  assert.equal(
+    result.refreshToken,
+    "stored-refresh",
+    "adopted the persisted refresh token, which may have rotated",
+  );
+  assert.equal(calls.length, 0, "no refresh round-trip was needed");
+});
+
+test("a stored access token still wins over the in-memory one", async () => {
+  // The inverse guard: another tab may have refreshed and persisted a newer
+  // bearer, so preserving memory must not shadow it.
+  const { fetchImpl } = createMockFetch({});
+  const sessionStore = createMockSessionStore({
+    accessToken: "newer-access",
+    refreshToken: "newer-refresh",
+    expiresAt: new Date(Date.now() + 300_000).toISOString(),
+  });
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    sessionStore,
+    tokenProvider: new MemoryTokenProvider({
+      accessToken: "older-access",
+      refreshToken: "older-refresh",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    }),
+  });
+
+  const result = await sdk.restoreSession();
+
+  assert.equal(result.accessToken, "newer-access");
+  assert.equal(sdk.getTokens()?.accessToken, "newer-access");
+});
+
+test("ensureLiveSession revives a session after ready() already settled", async () => {
+  // ready() answers "did the first restore settle?" exactly once. A session
+  // whose bearer is cleared afterwards must still be revivable — this is what
+  // switching back to a background profile depends on.
+  const { fetchImpl, calls } = createMockFetch({
+    access_token: "minted-access",
+    refresh_token: "rotated-refresh",
+    expires_in: 3600,
+  });
+  // Refresh-only persistence, so reviving genuinely requires a network mint
+  // rather than reading a bearer back out of the store.
+  let storedRefresh = "stored-refresh";
+  const sessionStore = {
+    async loadTokens() {
+      return storedRefresh ? { refreshToken: storedRefresh } : null;
+    },
+    async saveTokens(tokens) {
+      storedRefresh = tokens?.refreshToken;
+    },
+    async clearTokens() {
+      storedRefresh = undefined;
+    },
+  };
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  await sdk.ready();
+  assert.equal(sdk.getTokens()?.accessToken, "minted-access");
+
+  sdk.setTokens(null);
+  await sdk.ready();
+  assert.equal(sdk.getTokens()?.accessToken, undefined, "the settled promise does nothing");
+
+  const revived = await sdk.ensureLiveSession();
+
+  assert.equal(revived?.accessToken, "minted-access");
+  assert.equal(calls.length, 2, "minted again instead of trusting ready()");
+});
+
+test("ensureLiveSession short-circuits on an already-live token", async () => {
+  const { fetchImpl, calls } = createMockFetch({});
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    tokenProvider: new MemoryTokenProvider({
+      accessToken: "live-access",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    }),
+  });
+
+  const result = await sdk.ensureLiveSession();
+
+  assert.equal(result?.accessToken, "live-access");
+  assert.equal(calls.length, 0);
+});
+
+test("ensureLiveSession returns null when there is nothing to restore", async () => {
+  const { fetchImpl } = createMockFetch({});
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl });
+
+  assert.equal(await sdk.ensureLiveSession(), null);
+});
+
+test("ensureLiveSession returns null when the refresh fails and the bearer is expired", async () => {
+  // restoreSession() falls through to the stored tokens when a refresh fails
+  // transiently (5xx), so an expired access token is still *present* afterwards.
+  // ensureLiveSession promises a live bearer or null — presence is not liveness,
+  // and handing this one back sends the caller straight into a 401.
+  const { fetchImpl, calls } = createMockFetch({ message: "Bad gateway" }, 502);
+  const sessionStore = createMockSessionStore({
+    accessToken: "STALE-ACCESS",
+    refreshToken: "stored-refresh",
+    expiresAt: new Date(Date.now() - 60_000).toISOString(),
+  });
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  assert.equal(await sdk.ensureLiveSession(), null);
+  assert.ok(calls.length > 0, "it did try to refresh");
+  assert.equal(sdk.isAccessTokenValid(), false);
+  // A 5xx does not revoke anything, so the persisted refresh token must survive
+  // for the next attempt. (The in-memory copy is separately dropped by
+  // mergeStoredSession — tracked apart from this fix.)
+  assert.equal(sessionStore.getSnapshot()?.refreshToken, "stored-refresh");
 });
 
 test("ready() mints access for a refresh-only stored session", async () => {

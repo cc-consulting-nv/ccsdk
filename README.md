@@ -180,6 +180,9 @@ await sessions.remove(userUlid); // signs out only that account
 Notes:
 
 - Profile identity is the account's user ULID. Re-adding a known account re-installs fresh tokens and switches to it, which is how you recover a profile whose refresh was rejected (`isTokenExpired`).
+- **The per-profile store is the session carrier, not a refresh cookie.** One httpOnly cookie cannot represent several concurrent sessions — it names whichever account authenticated last, so a cookie-first host will answer a refresh for account A with account B's bearer. `useRefreshCookie: true` is safe to keep for single-session back-compat (the SDK always sends `refresh_token` in the body and prefers each profile's own stored session), but switching is only correct because each profile persists its own tokens.
+- Persist `accessToken` and `expiresAt` as well as `refreshToken` where you can. Refresh-only stores work — the manager mints a bearer on demand — but each restore costs a `/auth/refresh` round trip, and with no `expiresAt` the SDK cannot distinguish a live bearer from a dead one so it refreshes defensively.
+- `switchTo` guarantees a live bearer: it restores, and refreshes from that profile's own refresh token if needed. If no bearer can be established it flags the profile `isTokenExpired` and **throws**, leaving the previously active account active rather than activating a session that cannot make requests.
 - Each profile's cache database is named `${dbNamePrefix}:${userUlid}`.
 - Registry records carry display metadata only, never tokens, so the default `localStorage` registry is safe. Override with `registryStore`.
 - A switch in one tab is followed by the others; opt out with `disableCrossTabSync: true`.

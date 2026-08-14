@@ -76,10 +76,41 @@ function createApi() {
       );
     }
 
+    // Deliberately keyed off the request BODY, with no cookie support at all:
+    // one browser cookie cannot represent several concurrent sessions, so the
+    // per-profile refresh token has to be the carrier that makes switching work.
+    if (path === "/auth/refresh") {
+      const body = init.body ? JSON.parse(init.body) : {};
+      const account = [...accounts.values()].find(
+        (a) => a.refreshToken === body.refresh_token,
+      );
+      if (!account || denied.has(account.accessToken)) {
+        return new Response(JSON.stringify({ message: "Invalid refresh token" }), {
+          status: 401,
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          token_type: "Bearer",
+          expires_in: 3600,
+          access_token: account.accessToken,
+          refresh_token: account.refreshToken,
+        }),
+        { status: 200 },
+      );
+    }
+
     if (path === "/v1/users/me") {
-      const account = [...accounts.values()].find((a) => a.accessToken === bearer);
+      let account = [...accounts.values()].find((a) => a.accessToken === bearer);
       if (!account || denied.has(bearer)) {
         return new Response(JSON.stringify({ message: "Unauthenticated" }), { status: 401 });
+      }
+      // Delegated access: the real API answers as the managed user when the
+      // acting headers are present, even though the bearer is the operator's.
+      const actingUlid = init.headers?.["X-Acting-User-ULID"];
+      if (actingUlid) {
+        const managed = [...accounts.values()].find((a) => a.ulid === actingUlid);
+        if (managed) account = managed;
       }
       return new Response(
         JSON.stringify({
@@ -142,6 +173,31 @@ function createStoreFactory() {
       },
       async saveTokens(tokens) {
         slot.tokens = tokens;
+      },
+      async clearTokens() {
+        slot.tokens = null;
+      },
+    };
+  };
+  return { factory, slots };
+}
+
+/**
+ * Per-profile stores that persist the refresh token **only** — the shape a
+ * refresh-cookie host produces, where the bearer is deliberately kept out of
+ * durable storage. Restoring from one of these must not be read as a sign-out.
+ */
+function createRefreshOnlyStoreFactory() {
+  const slots = new Map();
+  const factory = (profileId) => {
+    if (!slots.has(profileId)) slots.set(profileId, { tokens: null });
+    const slot = slots.get(profileId);
+    return {
+      async loadTokens() {
+        return slot.tokens;
+      },
+      async saveTokens(tokens) {
+        slot.tokens = tokens?.refreshToken ? { refreshToken: tokens.refreshToken } : null;
       },
       async clearTokens() {
         slot.tokens = null;
@@ -482,6 +538,318 @@ test("requests from the active session carry that profile's bearer", async () =>
   await manager.dispose();
 });
 
+test("switching works when the stores persist refresh tokens only", async () => {
+  // The reported failure. Under refresh-cookie storage the snapshot carries no
+  // access token, restore treated that as a change and wiped the live bearer,
+  // and the second visit to a profile resolved with an SDK that had no token —
+  // so getCurrentUser() returned null and the UI threw.
+  const prefix = uniquePrefix("refresh-only-switch");
+  const api = createApi();
+  api.addAccount("alice@example.com", "01ALICE", "alice", "Alice");
+  api.addAccount("bob@example.com", "01BOB", "bob", "Bob");
+
+  const stores = createRefreshOnlyStoreFactory();
+  const registry = createRegistry();
+  const manager = createManager({
+    api,
+    stores,
+    registry,
+    prefix,
+    sdkOptions: { fetchImpl: api.fetchImpl, useRefreshCookie: true },
+  });
+  await manager.ready();
+
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+  await manager.addProfile((sdk) => sdk.login("bob@example.com", "pw"));
+
+  const first = await manager.switchTo("01ALICE");
+  assert.equal((await first.getCurrentUser())?.ulid, "01ALICE");
+
+  const bob = await manager.switchTo("01BOB");
+  assert.equal((await bob.getCurrentUser())?.ulid, "01BOB");
+
+  // Back to Alice: her instance's ready() settled during the first switch, so
+  // this leg is the one that used to hand back a hollow session.
+  const again = await manager.switchTo("01ALICE");
+  assert.equal(again.getTokens()?.accessToken, "access-01ALICE", "resolved with a live bearer");
+  assert.equal((await again.getCurrentUser())?.ulid, "01ALICE");
+
+  assert.equal(manager.get("01ALICE").isTokenExpired, false);
+  assert.equal(manager.get("01BOB").isTokenExpired, false);
+
+  await manager.dispose();
+});
+
+test("a shared refresh cookie cannot hand one profile another account's session", async () => {
+  // One httpOnly cookie cannot represent two concurrent sessions. On a
+  // cookie-first host it names whichever account authenticated last, so
+  // refreshing profile A mints B's bearer. Switching therefore must not depend
+  // on a refresh when the profile already holds a live token of its own —
+  // otherwise the switcher quietly serves the wrong account's data.
+  const prefix = uniquePrefix("shared-cookie");
+  const api = createApi();
+  api.addAccount("alice@example.com", "01ALICE", "alice", "Alice");
+  api.addAccount("bob@example.com", "01BOB", "bob", "Bob");
+
+  const cookie = { ulid: null };
+  const fetchImpl = async (url, init = {}) => {
+    const path = new URL(url).pathname;
+
+    if (path === "/auth/refresh") {
+      // Ignores the body refresh_token, as a legacy cookie-only host does.
+      if (!cookie.ulid) {
+        return new Response(JSON.stringify({ message: "No session cookie" }), { status: 401 });
+      }
+      return new Response(
+        JSON.stringify({
+          token_type: "Bearer",
+          expires_in: 3600,
+          access_token: `access-${cookie.ulid}`,
+          refresh_token: `refresh-${cookie.ulid}`,
+        }),
+        { status: 200 },
+      );
+    }
+
+    if (path === "/v1/auth/login") {
+      const body = JSON.parse(init.body);
+      cookie.ulid = body.email.startsWith("alice") ? "01ALICE" : "01BOB";
+    }
+
+    return api.fetchImpl(url, init);
+  };
+
+  const stores = createRefreshOnlyStoreFactory();
+  const registry = createRegistry();
+  const manager = createManager({
+    api,
+    stores,
+    registry,
+    prefix,
+    sdkOptions: { fetchImpl, useRefreshCookie: true },
+  });
+  await manager.ready();
+
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+  await manager.addProfile((sdk) => sdk.login("bob@example.com", "pw"));
+
+  // The cookie now belongs to Bob, who logged in last.
+  const alice = await manager.switchTo("01ALICE");
+
+  assert.equal(alice.getTokens()?.accessToken, "access-01ALICE", "kept Alice's own bearer");
+  assert.equal(
+    (await alice.getCurrentUser())?.ulid,
+    "01ALICE",
+    "the active session answered as Alice, not as the cookie's owner",
+  );
+
+  await manager.dispose();
+});
+
+test("a shared refresh cookie cannot activate the wrong account when the bearer is gone", async () => {
+  // The sibling test above never forces a refresh — Alice's own live bearer
+  // short-circuits it. Clear that bearer and the cookie-first host becomes the
+  // only thing answering, so /auth/refresh hands back Bob's session under
+  // Alice's name. Presence of a token is not proof of ownership: the switch
+  // must fail rather than silently serve the wrong account's data.
+  const prefix = uniquePrefix("shared-cookie-hollow");
+  const api = createApi();
+  api.addAccount("alice@example.com", "01ALICE", "alice", "Alice");
+  api.addAccount("bob@example.com", "01BOB", "bob", "Bob");
+
+  const cookie = { ulid: null };
+  const fetchImpl = async (url, init = {}) => {
+    const path = new URL(url).pathname;
+
+    if (path === "/auth/refresh") {
+      // Ignores the body refresh_token, as a legacy cookie-only host does.
+      if (!cookie.ulid) {
+        return new Response(JSON.stringify({ message: "No session cookie" }), { status: 401 });
+      }
+      return new Response(
+        JSON.stringify({
+          token_type: "Bearer",
+          expires_in: 3600,
+          access_token: `access-${cookie.ulid}`,
+          refresh_token: `refresh-${cookie.ulid}`,
+        }),
+        { status: 200 },
+      );
+    }
+
+    if (path === "/v1/auth/login") {
+      const body = JSON.parse(init.body);
+      cookie.ulid = body.email.startsWith("alice") ? "01ALICE" : "01BOB";
+    }
+
+    return api.fetchImpl(url, init);
+  };
+
+  const stores = createRefreshOnlyStoreFactory();
+  const registry = createRegistry();
+  const manager = createManager({
+    api,
+    stores,
+    registry,
+    prefix,
+    sdkOptions: { fetchImpl, useRefreshCookie: true },
+  });
+  await manager.ready();
+
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+  await manager.addProfile((sdk) => sdk.login("bob@example.com", "pw"));
+
+  const alice = await manager.switchTo("01ALICE");
+  await manager.switchTo("01BOB");
+
+  // Now the cookie names Bob and Alice has nothing of her own left to present.
+  alice.setTokens(null);
+
+  await assert.rejects(() => manager.switchTo("01ALICE"), /could not be restored/);
+
+  assert.equal(manager.activeProfileUlid, "01BOB", "did not activate the impostor session");
+  assert.notEqual(
+    alice.getTokens()?.accessToken,
+    "access-01BOB",
+    "Alice's instance must not be left holding Bob's bearer",
+  );
+  assert.equal(manager.get("01ALICE").isTokenExpired, true, "flagged for re-auth");
+
+  await manager.dispose();
+});
+
+test("switching while acting as a managed user does not sign the operator out", async () => {
+  // Acting-as stamps X-Acting-User-ULID on every request, so /v1/users/me
+  // answers as the *managed* user. The ownership check must not read that as
+  // one profile holding another's session — doing so clears a healthy session
+  // and drops the operator out of the app mid-delegation.
+  const { api, manager } = await setupTwoAccounts(uniquePrefix("acting"));
+  api.addAccount("managed@example.com", "01MANAGED", "managed", "Blah Blah");
+
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+  await manager.addProfile((sdk) => sdk.login("bob@example.com", "pw"));
+
+  const alice = await manager.switchTo("01ALICE");
+
+  // Alice starts acting as a managed user, then her bearer needs a refresh.
+  alice.setActingContext({
+    token: "acting-token",
+    managedUserUlid: "01MANAGED",
+    managedUserName: "Blah Blah",
+    expiresAt: new Date(Date.now() + 600_000).toISOString(),
+  });
+
+  await manager.switchTo("01BOB");
+  alice.setTokens(null);
+
+  const revived = await manager.switchTo("01ALICE");
+
+  assert.equal(manager.activeProfileUlid, "01ALICE", "the switch was not refused");
+  assert.equal(revived.getTokens()?.accessToken, "access-01ALICE");
+  assert.equal(manager.get("01ALICE").isTokenExpired, false, "not badged for re-auth");
+  assert.ok(revived.getActingContext(), "acting context survived the switch");
+
+  await manager.dispose();
+});
+
+test("switchTo revives a background profile whose bearer was cleared", async () => {
+  const { api, manager } = await setupTwoAccounts(uniquePrefix("revive"));
+
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+  await manager.addProfile((sdk) => sdk.login("bob@example.com", "pw"));
+
+  const alice = await manager.switchTo("01ALICE");
+  await manager.switchTo("01BOB");
+
+  // A background profile can lose its in-memory bearer — a failed refresh, or a
+  // cross-tab wipe. Its ready() promise stays settled, so awaiting it again is
+  // a no-op and the profile would never come back.
+  alice.setTokens(null);
+  assert.equal(alice.getTokens()?.accessToken, undefined);
+
+  const revived = await manager.switchTo("01ALICE");
+
+  assert.equal(revived, alice, "same instance, re-hydrated rather than replaced");
+  assert.equal(revived.getTokens()?.accessToken, "access-01ALICE");
+  assert.equal((await revived.getCurrentUser())?.ulid, "01ALICE");
+  assert.equal(manager.get("01ALICE").isTokenExpired, false);
+
+  await manager.dispose();
+});
+
+test("switchTo refuses to activate a session it cannot revive", async () => {
+  const { stores, manager } = await setupTwoAccounts(uniquePrefix("hollow"));
+
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+  await manager.addProfile((sdk) => sdk.login("bob@example.com", "pw"));
+
+  const alice = await manager.switchTo("01ALICE");
+  await manager.switchTo("01BOB");
+
+  // Alice's session is gone for good: no bearer in memory, nothing persisted.
+  alice.setTokens(null);
+  stores.slots.get("01ALICE").tokens = null;
+
+  await assert.rejects(() => manager.switchTo("01ALICE"), /could not be restored/);
+
+  assert.equal(manager.activeProfileUlid, "01BOB", "kept the account that still works");
+  assert.equal(manager.get("01ALICE").isTokenExpired, true, "flagged for re-auth");
+  assert.equal(manager.active.getTokens()?.accessToken, "access-01BOB");
+
+  await manager.dispose();
+});
+
+test("a transient refresh failure does not permanently flag the profile", async () => {
+  // 5xx / offline leaves the refresh token intact, so the account is not known
+  // to be dead. Refusing the switch is right; badging it "sign in again" is not.
+  const prefix = uniquePrefix("transient");
+  const api = createApi();
+  api.addAccount("alice@example.com", "01ALICE", "alice", "Alice");
+  api.addAccount("bob@example.com", "01BOB", "bob", "Bob");
+
+  let failRefresh = false;
+  const stores = createRefreshOnlyStoreFactory();
+  const registry = createRegistry();
+  const manager = createManager({
+    api,
+    stores,
+    registry,
+    prefix,
+    sdkOptions: {
+      fetchImpl: async (url, init) => {
+        if (failRefresh && new URL(url).pathname === "/auth/refresh") {
+          return new Response(JSON.stringify({ message: "Bad gateway" }), { status: 502 });
+        }
+        return api.fetchImpl(url, init);
+      },
+    },
+  });
+  await manager.ready();
+
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+  await manager.addProfile((sdk) => sdk.login("bob@example.com", "pw"));
+
+  const alice = await manager.switchTo("01ALICE");
+  await manager.switchTo("01BOB");
+
+  alice.setTokens(null);
+  failRefresh = true;
+  await assert.rejects(() => manager.switchTo("01ALICE"), /could not be restored/);
+  assert.equal(
+    manager.get("01ALICE").isTokenExpired,
+    false,
+    "still refreshable, so not marked as needing re-auth",
+  );
+
+  // Once the server recovers, the same profile switches in cleanly.
+  failRefresh = false;
+  const recovered = await manager.switchTo("01ALICE");
+  assert.equal(recovered.getTokens()?.accessToken, "access-01ALICE");
+  assert.equal(manager.activeProfileUlid, "01ALICE");
+
+  await manager.dispose();
+});
+
 // ---------------------------------------------------------------------------
 // Removing
 // ---------------------------------------------------------------------------
@@ -790,10 +1158,13 @@ test("an expired stored session surfaces as isTokenExpired", async () => {
   await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
   await manager.dispose();
 
-  // Age out the persisted session. The refresh attempt on restore fails (the
-  // fake API has no /auth/refresh), so the expiry stands.
+  // Age out the persisted session and drop its refresh token, so there is
+  // nothing left to mint a new bearer with and the expiry genuinely stands.
+  // (With a refresh token present the SDK heals this on restore, which is the
+  // subject of the switching tests above.)
   const past = new Date(Date.now() - 60_000).toISOString();
-  stores.slots.get("01ALICE").tokens.expiresAt = past;
+  const slot = stores.slots.get("01ALICE");
+  slot.tokens = { accessToken: slot.tokens.accessToken, expiresAt: past };
   const snapshot = await registry.load();
   snapshot.profiles[0].tokenExpiresAt = past;
   await registry.save(snapshot);
