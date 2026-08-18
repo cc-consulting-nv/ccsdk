@@ -62,7 +62,7 @@
  * @category Authentication
  */
 
-import { CcPlatformSdk, type CcPlatformSdkOptions } from "./platformSdk.js";
+import { AuthSessionExpiredError, CcPlatformSdk, type CcPlatformSdkOptions } from "./platformSdk.js";
 import { DEFAULT_DB_NAME } from "./cache/cacheDB.js";
 import { MemoryTokenProvider, type SessionStore, type StorageLike } from "./auth.js";
 import type { AuthTokens } from "./types.js";
@@ -710,6 +710,13 @@ export class SessionManager {
         (async () => {
           const refreshed = await holder.sdk?.refreshToken();
           if (!refreshed?.accessToken) {
+            // refreshToken() answers null for both a definitive 4xx rejection
+            // and a transient failure (offline / 5xx). Only the former may
+            // latch the HTTP client's logout cascade, so surface the
+            // distinction the SDK already computed.
+            if (holder.sdk?.lastRefreshWasDefinitive()) {
+              throw new AuthSessionExpiredError("Token refresh rejected");
+            }
             throw new Error("Token refresh failed");
           }
           return refreshed;

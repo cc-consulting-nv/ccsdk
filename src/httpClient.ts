@@ -294,9 +294,14 @@ export class HttpClient {
     } catch (error) {
       this.refreshQueue.forEach((item) => item.reject(error));
       this.refreshQueue = [];
-      // Only call onUnauthorized once — prevent multiple concurrent 401s
-      // from each triggering a separate logout cascade.
-      if (!this.isLoggingOut) {
+      // Only latch on a *definitive* auth rejection. A transient failure
+      // (offline, 5xx, timeout) must leave the latch down: it is cleared only
+      // by setTokens() installing a session, which itself needs a successful
+      // refresh — so latching here would wedge the client into permanent 401s
+      // for every later request even once the network recovers.
+      const status = (error as { status?: number } | null | undefined)?.status;
+      const isDefinitive = typeof status === "number" && status >= 400 && status < 500;
+      if (isDefinitive && !this.isLoggingOut) {
         this.isLoggingOut = true;
         await this.options.onUnauthorized?.();
       }

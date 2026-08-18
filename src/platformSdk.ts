@@ -263,6 +263,28 @@ class InvalidAuthResponseError extends Error {
 }
 
 /**
+ * Thrown by a refresh handler when the server *definitively* rejected the
+ * refresh (4xx) and the session cannot be recovered — as opposed to a
+ * transient failure (offline, 5xx, timeout) where the session is still alive
+ * and a later request should be allowed to refresh again.
+ *
+ * {@link HttpClient} only latches its logout cascade on this error, so a
+ * transient blip can never wedge the client into permanent 401s.
+ *
+ * @category Authentication
+ */
+export class AuthSessionExpiredError extends Error {
+  /** Marks a definitive auth rejection, carried across the refresh boundary. */
+  readonly status: number;
+
+  constructor(message = "Session expired", status = 401) {
+    super(message);
+    this.name = "AuthSessionExpiredError";
+    this.status = status;
+  }
+}
+
+/**
  * Convert a snake_case string to camelCase.
  */
 function snakeToCamel(str: string): string {
@@ -570,6 +592,12 @@ export class CcPlatformSdk {
 
   // Session refresh - single-flight request deduplication
   private refreshSessionInFlight: Promise<AuthTokens | null> | null = null;
+
+  // Set when the last refresh attempt was rejected *definitively* (4xx) rather
+  // than failing transiently (offline / 5xx / timeout). refreshToken() answers
+  // null for both, so refresh handlers read this to decide whether a failure
+  // may latch the HTTP client's logout cascade.
+  private refreshWasDefinitive = false;
 
   // ready() memoization - the first restore/refresh attempt, run once.
   private readyPromise: Promise<void> | null = null;
@@ -1754,6 +1782,7 @@ export class CcPlatformSdk {
     // If a sign-out begins while this refresh is in flight, the epoch
     // advances and the refreshed tokens must be discarded, not persisted.
     const epochAtStart = this.signOutEpoch;
+    this.refreshWasDefinitive = false;
     const currentTokens = await this.restoreStoredSession();
     if (!currentTokens?.refreshToken && !this.useRefreshCookie) return null;
 
@@ -1849,11 +1878,24 @@ export class CcPlatformSdk {
       // is invalid/expired/revoked and recovery is not possible.
       // Don't clear on 5xx — those are transient and the caller may retry.
       // Skip if a sign-out began meanwhile — it already owns the cleanup.
-      if (status && status >= 400 && status < 500 && this.signOutEpoch === epochAtStart) {
-        await this.clearSession();
+      if (status && status >= 400 && status < 500) {
+        // The server rejected the refresh token itself: unrecoverable.
+        this.refreshWasDefinitive = true;
+        if (this.signOutEpoch === epochAtStart) {
+          await this.clearSession();
+        }
       }
       return null;
     }
+  }
+
+  /**
+   * Whether the most recent failed refresh was a definitive 4xx rejection
+   * (session unrecoverable) rather than a transient failure. Only meaningful
+   * immediately after {@link refreshToken} returned null.
+   */
+  lastRefreshWasDefinitive(): boolean {
+    return this.refreshWasDefinitive;
   }
 
   /**
