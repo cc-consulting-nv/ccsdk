@@ -1342,3 +1342,123 @@ test("createStorageProfileRegistry round-trips and tolerates corruption", async 
   storage.setItem("test_registry", JSON.stringify({ profiles: "nope", activeUlid: 1 }));
   assert.equal(await registry.load(), null, "malformed registry reads as empty");
 });
+
+// --- Coverage for the fallback onRefreshTokens handler ---
+//
+// The per-profile fallback handler had zero test coverage. It is the seam that
+// converts a failed refresh into the signal HttpClient latches on, so getting
+// it wrong either logs users out on a blip or never logs them out at all.
+
+test("fallback refresh handler: a transient 5xx does not latch the logout cascade", async () => {
+  const prefix = uniquePrefix("fallback-transient");
+  const api = createApi();
+  api.addAccount("alice@example.com", "01ALICE", "alice", "Alice");
+
+  let failRefresh = false;
+  const stores = createRefreshOnlyStoreFactory();
+  const manager = createManager({
+    api,
+    stores,
+    registry: createRegistry(),
+    prefix,
+    sdkOptions: {
+      fetchImpl: async (url, init) => {
+        if (failRefresh && new URL(url).pathname === "/auth/refresh") {
+          return new Response(JSON.stringify({ message: "Bad gateway" }), { status: 502 });
+        }
+        return api.fetchImpl(url, init);
+      },
+    },
+  });
+  await manager.ready();
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+
+  const alice = manager.active;
+
+  // Force the fallback handler down its failure path.
+  failRefresh = true;
+  alice.setTokens(null);
+  const refreshed = await alice.refreshToken();
+  assert.equal(refreshed, null, "transient failure answers null");
+  assert.equal(
+    alice.lastRefreshWasDefinitive(),
+    false,
+    "deprecated getter now always fails open",
+  );
+
+  // Recovery: the session is still usable, proving nothing latched.
+  failRefresh = false;
+  const recovered = await alice.refreshToken();
+  assert.ok(recovered?.accessToken, "still refreshable after the blip");
+});
+
+test("fallback refresh handler: a definitive rejection clears the session", async () => {
+  const prefix = uniquePrefix("fallback-definitive");
+  const api = createApi();
+  api.addAccount("alice@example.com", "01ALICE", "alice", "Alice");
+
+  const stores = createRefreshOnlyStoreFactory();
+  const manager = createManager({
+    api,
+    stores,
+    registry: createRegistry(),
+    prefix,
+  });
+  await manager.ready();
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+
+  const alice = manager.active;
+
+  // The fake API answers 401 to a refresh token it does not recognise.
+  api.revoke("access-01ALICE");
+  alice.setTokens(null);
+
+  await assert.rejects(
+    () => alice.refreshTokenOrThrow(),
+    (err) => err?.isAuthSessionExpired === true,
+    "definitive rejection rejects with the expired-session marker",
+  );
+
+  // The null-returning wrapper keeps its historical contract.
+  assert.equal(
+    await alice.refreshToken(),
+    null,
+    "refreshToken() still answers null on a definitive rejection",
+  );
+});
+
+test("refreshTokenOrThrow answers null (not throws) on a transient failure", async () => {
+  const prefix = uniquePrefix("orthrow-transient");
+  const api = createApi();
+  api.addAccount("alice@example.com", "01ALICE", "alice", "Alice");
+
+  let failRefresh = false;
+  const stores = createRefreshOnlyStoreFactory();
+  const manager = createManager({
+    api,
+    stores,
+    registry: createRegistry(),
+    prefix,
+    sdkOptions: {
+      fetchImpl: async (url, init) => {
+        if (failRefresh && new URL(url).pathname === "/auth/refresh") {
+          return new Response(JSON.stringify({ message: "Rate limited" }), { status: 429 });
+        }
+        return api.fetchImpl(url, init);
+      },
+    },
+  });
+  await manager.ready();
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+
+  const alice = manager.active;
+  failRefresh = true;
+  alice.setTokens(null);
+
+  assert.equal(await alice.refreshTokenOrThrow(), null, "429 is transient, not definitive");
+
+  // Critically, a 429 must not have destroyed the stored refresh token.
+  failRefresh = false;
+  const recovered = await alice.refreshTokenOrThrow();
+  assert.ok(recovered?.accessToken, "429 left the refresh token intact");
+});

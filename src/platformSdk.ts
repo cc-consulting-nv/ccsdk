@@ -113,6 +113,25 @@ import {
  */
 const OAUTH_INVALID_GRANT = "invalid_grant";
 
+/**
+ * Whether a failed refresh means *this session is over* rather than *try again
+ * later*. Only two shapes qualify:
+ *
+ * - the OAuth `invalid_grant` error body, on any status — the grant itself was
+ *   rejected, so no retry can succeed;
+ * - a bare 401, which is the same rejection from a server that omits the body.
+ *
+ * Deliberately NOT the whole 4xx range: 429 and 408 are transient
+ * backpressure/timeout signals, and a captive portal will answer 400 to
+ * anything. Reading those as definitive destroys a live session.
+ */
+function isDefinitiveAuthRejection(status: unknown, payload: unknown): boolean {
+  if (payload && typeof payload === "object" && (payload as { error?: unknown }).error === OAUTH_INVALID_GRANT) {
+    return true;
+  }
+  return status === 401;
+}
+
 // ============================================================================
 // Moderation Feed Types (025-moderation-feed)
 // ============================================================================
@@ -277,10 +296,40 @@ export class AuthSessionExpiredError extends Error {
   /** Marks a definitive auth rejection, carried across the refresh boundary. */
   readonly status: number;
 
+  /**
+   * Duck-typing marker. {@link HttpClient} tests this property rather than
+   * using `instanceof`, so an error thrown by a handler bundled against a
+   * different copy of the SDK is still recognised as definitive.
+   */
+  readonly isAuthSessionExpired = true as const;
+
   constructor(message = "Session expired", status = 401) {
     super(message);
     this.name = "AuthSessionExpiredError";
     this.status = status;
+  }
+}
+
+/**
+ * Thrown by a refresh handler when the refresh failed for a reason that may
+ * clear on its own — offline, 5xx, rate limited, request timeout. Carries a
+ * non-401 status so {@link HttpClient} leaves its logout cascade unlatched and
+ * a later request is allowed to refresh again.
+ *
+ * The counterpart to {@link AuthSessionExpiredError}. Needed because a bare
+ * `Error` is deliberately read as *definitive*: a handler that cannot describe
+ * its failure gets the safe legacy behaviour, so declaring "transient" has to
+ * be explicit.
+ *
+ * @category Authentication
+ */
+export class TransientRefreshError extends Error {
+  /** 503: transient by construction, so it can never satisfy the 401 test. */
+  readonly status = 503 as const;
+
+  constructor(message = "Token refresh failed") {
+    super(message);
+    this.name = "TransientRefreshError";
   }
 }
 
@@ -592,12 +641,6 @@ export class CcPlatformSdk {
 
   // Session refresh - single-flight request deduplication
   private refreshSessionInFlight: Promise<AuthTokens | null> | null = null;
-
-  // Set when the last refresh attempt was rejected *definitively* (4xx) rather
-  // than failing transiently (offline / 5xx / timeout). refreshToken() answers
-  // null for both, so refresh handlers read this to decide whether a failure
-  // may latch the HTTP client's logout cascade.
-  private refreshWasDefinitive = false;
 
   // ready() memoization - the first restore/refresh attempt, run once.
   private readyPromise: Promise<void> | null = null;
@@ -1749,12 +1792,38 @@ export class CcPlatformSdk {
    * @category Authentication
    */
   async refreshToken(): Promise<AuthTokens | null> {
+    try {
+      return await this.refreshTokenOrThrow();
+    } catch (error) {
+      // Preserve the historical contract: null on failure, definitive or not.
+      // Callers that need the distinction use refreshTokenOrThrow(), which
+      // carries the verdict on the error instead of in racy instance state.
+      if (error instanceof AuthSessionExpiredError) return null;
+      throw error;
+    }
+  }
+
+  /**
+   * Like {@link refreshToken}, but rejects with {@link AuthSessionExpiredError}
+   * when the server definitively rejected the refresh token, and resolves to
+   * `null` when the failure was transient (offline, 5xx, rate limited).
+   *
+   * Prefer this in refresh handlers: the verdict arrives *with* the result, so
+   * there is no window in which a concurrent refresh can overwrite it.
+   *
+   * @category Authentication
+   */
+  async refreshTokenOrThrow(): Promise<AuthTokens | null> {
     if (this.refreshSessionInFlight) {
       return this.refreshSessionInFlight;
     }
 
     const inFlight = this.performRefreshToken();
     this.refreshSessionInFlight = inFlight;
+    // A definitive rejection rejects this promise. Anything awaiting the
+    // shared in-flight slot sees the same verdict; without this guard an
+    // unhandled rejection surfaces if the slot outlives its only awaiter.
+    inFlight.catch(() => {});
 
     try {
       return await inFlight;
@@ -1782,7 +1851,6 @@ export class CcPlatformSdk {
     // If a sign-out begins while this refresh is in flight, the epoch
     // advances and the refreshed tokens must be discarded, not persisted.
     const epochAtStart = this.signOutEpoch;
-    this.refreshWasDefinitive = false;
     const currentTokens = await this.restoreStoredSession();
     if (!currentTokens?.refreshToken && !this.useRefreshCookie) return null;
 
@@ -1874,28 +1942,39 @@ export class CcPlatformSdk {
         }
       }
 
-      // Clear session on definitive auth rejection (4xx) — the refresh token
-      // is invalid/expired/revoked and recovery is not possible.
-      // Don't clear on 5xx — those are transient and the caller may retry.
-      // Skip if a sign-out began meanwhile — it already owns the cleanup.
-      if (status && status >= 400 && status < 500) {
-        // The server rejected the refresh token itself: unrecoverable.
-        this.refreshWasDefinitive = true;
+      // Clear the session only when the server rejected *this grant* — the
+      // refresh token is invalid/expired/revoked and recovery is impossible.
+      //
+      // The test is `invalid_grant` (or a bare 401), NOT the whole 4xx range.
+      // 429 (rate limited) and 408 (request timeout) are 4xx but transient:
+      // treating them as definitive both latches the logout cascade *and*
+      // destroys the stored refresh token, turning a moment of backpressure
+      // into a forced re-login. A captive portal answering 400 to everything
+      // does the same. Those must fall through as transient and be retried.
+      if (isDefinitiveAuthRejection(status, (error as { payload?: unknown })?.payload)) {
         if (this.signOutEpoch === epochAtStart) {
           await this.clearSession();
         }
+        // Throw rather than return null: the verdict travels *with* the
+        // result instead of in instance state a later reader might race.
+        throw new AuthSessionExpiredError("Refresh token rejected", status);
       }
       return null;
     }
   }
 
   /**
-   * Whether the most recent failed refresh was a definitive 4xx rejection
-   * (session unrecoverable) rather than a transient failure. Only meaningful
-   * immediately after {@link refreshToken} returned null.
+   * @deprecated Always returns `false`. The definitive-vs-transient verdict is
+   * no longer stored on the instance — reading it after an `await` raced with
+   * concurrent refreshes and could report another call's outcome. Use
+   * {@link refreshTokenOrThrow}, which rejects with {@link AuthSessionExpiredError}
+   * on a definitive rejection, so the verdict cannot be misattributed.
+   *
+   * Kept as a no-op for source compatibility; it fails open (never definitive),
+   * so a stale caller can no longer trigger a spurious logout.
    */
   lastRefreshWasDefinitive(): boolean {
-    return this.refreshWasDefinitive;
+    return false;
   }
 
   /**

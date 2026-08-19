@@ -97,7 +97,7 @@ const sdk = new CcPlatformSdk({
 | `cache` | `CacheDB` | No | Custom cache instance |
 | `dbName` | `string` | No | IndexedDB database name |
 | `onRefreshTokens` | `() => Promise<AuthTokens>` | No | Token refresh handler |
-| `onUnauthorized` | `() => void` | No | Called when refresh fails |
+| `onUnauthorized` | `() => void` | No | Called when refresh fails *definitively* (session unrecoverable). Not called for transient failures — offline, 5xx, 429, 408 — which stay retryable. A handler that rejects without a `status` is treated as definitive. |
 | `enableLogging` | `boolean` | No | SDK debug logging |
 | `useMsgpack` | `boolean` | No | Use MessagePack responses |
 

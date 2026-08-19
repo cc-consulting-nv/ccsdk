@@ -62,7 +62,7 @@
  * @category Authentication
  */
 
-import { AuthSessionExpiredError, CcPlatformSdk, type CcPlatformSdkOptions } from "./platformSdk.js";
+import { CcPlatformSdk, TransientRefreshError, type CcPlatformSdkOptions } from "./platformSdk.js";
 import { DEFAULT_DB_NAME } from "./cache/cacheDB.js";
 import { MemoryTokenProvider, type SessionStore, type StorageLike } from "./auth.js";
 import type { AuthTokens } from "./types.js";
@@ -708,16 +708,15 @@ export class SessionManager {
       onRefreshTokens:
         shared.onRefreshTokens ??
         (async () => {
-          const refreshed = await holder.sdk?.refreshToken();
+          // refreshTokenOrThrow() rejects with AuthSessionExpiredError on a
+          // definitive rejection and resolves null when the failure was
+          // transient (offline / 5xx / rate limited). Let the definitive
+          // rejection propagate untouched — it is exactly the signal the HTTP
+          // client latches on — and report the transient case as a plain
+          // failure so the latch stays down for a later retry.
+          const refreshed = await holder.sdk?.refreshTokenOrThrow();
           if (!refreshed?.accessToken) {
-            // refreshToken() answers null for both a definitive 4xx rejection
-            // and a transient failure (offline / 5xx). Only the former may
-            // latch the HTTP client's logout cascade, so surface the
-            // distinction the SDK already computed.
-            if (holder.sdk?.lastRefreshWasDefinitive()) {
-              throw new AuthSessionExpiredError("Token refresh rejected");
-            }
-            throw new Error("Token refresh failed");
+            throw new TransientRefreshError();
           }
           return refreshed;
         }),

@@ -72,6 +72,33 @@ export interface RequestOptions {
  *
  * @category HTTP
  */
+/**
+ * Whether a rejected refresh handler means the session is definitively over
+ * (latch the logout cascade) rather than transiently unavailable (leave the
+ * latch down so a later request can retry).
+ *
+ * Definitive:
+ * - `isAuthSessionExpired === true` — the handler explicitly said so.
+ *   `AuthSessionExpiredError` carries this; duck-typed rather than
+ *   `instanceof` so handlers from a different copy of the SDK still work.
+ * - `status === 401` — the same rejection from a handler that rethrows a raw
+ *   HTTP error.
+ * - **no status at all** — a plain `throw new Error("refresh failed")`. This
+ *   is the pre-existing contract every current consumer relies on, and the
+ *   fail-closed default: a handler that cannot describe its failure gets the
+ *   old behaviour (one logout cascade) rather than silent infinite 401s.
+ *
+ * Transient (explicitly NOT definitive): any other numeric status — 429, 408,
+ * a captive portal's 400, and every 5xx.
+ */
+function isDefinitiveRefreshRejection(error: unknown): boolean {
+  const e = error as { status?: unknown; isAuthSessionExpired?: unknown } | null | undefined;
+  if (e?.isAuthSessionExpired === true) return true;
+  const status = e?.status;
+  if (typeof status !== "number") return true;
+  return status === 401;
+}
+
 export class HttpClient {
   private isRefreshing = false;
   private isLoggingOut = false;
@@ -272,6 +299,9 @@ export class HttpClient {
       return null;
     }
 
+    // No refresh handler at all: a 401 is unrecoverable by construction, so
+    // this latches unconditionally. Not an inconsistency with the transient
+    // handling below — there is no retry that could ever succeed here.
     if (!this.options.onRefreshTokens) {
       this.isLoggingOut = true;
       await this.options.onUnauthorized?.();
@@ -299,9 +329,14 @@ export class HttpClient {
       // by setTokens() installing a session, which itself needs a successful
       // refresh — so latching here would wedge the client into permanent 401s
       // for every later request even once the network recovers.
-      const status = (error as { status?: number } | null | undefined)?.status;
-      const isDefinitive = typeof status === "number" && status >= 400 && status < 500;
-      if (isDefinitive && !this.isLoggingOut) {
+      //
+      // "Definitive" is what the handler *declares*, not a status range. A
+      // handler signals it by rejecting with an error carrying
+      // `isAuthSessionExpired` (AuthSessionExpiredError does) or a bare 401.
+      // 429/408 are 4xx but transient, and a handler that rejects with a
+      // plain Error is treated as definitive precisely because it cannot say
+      // otherwise — see below.
+      if (isDefinitiveRefreshRejection(error) && !this.isLoggingOut) {
         this.isLoggingOut = true;
         await this.options.onUnauthorized?.();
       }
