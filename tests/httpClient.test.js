@@ -44,3 +44,216 @@ test("HttpClient POST serializes JSON bodies", async () => {
   assert.equal(calls[0].init.headers["Content-Type"], "application/json");
   assert.equal(calls[0].init.body, JSON.stringify({ foo: "bar" }));
 });
+
+// Regression: a transient refresh failure (offline / 5xx / timeout) must not
+// latch the logout cascade. The latch is cleared only by setTokens() installing
+// a session, which itself needs a successful refresh — so latching on a
+// transient blip wedged the client into permanent 401s on every later request.
+test("transient refresh failure does not disable future refreshes", async () => {
+  let refreshShouldFail = true;
+  let refreshCount = 0;
+  let unauthorizedCount = 0;
+
+  const fetchImpl = async (_url, init) =>
+    init.headers.Authorization === "Bearer good"
+      ? new Response(JSON.stringify({ ok: 1 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      : new Response("{}", {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+
+  const client = new HttpClient({
+    baseUrl: "https://api.test",
+    fetchImpl,
+    getAuthTokens: () => ({ accessToken: "stale" }),
+    onRefreshTokens: async () => {
+      refreshCount += 1;
+      if (refreshShouldFail) {
+        throw Object.assign(new Error("network down"), { status: 503 });
+      }
+      return { accessToken: "good" };
+    },
+    onUnauthorized: () => {
+      unauthorizedCount += 1;
+    },
+  });
+
+  await assert.rejects(() => client.get("/a"));
+  assert.equal(refreshCount, 1);
+  assert.equal(unauthorizedCount, 0, "a 5xx is transient - no logout cascade");
+
+  // Network recovers: the client must be willing to refresh again.
+  refreshShouldFail = false;
+  const result = await client.get("/b");
+  assert.equal(refreshCount, 2, "refresh retried after recovery");
+  assert.deepEqual(result, { ok: 1 });
+});
+
+// The other half: a definitive 4xx rejection still latches exactly once.
+test("definitive refresh rejection latches the logout cascade once", async () => {
+  let unauthorizedCount = 0;
+  let refreshCount = 0;
+
+  const fetchImpl = async () =>
+    new Response("{}", { status: 401, headers: { "Content-Type": "application/json" } });
+
+  const client = new HttpClient({
+    baseUrl: "https://api.test",
+    fetchImpl,
+    getAuthTokens: () => ({ accessToken: "stale" }),
+    onRefreshTokens: async () => {
+      refreshCount += 1;
+      // A definitive rejection declares itself. A bare `status: 400` no longer
+      // qualifies — a captive portal answers 400 to everything.
+      throw Object.assign(new Error("invalid_grant"), {
+        status: 401,
+        isAuthSessionExpired: true,
+      });
+    },
+    onUnauthorized: () => {
+      unauthorizedCount += 1;
+    },
+  });
+
+  await assert.rejects(() => client.get("/a"));
+  await assert.rejects(() => client.get("/b"));
+
+  assert.equal(unauthorizedCount, 1, "logout cascade fires exactly once");
+  assert.equal(refreshCount, 1, "latch stops a second refresh after a 4xx");
+});
+
+// --- Regression coverage for the definitive-vs-transient discriminator ---
+//
+// The discriminator used to be `400 <= status < 500`, which was wrong in both
+// directions: it swept in transient 4xx codes (429/408) and it let a
+// status-less error fall through as transient, silently disabling the logout
+// cascade that shipped before. Both directions are pinned here.
+
+/** Build a client whose refresh handler always throws `err`. */
+function clientRejectingWith(err, counters) {
+  return new HttpClient({
+    baseUrl: "https://api.test",
+    fetchImpl: async () =>
+      new Response("{}", { status: 401, headers: { "Content-Type": "application/json" } }),
+    getAuthTokens: () => ({ accessToken: "stale" }),
+    onRefreshTokens: async () => {
+      counters.refresh += 1;
+      throw err;
+    },
+    onUnauthorized: () => {
+      counters.unauthorized += 1;
+    },
+  });
+}
+
+for (const [label, status] of [
+  ["429 rate limited", 429],
+  ["408 request timeout", 408],
+  ["400 captive portal", 400],
+  ["503 service unavailable", 503],
+]) {
+  test(`transient: ${label} does not latch the logout cascade`, async () => {
+    const counters = { refresh: 0, unauthorized: 0 };
+    const client = clientRejectingWith(
+      Object.assign(new Error(label), { status }),
+      counters,
+    );
+
+    await assert.rejects(() => client.get("/a"));
+    await assert.rejects(() => client.get("/b"));
+
+    assert.equal(counters.unauthorized, 0, `${label} must not log the user out`);
+    assert.equal(counters.refresh, 2, `${label} must leave refresh enabled`);
+  });
+}
+
+test("definitive: a bare 401 latches the logout cascade", async () => {
+  const counters = { refresh: 0, unauthorized: 0 };
+  const client = clientRejectingWith(
+    Object.assign(new Error("unauthorized"), { status: 401 }),
+    counters,
+  );
+
+  await assert.rejects(() => client.get("/a"));
+  await assert.rejects(() => client.get("/b"));
+
+  assert.equal(counters.unauthorized, 1, "401 is definitive");
+  assert.equal(counters.refresh, 1, "latch stops the second refresh");
+});
+
+test("definitive: a status-less error latches (fail-closed default)", async () => {
+  // The pre-existing contract: handlers that `throw new Error("...")` with no
+  // status — the shape every current consumer throws — must still trigger
+  // exactly one logout cascade. Reading these as transient produced silent
+  // infinite 401s against a dead session.
+  const counters = { refresh: 0, unauthorized: 0 };
+  const client = clientRejectingWith(new Error("Token refresh failed"), counters);
+
+  await assert.rejects(() => client.get("/a"));
+  await assert.rejects(() => client.get("/b"));
+
+  assert.equal(counters.unauthorized, 1, "status-less failure is definitive");
+  assert.equal(counters.refresh, 1, "latch stops the second refresh");
+});
+
+test("definitive: isAuthSessionExpired marker wins over a transient status", async () => {
+  // Duck-typed, so an error from another copy of the SDK still counts.
+  const counters = { refresh: 0, unauthorized: 0 };
+  const client = clientRejectingWith(
+    Object.assign(new Error("Session expired"), { status: 429, isAuthSessionExpired: true }),
+    counters,
+  );
+
+  await assert.rejects(() => client.get("/a"));
+  assert.equal(counters.unauthorized, 1, "explicit marker is authoritative");
+});
+
+test("transient: an explicit TransientRefreshError shape never latches", async () => {
+  const counters = { refresh: 0, unauthorized: 0 };
+  const client = clientRejectingWith(
+    Object.assign(new Error("Token refresh failed"), { status: 503 }),
+    counters,
+  );
+
+  await assert.rejects(() => client.get("/a"));
+  await assert.rejects(() => client.get("/b"));
+
+  assert.equal(counters.unauthorized, 0);
+  assert.equal(counters.refresh, 2, "still refreshing after a transient failure");
+});
+
+test("a transient failure followed by a definitive one still latches once", async () => {
+  // The ordering that the old flag-based verdict got wrong: the transient
+  // attempt must not consume the latch, and the later definitive rejection
+  // must still fire the cascade.
+  let attempt = 0;
+  let unauthorized = 0;
+  const client = new HttpClient({
+    baseUrl: "https://api.test",
+    fetchImpl: async () =>
+      new Response("{}", { status: 401, headers: { "Content-Type": "application/json" } }),
+    getAuthTokens: () => ({ accessToken: "stale" }),
+    onRefreshTokens: async () => {
+      attempt += 1;
+      throw attempt === 1
+        ? Object.assign(new Error("offline"), { status: 429 })
+        : Object.assign(new Error("expired"), { status: 401, isAuthSessionExpired: true });
+    },
+    onUnauthorized: () => {
+      unauthorized += 1;
+    },
+  });
+
+  await assert.rejects(() => client.get("/a"));
+  assert.equal(unauthorized, 0, "transient first attempt does not latch");
+
+  await assert.rejects(() => client.get("/b"));
+  assert.equal(unauthorized, 1, "definitive second attempt latches");
+
+  await assert.rejects(() => client.get("/c"));
+  assert.equal(attempt, 2, "latched: no third refresh");
+  assert.equal(unauthorized, 1, "cascade fires exactly once");
+});
