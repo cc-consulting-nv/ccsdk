@@ -99,9 +99,29 @@ function isDefinitiveRefreshRejection(error: unknown): boolean {
   return status === 401;
 }
 
+/**
+ * How long a transient refresh failure suppresses further refresh attempts.
+ *
+ * Without this, N sequential 401s produce N refresh attempts back-to-back —
+ * measured at 30 attempts in 9ms against a 429ing server, i.e. the client
+ * manufactures the rate limiting that is already hurting it. A flat window is
+ * enough: the trigger is a 401 on a real request, so attempts are already
+ * paced by application traffic, and there is no thundering herd to spread out.
+ */
+const REFRESH_BACKOFF_MS = 5000;
+
 export class HttpClient {
   private isRefreshing = false;
   private isLoggingOut = false;
+  /**
+   * Timestamp after which a refresh may be attempted again. Written only in
+   * the transient-failure branch, and read ONLY synchronously at entry to
+   * refreshTokens() — never across an `await`. That ordering is the point:
+   * #168 regressed because a mutable flag was written, awaited past, then read
+   * back and acted on, letting a concurrent refresh overwrite the verdict. A
+   * gate checked before any work starts cannot be raced that way.
+   */
+  private refreshBlockedUntil = 0;
   private refreshQueue: Array<{
     resolve: (tokens: AuthTokens) => void;
     reject: (error: unknown) => void;
@@ -290,6 +310,7 @@ export class HttpClient {
    */
   resetAuthLatch(): void {
     this.isLoggingOut = false;
+    this.refreshBlockedUntil = 0;
   }
 
   private async refreshTokens(): Promise<AuthTokens | null> {
@@ -314,10 +335,20 @@ export class HttpClient {
       });
     }
 
+    // Backoff gate. Checked synchronously, before any await, so it cannot be
+    // raced by a concurrent refresh settling in between. Returning null here
+    // is the same "refresh did not produce tokens" outcome the caller already
+    // handles: request() falls through to parseResponse() and the caller sees
+    // the original 401 instead of a doomed retry.
+    if (Date.now() < this.refreshBlockedUntil) {
+      return null;
+    }
+
     this.isRefreshing = true;
 
     try {
       const tokens = await this.options.onRefreshTokens();
+      this.refreshBlockedUntil = 0;
       this.refreshQueue.forEach((item) => item.resolve(tokens));
       this.refreshQueue = [];
       return tokens;
@@ -339,6 +370,14 @@ export class HttpClient {
       if (isDefinitiveRefreshRejection(error) && !this.isLoggingOut) {
         this.isLoggingOut = true;
         await this.options.onUnauthorized?.();
+      } else if (!isDefinitiveRefreshRejection(error)) {
+        // Transient: the session may still be good, so no latch — but stop
+        // hammering. Written before any await in this branch, and never read
+        // back here, so nothing depends on it surviving a suspension point.
+        // Guarded on transient specifically rather than reusing the `else`:
+        // an already-latched definitive rejection also lands there, and
+        // arming a backoff on a dead session is meaningless noise.
+        this.refreshBlockedUntil = Date.now() + REFRESH_BACKOFF_MS;
       }
       return null;
     } finally {

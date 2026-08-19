@@ -85,9 +85,16 @@ test("transient refresh failure does not disable future refreshes", async () => 
   assert.equal(refreshCount, 1);
   assert.equal(unauthorizedCount, 0, "a 5xx is transient - no logout cascade");
 
-  // Network recovers: the client must be willing to refresh again.
+  // Network recovers. The client must be *willing* to refresh again — but a
+  // transient failure now arms a backoff window, so the very next request is
+  // throttled rather than retried. That is the intended tradeoff: recovery
+  // costs up to one backoff window instead of a refresh storm per 401.
   refreshShouldFail = false;
-  const result = await client.get("/b");
+  await assert.rejects(() => client.get("/b"));
+  assert.equal(refreshCount, 1, "inside the backoff window, no retry");
+
+  client.resetAuthLatch();
+  const result = await client.get("/c");
   assert.equal(refreshCount, 2, "refresh retried after recovery");
   assert.deepEqual(result, { ok: 1 });
 });
@@ -166,7 +173,15 @@ for (const [label, status] of [
     await assert.rejects(() => client.get("/b"));
 
     assert.equal(counters.unauthorized, 0, `${label} must not log the user out`);
+    // Backoff throttles the immediate retry, so the second request refreshes
+    // zero more times. That is throttling, NOT the logout latch: unauthorized
+    // stays 0 above, and clearing the backoff below restores refreshing.
+    assert.equal(counters.refresh, 1, `${label} is throttled, not latched`);
+
+    client.resetAuthLatch();
+    await assert.rejects(() => client.get("/c"));
     assert.equal(counters.refresh, 2, `${label} must leave refresh enabled`);
+    assert.equal(counters.unauthorized, 0, `${label} still must not log out`);
   });
 }
 
@@ -222,7 +237,12 @@ test("transient: an explicit TransientRefreshError shape never latches", async (
   await assert.rejects(() => client.get("/b"));
 
   assert.equal(counters.unauthorized, 0);
+  assert.equal(counters.refresh, 1, "throttled by backoff, not latched");
+
+  client.resetAuthLatch();
+  await assert.rejects(() => client.get("/c"));
   assert.equal(counters.refresh, 2, "still refreshing after a transient failure");
+  assert.equal(counters.unauthorized, 0);
 });
 
 test("a transient failure followed by a definitive one still latches once", async () => {
@@ -250,10 +270,66 @@ test("a transient failure followed by a definitive one still latches once", asyn
   await assert.rejects(() => client.get("/a"));
   assert.equal(unauthorized, 0, "transient first attempt does not latch");
 
+  // Clear the transient backoff so the second attempt actually reaches the
+  // refresh handler — this test is about the verdict, not the throttle.
+  client.resetAuthLatch();
   await assert.rejects(() => client.get("/b"));
   assert.equal(unauthorized, 1, "definitive second attempt latches");
 
   await assert.rejects(() => client.get("/c"));
   assert.equal(attempt, 2, "latched: no third refresh");
   assert.equal(unauthorized, 1, "cascade fires exactly once");
+});
+
+// --- Regression coverage for refresh backoff ---
+//
+// Measured before the fix: 30 sequential requests against a 429ing refresh
+// endpoint produced 30 refresh attempts inside a 9ms window — the client
+// manufacturing the rate limiting that was already hurting it.
+
+test("backoff: a storm of 401s produces one refresh, not one per request", async () => {
+  const counters = { refresh: 0, unauthorized: 0 };
+  const client = clientRejectingWith(
+    Object.assign(new Error("rate limited"), { status: 429 }),
+    counters,
+  );
+
+  for (let i = 0; i < 30; i++) {
+    await assert.rejects(() => client.get(`/req-${i}`));
+  }
+
+  assert.equal(counters.refresh, 1, "30 requests must not mean 30 refreshes");
+  assert.equal(counters.unauthorized, 0, "throttling is not logging out");
+});
+
+test("backoff: a successful refresh clears the throttle", async () => {
+  let attempt = 0;
+  const client = new HttpClient({
+    baseUrl: "https://api.test",
+    // 401 once per request so every call attempts a refresh; the retry after a
+    // successful refresh 401s too, which is fine — we only count attempts.
+    fetchImpl: async () =>
+      new Response("{}", { status: 401, headers: { "Content-Type": "application/json" } }),
+    getAuthTokens: () => ({ accessToken: "stale" }),
+    onRefreshTokens: async () => {
+      attempt += 1;
+      if (attempt === 1) throw Object.assign(new Error("rate limited"), { status: 429 });
+      return { accessToken: "fresh" };
+    },
+  });
+
+  await assert.rejects(() => client.get("/a"));
+  assert.equal(attempt, 1);
+
+  await assert.rejects(() => client.get("/b"));
+  assert.equal(attempt, 1, "still inside the backoff window");
+
+  client.resetAuthLatch();
+  await assert.rejects(() => client.get("/c"));
+  assert.equal(attempt, 2, "refresh succeeded");
+
+  // The success cleared refreshBlockedUntil, so the next 401 refreshes again
+  // without needing resetAuthLatch().
+  await assert.rejects(() => client.get("/d"));
+  assert.equal(attempt, 3, "a successful refresh un-throttles the client");
 });
