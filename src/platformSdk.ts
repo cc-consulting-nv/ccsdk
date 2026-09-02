@@ -55,6 +55,9 @@ import {
   type DashboardHourlyActiveUsers,
   type AudioAd,
   type AdSlot,
+  type AdBannerSlot,
+  type AdSlotOptions,
+  type AdSlotResponse,
   type AdClickResponse,
   type AdImpressionInput,
   type BoostPostInput,
@@ -8966,6 +8969,31 @@ export class CcPlatformSdk {
   async getAdFeedMix(options: FeedMixOptions = {}): Promise<unknown> {
     return this.client.get<unknown>("/v1/posts/ads/feed-mix", {
       query: options as Record<string, unknown>,
+    });
+  }
+
+  /**
+   * Fetch ads for one banner placement (sidebar, profile banner).
+   *
+   * Server applies the same tenant + approved + window scopes as the feed
+   * mix, plus a slot filter so a feed boost never fills a banner box. The
+   * response echoes the placement's pixel dimensions so the caller can
+   * reserve the space before the creative loads.
+   *
+   * An empty `ads` array is a normal unfilled slot, not an error.
+   *
+   * GET /v1/ads/slot
+   *
+   * @param slot Banner placement to fill
+   * @param options Optional count (1-3, default 1)
+   * @returns Placement dimensions plus any eligible creatives
+   */
+  async getSlotAds(
+    slot: AdBannerSlot,
+    options: AdSlotOptions = {},
+  ): Promise<AdSlotResponse> {
+    return this.client.get<AdSlotResponse>("/v1/ads/slot", {
+      query: { slot, ...options } as Record<string, unknown>,
     });
   }
 
