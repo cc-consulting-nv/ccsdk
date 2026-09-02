@@ -2006,6 +2006,14 @@ export interface BoostPostInput {
    * legacy draft-boost flow runs unchanged.
    */
   amountCents?: number;
+  /**
+   * Where Stripe returns the buyer after a completed payment. Required
+   * whenever `amountCents` is set, and must be on the caller's own tenant
+   * origin — the backend rejects a redirect pointing anywhere else.
+   */
+  successUrl?: string;
+  /** Where Stripe returns the buyer on cancel. Same rules as `successUrl`. */
+  cancelUrl?: string;
 }
 
 /** Body for POST /v1/posts/ads/{ulid}/impression. */
