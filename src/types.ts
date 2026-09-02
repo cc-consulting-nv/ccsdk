@@ -1970,8 +1970,27 @@ export interface AudioAd {
 // Creator Boost Ads (PRD_ADS.md §6 / §11)
 // ---------------------------------------------------------------------------
 
-/** Slot key for ad selection + frequency-cap accounting. */
-export type AdSlot = "feed" | "video_preroll" | "video_midroll" | "banner";
+/**
+ * Slot key for ad selection + frequency-cap accounting.
+ *
+ * Mirrors AdSlotEnum on the backend. "banner" predates the named banner
+ * placements and is kept for callers still sending it.
+ */
+export type AdSlot =
+  | "feed"
+  | "banner"
+  | "sidebar_medrec"
+  | "sidebar_skyscraper"
+  | "profile_banner"
+  | "video_preroll"
+  | "video_midroll"
+  | "video_postroll";
+
+/** Placements GET /v1/ads/slot serves — banners only, never video or feed. */
+export type AdBannerSlot =
+  | "sidebar_medrec"
+  | "sidebar_skyscraper"
+  | "profile_banner";
 
 /** Body for POST /v1/ads/boosted. */
 export interface BoostPostInput {
@@ -2013,6 +2032,30 @@ export interface FeedMixOptions {
   count?: number;
   /** Slot key the caller will render the ads in. Default 'feed'. */
   slot?: AdSlot;
+}
+
+/** Query options for GET /v1/ads/slot. */
+export interface AdSlotOptions {
+  /** Number of ads to return (1-3). Default 1. */
+  count?: number;
+}
+
+/**
+ * Response shape for GET /v1/ads/slot.
+ *
+ * `ads` is empty whenever nothing is eligible. An unfilled slot is the
+ * normal case on a tenant with thin inventory, not an error — callers
+ * should reserve the box and render nothing rather than treat it as a
+ * failure.
+ */
+export interface AdSlotResponse {
+  /** Placement that was queried, echoed back. */
+  slot: AdBannerSlot;
+  /** Creative box in CSS pixels, from the backend's AdSlotEnum. */
+  width: number | null;
+  height: number | null;
+  /** Eligible creatives, newest-priority first. Possibly empty. */
+  ads: BoostedAd[];
 }
 
 // ---------------------------------------------------------------------------
