@@ -2066,7 +2066,7 @@ export interface AdSlotResponse {
   ads: BoostedAd[];
 }
 
-/** Video break positions GET /v1/posts/ads/video-breaks can return. */
+/** Video break positions GET /v1/ads/video-breaks can return. */
 export type AdVideoSlot = "video_preroll" | "video_midroll" | "video_postroll";
 
 /**
@@ -2086,7 +2086,7 @@ export interface AdVideoBreak {
 }
 
 /**
- * Response shape for GET /v1/posts/ads/video-breaks.
+ * Response shape for GET /v1/ads/video-breaks.
  *
  * `positions` is empty when the host post carries no breaks at all — a
  * non-video post, or a tenant with every position disabled. The server
