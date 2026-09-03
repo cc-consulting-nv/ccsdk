@@ -58,6 +58,7 @@ import {
   type AdBannerSlot,
   type AdSlotOptions,
   type AdSlotResponse,
+  type AdVideoBreaksResponse,
   type AdClickResponse,
   type AdImpressionInput,
   type BoostPostInput,
@@ -8995,6 +8996,32 @@ export class CcPlatformSdk {
     return this.client.get<AdSlotResponse>("/v1/ads/slot", {
       query: { slot, ...options } as Record<string, unknown>,
     });
+  }
+
+  /**
+   * Fetch the ad breaks for one host video.
+   *
+   * The server decides which positions are enabled for the tenant, selects
+   * at most one video creative per position, and excludes any ad derived
+   * from the host video itself so a video never breaks to itself.
+   *
+   * No impression is recorded here — the player fires the usual beacon via
+   * `recordAdImpression` when a break actually plays.
+   *
+   * An empty `positions` array means the host carries no breaks (not a
+   * video, or every position disabled), and a `null` `ad` on a position
+   * means the break went unfilled. Neither is an error.
+   *
+   * GET /v1/posts/ads/video-breaks
+   *
+   * @param postUlid ULID of the host video post
+   * @returns Enabled break positions and their creatives
+   */
+  async getVideoBreaks(postUlid: string): Promise<AdVideoBreaksResponse> {
+    return this.client.get<AdVideoBreaksResponse>(
+      "/v1/posts/ads/video-breaks",
+      { query: { postUlid } },
+    );
   }
 
   // ---------------------------------------------------------------------------
