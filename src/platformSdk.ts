@@ -9012,16 +9012,15 @@ export class CcPlatformSdk {
    * video, or every position disabled), and a `null` `ad` on a position
    * means the break went unfilled. Neither is an error.
    *
-   * GET /v1/posts/ads/video-breaks
+   * GET /v1/ads/video-breaks
    *
    * @param postUlid ULID of the host video post
    * @returns Enabled break positions and their creatives
    */
   async getVideoBreaks(postUlid: string): Promise<AdVideoBreaksResponse> {
-    return this.client.get<AdVideoBreaksResponse>(
-      "/v1/posts/ads/video-breaks",
-      { query: { postUlid } },
-    );
+    return this.client.get<AdVideoBreaksResponse>("/v1/ads/video-breaks", {
+      query: { postUlid },
+    });
   }
 
   // ---------------------------------------------------------------------------
