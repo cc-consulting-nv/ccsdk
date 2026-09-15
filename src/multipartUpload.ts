@@ -96,6 +96,14 @@ export interface MultipartUploadOptions {
   /** Maximum retries per part before failing (default: 6) */
   partRetryLimit?: number;
   /**
+   * Milliseconds a part upload may go without moving any bytes before it is
+   * treated as stalled, aborted, and retried. Mobile radio handoffs can leave
+   * a PUT in a state where no `load`/`error`/`abort` event ever fires; without
+   * this the part's promise never settles and the retry loop is parked
+   * forever. Set to 0 to disable the watchdog. Defaults to 45s.
+   */
+  partStallTimeoutMs?: number;
+  /**
    * Optional blob store. When supplied, the SDK persists the file on
    * `start()` and clears it on completion/abort, enabling refresh-resume.
    */
@@ -139,6 +147,18 @@ export interface RefreshedUploadUrlResponse {
  *
  * @category Uploads
  */
+/**
+ * Raised when a part upload moves no bytes for `partStallTimeoutMs` and is
+ * aborted by the watchdog. Distinct from a user-initiated abort so the retry
+ * loop can tell "dead socket, try again" from "the caller cancelled".
+ */
+export class UploadStalledError extends Error {
+  constructor(public readonly partNumber: number | undefined, message: string) {
+    super(message);
+    this.name = "UploadStalledError";
+  }
+}
+
 export class PresignedUrlExpiredError extends Error {
   constructor(public readonly status: number, message: string) {
     super(message);
@@ -240,6 +260,7 @@ export class MultipartUpload {
   private partSize: number = 10 * 1024 * 1024; // 10MB
   private maxConcurrentUploads: number = 3;
   private partRetryLimit: number;
+  private partStallTimeoutMs: number;
   private blobStore: BlobStore | null;
   private jobId: string;
   private awaitOnline: boolean;
@@ -275,6 +296,7 @@ export class MultipartUpload {
     this.partSize = options.partSize || 10 * 1024 * 1024; // 10MB
     this.maxConcurrentUploads = options.maxConcurrentUploads || 3;
     this.partRetryLimit = options.partRetryLimit ?? 6;
+    this.partStallTimeoutMs = options.partStallTimeoutMs ?? 45_000;
     this.blobStore = options.blobStore ?? null;
     this.jobId = options.jobId ?? `up_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     this.awaitOnline = options.awaitOnline ?? true;
@@ -443,7 +465,9 @@ export class MultipartUpload {
               await this.waitForOnline();
               continue;
             }
-            const msg = (error as Error).message ?? "";
+            // A watchdog abort is a dead socket, not a real failure: retry it
+            // like any transient error rather than matching it against CORS.
+            const msg = error instanceof UploadStalledError ? "" : ((error as Error).message ?? "");
             if (msg.includes("CORS")) {
               console.error("CORS Error: ensure S3 bucket has proper CORS configuration");
               throw error;
@@ -584,16 +608,37 @@ export class MultipartUpload {
       xhr.open("PUT", url, true);
       xhr.setRequestHeader("Content-Type", "application/octet-stream");
 
-      if (partNumber !== undefined) {
-        xhr.upload.onprogress = (ev: ProgressEvent) => {
-          if (ev.lengthComputable) {
-            this.inflightBytes.set(partNumber, ev.loaded);
-            this.updateProgress();
-          }
-        };
-      }
+      // Stall watchdog. Armed on send and re-armed on every byte of progress,
+      // so a slow-but-alive upload is never killed — only one that has stopped
+      // moving entirely. `stalled` distinguishes our abort() from the caller's.
+      let stallTimer: ReturnType<typeof setTimeout> | null = null;
+      let stalled = false;
+      const clearStallTimer = () => {
+        if (stallTimer !== null) {
+          clearTimeout(stallTimer);
+          stallTimer = null;
+        }
+      };
+      const armStallTimer = () => {
+        if (this.partStallTimeoutMs <= 0) return;
+        clearStallTimer();
+        stallTimer = setTimeout(() => {
+          stalled = true;
+          // Fires onabort, which rejects with UploadStalledError.
+          try { xhr.abort(); } catch { /* ignore */ }
+        }, this.partStallTimeoutMs);
+      };
+
+      xhr.upload.onprogress = (ev: ProgressEvent) => {
+        armStallTimer();
+        if (partNumber !== undefined && ev.lengthComputable) {
+          this.inflightBytes.set(partNumber, ev.loaded);
+          this.updateProgress();
+        }
+      };
 
       xhr.onload = () => {
+        clearStallTimer();
         this.activeXhrs.delete(xhr);
         if (xhr.status >= 200 && xhr.status < 300) {
           const etag = xhr.getResponseHeader("ETag")?.replace(/"/g, "");
@@ -610,16 +655,26 @@ export class MultipartUpload {
       };
 
       xhr.onerror = () => {
+        clearStallTimer();
         this.activeXhrs.delete(xhr);
         reject(new Error("Network error during upload"));
       };
 
       xhr.onabort = () => {
+        clearStallTimer();
         this.activeXhrs.delete(xhr);
-        reject(new Error("Upload aborted"));
+        reject(
+          stalled
+            ? new UploadStalledError(
+                partNumber,
+                `Part ${partNumber ?? "?"} stalled for ${this.partStallTimeoutMs}ms with no progress`,
+              )
+            : new Error("Upload aborted"),
+        );
       };
 
       xhr.send(blob);
+      armStallTimer();
     });
   }
 
