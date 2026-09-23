@@ -66,6 +66,7 @@ import { CcPlatformSdk, TransientRefreshError, type CcPlatformSdkOptions } from 
 import { DEFAULT_DB_NAME } from "./cache/cacheDB.js";
 import { MemoryTokenProvider, type SessionStore, type StorageLike } from "./auth.js";
 import type { AuthTokens } from "./types.js";
+import type { RefreshContext } from "./httpClient.js";
 
 /** Registry key used by the default localStorage-backed registry store. */
 const DEFAULT_REGISTRY_KEY = "cc_profile_registry";
@@ -147,8 +148,27 @@ export interface ProfileRegistryStore {
  */
 export type SharedSdkOptions = Omit<
   CcPlatformSdkOptions,
-  "baseUrl" | "tokens" | "tokenProvider" | "sessionStore" | "cache" | "dbName"
->;
+  "baseUrl" | "tokens" | "tokenProvider" | "sessionStore" | "cache" | "dbName" | "onRefreshTokens"
+> & {
+  /**
+   * Shared refresh handler. Replaces the per-profile default, so it is told
+   * which profile's request got the 401: refresh `context.sdk`, not the
+   * active profile, or a background request is retried as the wrong account.
+   */
+  onRefreshTokens?: (context: ProfileRefreshContext) => Promise<AuthTokens>;
+};
+
+/**
+ * Passed to a shared {@link SharedSdkOptions.onRefreshTokens}.
+ *
+ * @category Authentication
+ */
+export interface ProfileRefreshContext extends RefreshContext {
+  /** The profile whose request got the 401. */
+  profileUlid: string;
+  /** That profile's SDK. */
+  sdk: CcPlatformSdk;
+}
 
 /**
  * Configuration for {@link SessionManager}.
@@ -705,9 +725,9 @@ export class SessionManager {
       tokenProvider: new MemoryTokenProvider(),
       sessionStore: this.options.createSessionStore(profileUlid),
       dbName: `${this.dbNamePrefix}:${profileUlid}`,
-      onRefreshTokens:
-        shared.onRefreshTokens ??
-        (async () => {
+      onRefreshTokens: shared.onRefreshTokens
+        ? (context) => shared.onRefreshTokens!({ ...context, profileUlid, sdk: holder.sdk! })
+        : (async () => {
           // refreshTokenOrThrow() rejects with AuthSessionExpiredError on a
           // definitive rejection and resolves null when the failure was
           // transient (offline / 5xx / rate limited). Let the definitive

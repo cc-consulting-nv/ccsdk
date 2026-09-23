@@ -21,12 +21,22 @@ export interface HttpClientOptions {
   getActingContext?: () => ActingContext | null | undefined;
   /**
    * Called when a refresh is needed. Should return fresh tokens.
+   *
+   * Only called when the server rejected the bearer the client still holds. A
+   * 401 on a request sent with an older bearer is retried with the live one
+   * instead, without a refresh.
    */
-  onRefreshTokens?: () => Promise<AuthTokens>;
+  onRefreshTokens?: (context: RefreshContext) => Promise<AuthTokens>;
   /**
    * Called after a hard auth failure (refresh failed).
    */
   onUnauthorized?: () => Promise<void> | void;
+  /**
+   * Called when the server rejected the acting context token (401 with
+   * `error.code` TOKEN_EXPIRED or TOKEN_REVOKED). The bearer is fine, so no
+   * refresh runs; the caller should drop the acting context.
+   */
+  onActingContextRejected?: () => void;
   defaultHeaders?: Record<string, string>;
   /**
    * Enable MessagePack format for responses (more efficient than JSON).
@@ -34,6 +44,21 @@ export interface HttpClientOptions {
    */
   useMsgpack?: boolean;
 }
+
+/**
+ * Passed to {@link HttpClientOptions.onRefreshTokens}.
+ * @category HTTP
+ */
+export interface RefreshContext {
+  /** The bearer the server returned 401 for, or null if the request had none. */
+  rejectedAccessToken: string | null;
+}
+
+/**
+ * cc-api returns these `error.code` values with a 401 when the acting context
+ * token is dead. The bearer is still valid, so refreshing it cannot help.
+ */
+const ACTING_CONTEXT_401_CODES = new Set(["TOKEN_EXPIRED", "TOKEN_REVOKED"]);
 
 /**
  * Options for individual HTTP requests.
@@ -182,9 +207,11 @@ export class HttpClient {
     };
 
     // Inject token if available
+    let sentAccessToken: string | null = null;
     if (!options?.skipAuth) {
       const tokens = this.options.getAuthTokens?.();
       if (tokens?.accessToken) {
+        sentAccessToken = tokens.accessToken;
         headers.Authorization = `Bearer ${tokens.accessToken}`;
       } else {
         // console.warn('⚠️  HTTP: No bearer token available for request:', method, path, {
@@ -212,7 +239,17 @@ export class HttpClient {
     });
 
     if (response.status === 401 && !options?.skipAuth) {
-      const refreshed = await this.refreshTokens();
+      if (headers["X-Acting-Context-Token"] && (await this.isActingContextRejection(response))) {
+        this.options.onActingContextRejected?.();
+        return this.parseResponse<T>(response);
+      }
+
+      // The bearer moved on while this request was out (another request's
+      // refresh, or another tab): retry with the live one, no refresh.
+      const live = this.options.getAuthTokens?.()?.accessToken;
+      const refreshed = live && live !== sentAccessToken
+        ? { accessToken: live }
+        : await this.refreshTokens({ rejectedAccessToken: sentAccessToken });
       if (refreshed?.accessToken) {
         headers.Authorization = `Bearer ${refreshed.accessToken}`;
         const retry = await fetchImpl(url, {
@@ -227,6 +264,16 @@ export class HttpClient {
     }
 
     return this.parseResponse<T>(response);
+  }
+
+  private async isActingContextRejection(response: Response): Promise<boolean> {
+    try {
+      await this.parseResponse(response.clone());
+    } catch (error) {
+      const code = (error as { payload?: { error?: { code?: unknown } } }).payload?.error?.code;
+      return typeof code === "string" && ACTING_CONTEXT_401_CODES.has(code);
+    }
+    return false;
   }
 
   private async parseResponse<T>(response: Response): Promise<T> {
@@ -313,7 +360,7 @@ export class HttpClient {
     this.refreshBlockedUntil = 0;
   }
 
-  private async refreshTokens(): Promise<AuthTokens | null> {
+  private async refreshTokens(context: RefreshContext): Promise<AuthTokens | null> {
     // Guard: if we're already in the process of logging out, don't trigger
     // another refresh or onUnauthorized cascade.
     if (this.isLoggingOut) {
@@ -347,7 +394,7 @@ export class HttpClient {
     this.isRefreshing = true;
 
     try {
-      const tokens = await this.options.onRefreshTokens();
+      const tokens = await this.options.onRefreshTokens(context);
       this.refreshBlockedUntil = 0;
       this.refreshQueue.forEach((item) => item.resolve(tokens));
       this.refreshQueue = [];

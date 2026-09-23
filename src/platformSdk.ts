@@ -1,5 +1,5 @@
 import { type CacheAdapter, createCache, DEFAULT_DB_NAME } from "./cache/cacheDB.js";
-import { HttpClient, type HttpClientOptions } from "./httpClient.js";
+import { HttpClient, type HttpClientOptions, type RefreshContext } from "./httpClient.js";
 import { HybridTokenProvider, RefreshCoordinator, type SessionStore, type StorageLike, type TokenProvider } from "./auth.js";
 import { MultipartUpload, type MultipartUploadOptions, type UploadResult } from "./multipartUpload.js";
 import {
@@ -512,9 +512,11 @@ export interface CcPlatformSdkOptions {
    */
   dbName?: string;
   /**
-   * Optional refresh handler. Called on 401, should return fresh tokens.
+   * Optional refresh handler. Called on a 401 for the bearer the SDK still
+   * holds, should return fresh tokens. `context.rejectedAccessToken` is the
+   * bearer the server rejected.
    */
-  onRefreshTokens?: () => Promise<AuthTokens>;
+  onRefreshTokens?: (context: RefreshContext) => Promise<AuthTokens>;
   /**
    * Called when refresh fails.
    */
@@ -722,11 +724,13 @@ export class CcPlatformSdk {
       baseUrl: options.baseUrl.replace(/\/$/, ""),
       fetchImpl: options.fetchImpl,
       getAuthTokens: () => this.tokens.getTokens(),
-      getActingContext: () => this.actingContext,
+      // isActing() drops an expired context, so its dead token is never sent.
+      getActingContext: () => (this.isActing() ? this.actingContext : null),
       onRefreshTokens: options.onRefreshTokens
-        ? () => this.refreshCoordinator.run(options.onRefreshTokens!)
+        ? (context) => this.refreshCoordinator.run(() => options.onRefreshTokens!(context))
         : undefined,
       onUnauthorized: options.onUnauthorized,
+      onActingContextRejected: () => this.clearActingContext(),
       useMsgpack: options.useMsgpack,
     };
 
