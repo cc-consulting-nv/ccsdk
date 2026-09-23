@@ -1462,3 +1462,41 @@ test("refreshTokenOrThrow answers null (not throws) on a transient failure", asy
   const recovered = await alice.refreshTokenOrThrow();
   assert.ok(recovered?.accessToken, "429 left the refresh token intact");
 });
+
+// #176: a shared handler replaces the per-profile default, so it has to be
+// told which profile's request failed.
+test("a shared refresh handler is told which profile got the 401", async () => {
+  const api = createApi();
+  api.addAccount("alice@example.com", "01ALICE", "alice", "Alice");
+  api.addAccount("bob@example.com", "01BOB", "bob", "Bob");
+  const contexts = [];
+  const manager = createManager({
+    api,
+    stores: createStoreFactory(),
+    registry: createRegistry(),
+    prefix: uniquePrefix("shared-refresh-context"),
+    sdkOptions: {
+      fetchImpl: api.fetchImpl,
+      onRefreshTokens: async (context) => {
+        contexts.push(context);
+        throw Object.assign(new Error("offline"), { status: 503 });
+      },
+    },
+  });
+  await manager.ready();
+
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+  await manager.addProfile((sdk) => sdk.login("bob@example.com", "pw"));
+  const aliceSdk = await manager.switchTo("01ALICE");
+  await manager.switchTo("01BOB");
+
+  api.revoke("access-01ALICE");
+  await aliceSdk.getCurrentUser().catch(() => undefined);
+
+  assert.equal(contexts.length, 1);
+  assert.equal(contexts[0].profileUlid, "01ALICE");
+  assert.equal(contexts[0].sdk, aliceSdk);
+  assert.equal(contexts[0].rejectedAccessToken, "access-01ALICE");
+
+  await manager.dispose();
+});

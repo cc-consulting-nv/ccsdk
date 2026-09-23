@@ -333,3 +333,110 @@ test("backoff: a successful refresh clears the throttle", async () => {
   await assert.rejects(() => client.get("/d"));
   assert.equal(attempt, 3, "a successful refresh un-throttles the client");
 });
+
+// #176: a request sent with an older bearer must not rotate the session again.
+test("a 401 for a bearer that already rotated retries with the live one, no refresh", async () => {
+  let live = "old";
+  let refreshCount = 0;
+  const sent = [];
+  const fetchImpl = async (_url, init) => {
+    sent.push(init.headers.Authorization);
+    if (init.headers.Authorization === "Bearer old") {
+      live = "new"; // another request's refresh landed while this one was out
+      return new Response("{}", { status: 401 });
+    }
+    return new Response(JSON.stringify({ ok: 1 }), { status: 200 });
+  };
+
+  const client = new HttpClient({
+    baseUrl,
+    fetchImpl,
+    getAuthTokens: () => ({ accessToken: live }),
+    onRefreshTokens: async () => {
+      refreshCount += 1;
+      return { accessToken: "newer" };
+    },
+  });
+
+  assert.deepEqual(await client.get("/x"), { ok: 1 });
+  assert.equal(refreshCount, 0);
+  assert.deepEqual(sent, ["Bearer old", "Bearer new"]);
+});
+
+test("onRefreshTokens is told which bearer the server rejected", async () => {
+  const contexts = [];
+  const fetchImpl = async (_url, init) =>
+    init.headers.Authorization === "Bearer fresh"
+      ? new Response(JSON.stringify({ ok: 1 }), { status: 200 })
+      : new Response("{}", { status: 401 });
+
+  const client = new HttpClient({
+    baseUrl,
+    fetchImpl,
+    getAuthTokens: () => ({ accessToken: "dead" }),
+    onRefreshTokens: async (context) => {
+      contexts.push(context);
+      return { accessToken: "fresh" };
+    },
+  });
+
+  await client.get("/x");
+  assert.deepEqual(contexts, [{ rejectedAccessToken: "dead" }]);
+});
+
+test("an acting-context 401 drops the context instead of refreshing the bearer", async () => {
+  let refreshCount = 0;
+  let rejected = 0;
+  const fetchImpl = async () =>
+    new Response(
+      JSON.stringify({ success: false, error: { code: "TOKEN_EXPIRED", message: "expired" } }),
+      { status: 401, headers: { "Content-Type": "application/json" } },
+    );
+
+  const client = new HttpClient({
+    baseUrl,
+    fetchImpl,
+    getAuthTokens: () => ({ accessToken: "good" }),
+    getActingContext: () => ({ token: "act", managedUserUlid: "01MU" }),
+    onRefreshTokens: async () => {
+      refreshCount += 1;
+      return { accessToken: "good" };
+    },
+    onActingContextRejected: () => {
+      rejected += 1;
+    },
+  });
+
+  await assert.rejects(client.get("/x"), (err) => {
+    assert.equal(err.status, 401);
+    assert.equal(err.payload.error.code, "TOKEN_EXPIRED");
+    return true;
+  });
+  assert.equal(refreshCount, 0);
+  assert.equal(rejected, 1);
+});
+
+test("a bearer 401 while acting still refreshes", async () => {
+  let refreshCount = 0;
+  const fetchImpl = async (_url, init) =>
+    init.headers.Authorization === "Bearer fresh"
+      ? new Response(JSON.stringify({ ok: 1 }), { status: 200 })
+      : new Response(JSON.stringify({ message: "Unauthenticated." }), { status: 401 });
+
+  let live = "dead";
+  const client = new HttpClient({
+    baseUrl,
+    fetchImpl,
+    getAuthTokens: () => ({ accessToken: live }),
+    getActingContext: () => ({ token: "act", managedUserUlid: "01MU" }),
+    onRefreshTokens: async () => {
+      refreshCount += 1;
+      live = "fresh";
+      return { accessToken: "fresh" };
+    },
+    onActingContextRejected: () => assert.fail("bearer 401 is not an acting-context rejection"),
+  });
+
+  assert.deepEqual(await client.get("/x"), { ok: 1 });
+  assert.equal(refreshCount, 1);
+});

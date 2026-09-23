@@ -2062,3 +2062,26 @@ test("ready() resolves for a guest (no stored session)", async () => {
   assert.equal(calls.length, 0);
   assert.equal(sdk.isAuthenticated(), false);
 });
+
+// #176: an expired acting context must not ride along on requests.
+test("an expired acting context is dropped instead of sent", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({ data: {} });
+  sdk.setActingContext({ ...sampleActingContext, expiresAt: new Date(Date.now() - 1000).toISOString() });
+
+  await sdk.getCurrentUser().catch(() => undefined);
+
+  assert.equal(calls[0].init.headers["X-Acting-Context-Token"], undefined);
+  assert.equal(sdk.getActingContext(), null);
+});
+
+test("a server-rejected acting context is cleared", async () => {
+  const { sdk } = createAuthenticatedMockSdk(
+    { success: false, error: { code: "TOKEN_REVOKED", message: "revoked" } },
+    401,
+  );
+  sdk.setActingContext(sampleActingContext);
+
+  await sdk.getCurrentUser().catch(() => undefined);
+
+  assert.equal(sdk.getActingContext(), null);
+});
