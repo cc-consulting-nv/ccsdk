@@ -6043,7 +6043,11 @@ export class CcPlatformSdk {
   /**
    * Search posts by hashtag.
    *
+   * Cursor-paginated, 20 posts per page, newest first. Pass the returned
+   * `nextCursor` back as `cursor` to fetch the next page; it is null on the last page.
+   *
    * @param hashtag - The hashtag to search for (with or without leading #)
+   * @param cursor - The `nextCursor` from the previous page
    * @returns Promise resolving to search results containing matching posts
    *
    * @example
@@ -6051,17 +6055,23 @@ export class CcPlatformSdk {
    * const response = await sdk.searchPostsByHashtag('#music');
    * const result = sdk.unwrap(response);
    * result.items.forEach(post => console.log(post.title));
+   * if (result.nextCursor) {
+   *   const next = await sdk.searchPostsByHashtag('#music', result.nextCursor);
+   * }
    * ```
    *
    * @category Search
    */
-  async searchPostsByHashtag(hashtag: string): Promise<ApiEnvelope<SearchResult<Post>>> {
+  async searchPostsByHashtag(
+    hashtag: string,
+    cursor?: string | null,
+  ): Promise<ApiEnvelope<SearchResult<Post>>> {
     // Remove leading # if present
     const tag = hashtag.startsWith("#") ? hashtag.slice(1) : hashtag;
     const response = await this.client.post<ApiEnvelope<SearchResult<Post>>>(
       "/v1/search/posts/hashtag",
       {
-        body: { hashtag: tag },
+        body: cursor ? { hashtag: tag, cursor } : { hashtag: tag },
       },
     );
     if (response.data?.items) {
