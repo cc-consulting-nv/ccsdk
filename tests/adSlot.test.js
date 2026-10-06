@@ -133,3 +133,25 @@ test("getSlotAds passes creatives through", async () => {
   assert.equal(result.ads[0].isAd, true);
   assert.equal(result.ads[0].targetUrl, "https://example.com/promo");
 });
+
+// ---------------------------------------------------------------------------
+// recordAdClick
+// ---------------------------------------------------------------------------
+
+test("recordAdClick sends the slot so the click counts against that slot's row", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({ target_url: "https://x", clicks: 1, ctr: 1 });
+
+  await sdk.recordAdClick("01ktmtenkwa0bvhej4r1an1z77", "video_postroll");
+
+  assert.equal(calls[0].method, "POST");
+  assert.ok(calls[0].url.endsWith("/v1/posts/ads/01ktmtenkwa0bvhej4r1an1z77/click"));
+  assert.deepEqual(calls[0].body, { slot: "video_postroll" });
+});
+
+test("recordAdClick sends no body when the slot is omitted", async () => {
+  const { sdk, calls } = createAuthenticatedMockSdk({ target_url: "https://x", clicks: 1, ctr: 1 });
+
+  await sdk.recordAdClick("01ktmtenkwa0bvhej4r1an1z77");
+
+  assert.equal(calls[0].body, null);
+});
