@@ -8964,10 +8964,17 @@ export class CcPlatformSdk {
    * ads point at the parent organic post; pure ads point at the ad
    * post page itself.
    *
+   * Pass the slot the ad rendered in, the same one sent to
+   * `recordAdImpression`. A post can run in several slots (e.g. feed and
+   * video_postroll), and the slot picks which one the click counts against.
+   *
    * POST /v1/posts/ads/{ulid}/click
    */
-  async recordAdClick(postUlid: string): Promise<AdClickResponse> {
-    return this.client.post<AdClickResponse>(`/v1/posts/ads/${postUlid}/click`);
+  async recordAdClick(postUlid: string, slot?: AdSlot): Promise<AdClickResponse> {
+    return this.client.post<AdClickResponse>(
+      `/v1/posts/ads/${postUlid}/click`,
+      slot ? { body: { slot } } : undefined,
+    );
   }
 
   /**
