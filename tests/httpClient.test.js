@@ -410,6 +410,24 @@ test("a 401 retries when the live bearer is the same user", async () => {
   assert.deepEqual(sent, [`Bearer ${jwt("A", 1)}`, `Bearer ${jwt("A", 2)}`]);
 });
 
+test("a 401 retries when the refreshed bearer is the same user", async () => {
+  const sent = [];
+  const client = new HttpClient({
+    baseUrl,
+    fetchImpl: async (_url, init) => {
+      sent.push(init.headers.Authorization);
+      return sent.length === 1
+        ? new Response("{}", { status: 401 })
+        : new Response(JSON.stringify({ ok: 1 }), { status: 200 });
+    },
+    getAuthTokens: () => ({ accessToken: jwt("A", 1) }),
+    onRefreshTokens: async () => ({ accessToken: jwt("A", 2) }),
+  });
+
+  assert.deepEqual(await client.get("/x"), { ok: 1 });
+  assert.deepEqual(sent, [`Bearer ${jwt("A", 1)}`, `Bearer ${jwt("A", 2)}`]);
+});
+
 test("onRefreshTokens is told which bearer the server rejected", async () => {
   const contexts = [];
   const fetchImpl = async (_url, init) =>
