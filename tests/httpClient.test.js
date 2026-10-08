@@ -363,6 +363,53 @@ test("a 401 for a bearer that already rotated retries with the live one, no refr
   assert.deepEqual(sent, ["Bearer old", "Bearer new"]);
 });
 
+const jwt = (sub, jti) =>
+  `h.${Buffer.from(JSON.stringify({ sub, jti })).toString("base64url")}.s`;
+
+// A 401'd request belongs to the user who sent it; never replay it as another.
+for (const [label, swap] of [
+  ["live bearer", (state) => { state.live = jwt("B", 1); }],
+  ["refreshed bearer", () => {}],
+]) {
+  test(`a 401 does not retry when the ${label} is a different user`, async () => {
+    const state = { live: jwt("A", 1) };
+    const sent = [];
+    const client = new HttpClient({
+      baseUrl,
+      fetchImpl: async (_url, init) => {
+        sent.push(init.headers.Authorization);
+        swap(state); // logout + login as B while A's request was out
+        return new Response("{}", { status: 401 });
+      },
+      getAuthTokens: () => ({ accessToken: state.live }),
+      onRefreshTokens: async () => ({ accessToken: jwt("B", 2) }),
+    });
+
+    await assert.rejects(client.post("/x", { body: { a: 1 } }), (e) => e.status === 401);
+    assert.deepEqual(sent, [`Bearer ${jwt("A", 1)}`]);
+  });
+}
+
+test("a 401 retries when the live bearer is the same user", async () => {
+  let live = jwt("A", 1);
+  const sent = [];
+  const client = new HttpClient({
+    baseUrl,
+    fetchImpl: async (_url, init) => {
+      sent.push(init.headers.Authorization);
+      if (sent.length === 1) {
+        live = jwt("A", 2);
+        return new Response("{}", { status: 401 });
+      }
+      return new Response(JSON.stringify({ ok: 1 }), { status: 200 });
+    },
+    getAuthTokens: () => ({ accessToken: live }),
+  });
+
+  assert.deepEqual(await client.get("/x"), { ok: 1 });
+  assert.deepEqual(sent, [`Bearer ${jwt("A", 1)}`, `Bearer ${jwt("A", 2)}`]);
+});
+
 test("onRefreshTokens is told which bearer the server rejected", async () => {
   const contexts = [];
   const fetchImpl = async (_url, init) =>
