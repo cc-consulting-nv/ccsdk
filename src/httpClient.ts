@@ -135,6 +135,32 @@ function isDefinitiveRefreshRejection(error: unknown): boolean {
  */
 const REFRESH_BACKOFF_MS = 5000;
 
+/** The `sub` claim of a JWT bearer, or null when the token is not a decodable JWT. */
+function tokenSubject(token: string | null): string | null {
+  const payload = token?.split(".")[1];
+  if (!payload) return null;
+  try {
+    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(payload.length / 4) * 4, "="));
+    const sub = (JSON.parse(json) as { sub?: unknown }).sub;
+    return sub == null ? null : String(sub);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a 401'd request may be replayed with `next`. A bearer for a
+ * different user means the session was switched while the request was out
+ * (logout, then login as someone else), and replaying would run the first
+ * user's request as the second. Opaque tokens can't be compared and keep the
+ * old behavior.
+ */
+function sameSubject(sent: string | null, next: string): boolean {
+  const a = tokenSubject(sent);
+  const b = tokenSubject(next);
+  return a === null || b === null || a === b;
+}
+
 export class HttpClient {
   private isRefreshing = false;
   private isLoggingOut = false;
@@ -250,7 +276,7 @@ export class HttpClient {
       const refreshed = live && live !== sentAccessToken
         ? { accessToken: live }
         : await this.refreshTokens({ rejectedAccessToken: sentAccessToken });
-      if (refreshed?.accessToken) {
+      if (refreshed?.accessToken && sameSubject(sentAccessToken, refreshed.accessToken)) {
         headers.Authorization = `Bearer ${refreshed.accessToken}`;
         const retry = await fetchImpl(url, {
           method,
