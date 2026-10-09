@@ -83,7 +83,7 @@ Line ranges reference current `src/platformSdk.ts`.
 | 6778-6830 | `src/sdk/signup.ts` | config, demographics, agreements (4) |
 | 6832-6939 | `src/sdk/passkeys.ts` | passkey* (7) |
 | 6941-7005 | `src/sdk/polls.ts` | poll* (5) |
-| 7007-7199 | `src/sdk/trending.ts` | trendingGet* + videos/bursts (6) |
+| 7007-7199 | `src/sdk/trending.ts` | trendingGet* + videos/shorts (6) |
 | 7201-7218 | `src/sdk/push.ts` (merge with above) | pushNotificationRegister |
 | 7220-7223 | `src/sdk/branding.ts` | brandingGet (1) |
 | 7229-7444 | `src/sdk/internal.ts` | unwrap, normalizePost, cachePost, getPostIdentifier, extractAuthTokens, extractNextCursor (6, used 123x) |

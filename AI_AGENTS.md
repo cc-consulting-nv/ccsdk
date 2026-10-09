@@ -55,7 +55,7 @@ const videoPost = await sdk.createVideoPost({
   videoUrl: videoUrl,
   title: "My Awesome Video",
   body: "Check out this video I made!",
-  type: "VIDEO", // "VIDEO" | "BURST" for short-form
+  type: "VIDEO", // "VIDEO" | "SHORT" for short-form
   groupName: "default", // Required, use "default" if unsure
   sensitive: false,
   commentsEnabled: true,

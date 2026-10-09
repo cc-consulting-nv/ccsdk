@@ -2961,7 +2961,7 @@ export class CcPlatformSdk {
     body?: string;
     groupName?: string;
     groupId?: string;
-    type?: "VIDEO" | "BURST";
+    type?: "VIDEO" | "SHORT";
     sensitive?: boolean;
     commentsEnabled?: boolean;
     downloadEnabled?: boolean;
@@ -7683,7 +7683,7 @@ export class CcPlatformSdk {
   /**
    * Trending creators ranked by recent video views.
    *
-   * @param params.kind - "videos" (long-form, default) or "shorts" (vertical/BURST).
+   * @param params.kind - "videos" (long-form, default) or "shorts" (vertical/SHORT).
    *   Selects the backing endpoint; both return the same TrendingUser shape.
    */
   async getTrendingUsers(params?: {
@@ -8077,15 +8077,15 @@ export class CcPlatformSdk {
   }
 
   /**
-   * Get trending bursts feed
+   * Get trending shorts feed
    * Hydrates posts with full data via batch fetch
    */
-  async trendingGetBursts(cursor?: string): Promise<FeedPage> {
+  async trendingGetShorts(cursor?: string): Promise<FeedPage> {
     const params = new URLSearchParams();
     if (cursor) params.append("cursor", cursor);
 
     const queryString = params.toString();
-    const endpoint = `/v1/trending/bursts${queryString ? `?${queryString}` : ""}`;
+    const endpoint = `/v1/trending/shorts${queryString ? `?${queryString}` : ""}`;
 
     const response = await this.client.get<ApiEnvelope<Post[]>>(endpoint);
     const feedItems = this.unwrap(response) ?? [];
@@ -8134,14 +8134,14 @@ export class CcPlatformSdk {
   }
 
   /**
-   * Get all bursts feed
+   * Get all shorts feed
    */
-  async burstsGetAll(cursor?: string): Promise<FeedPage> {
+  async shortsGetAll(cursor?: string): Promise<FeedPage> {
     const params = new URLSearchParams();
     if (cursor) params.append("cursor", cursor);
 
     const queryString = params.toString();
-    const endpoint = `/v1/bursts/all${queryString ? `?${queryString}` : ""}`;
+    const endpoint = `/v1/shorts/all${queryString ? `?${queryString}` : ""}`;
 
     const response = await this.client.get<ApiEnvelope<Post[]>>(endpoint);
     const posts = this.unwrap(response) ?? [];

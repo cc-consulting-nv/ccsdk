@@ -312,11 +312,11 @@ const feedOptions = createMusicFeedInfiniteQueryOptions(sdk);
 ## Key Types
 
 ### `Post`
-The core content type. Posts can be text, songs, videos, podcasts, or bursts:
+The core content type. Posts can be text, songs, videos, podcasts, or shorts:
 ```typescript
 interface Post {
   id: Ulid;              // ULID identifier
-  type?: "POST" | "REPLY" | "REPOST" | "QUOTE" | "SONG" | "VIDEO" | "SHORT" | "PODCAST" | "BURST";
+  type?: "POST" | "REPLY" | "REPOST" | "QUOTE" | "SONG" | "VIDEO" | "SHORT" | "PODCAST";
   title?: string;        // For songs/videos
   content?: string;      // Text body
   artist?: string;       // For songs
