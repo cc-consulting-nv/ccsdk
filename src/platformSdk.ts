@@ -586,7 +586,7 @@ export interface CcPlatformSdkOptions {
  */
 export class CcPlatformSdk {
   /** SDK version for cache busting - v2 adds requestAuthCode */
-  static readonly SDK_VERSION = "2.0.0";
+  static readonly SDK_VERSION = "1.9.3";
   private readonly tokens: TokenProvider;
   private readonly sessionStore?: SessionStore;
   private readonly cachePromise: Promise<CacheAdapter>;
