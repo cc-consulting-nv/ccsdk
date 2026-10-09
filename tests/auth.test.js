@@ -583,6 +583,28 @@ test("refreshToken sends refresh_token in body even when useRefreshCookie is ena
   assert.equal(sdk.getTokens().refreshToken, "new-refresh-token");
 });
 
+// The browser's one refresh cookie names whoever signed in last. A cookie-mode
+// refresh that comes back as another user must not become this session.
+const jwt = (sub, jti) =>
+  `h.${Buffer.from(JSON.stringify({ sub, jti })).toString("base64url")}.s`;
+
+for (const [label, sub, installed] of [
+  ["a different user is not installed", "B", false],
+  ["the same user is installed", "A", true],
+]) {
+  test(`cookie-mode refresh answered as ${label}`, async () => {
+    const fresh = jwt(sub, 2);
+    const { fetchImpl } = createMockFetch({ access_token: fresh, expires_in: 3600 });
+    const tokenProvider = new MemoryTokenProvider({ accessToken: jwt("A", 1) });
+    const sdk = new CcPlatformSdk({ baseUrl, tokenProvider, fetchImpl, useRefreshCookie: true });
+
+    const tokens = await sdk.refreshToken();
+
+    assert.equal(tokens?.accessToken ?? null, installed ? fresh : null);
+    assert.equal(sdk.getTokens().accessToken, installed ? fresh : jwt("A", 1));
+  });
+}
+
 test("refreshToken dedupes concurrent refresh calls", async () => {
   let resolveRefresh;
   const calls = [];

@@ -8,6 +8,7 @@ import {
   type WatchPostProcessingOptions,
 } from "./postProcessing.js";
 import { sanitizeFileName } from "./utils/s3Key.js";
+import { sameSubject } from "./utils/jwt.js";
 import { resolveMimeType, validateMediaFile, type MediaType } from "./media.js";
 import {
   type ApiEnvelope,
@@ -1880,6 +1881,15 @@ export class CcPlatformSdk {
       });
       const tokens = this.extractAuthTokens(response, "/auth/refresh");
       if (this.signOutEpoch !== epochAtStart) return null;
+      // A cookie-first host answers with whoever the browser's one refresh
+      // cookie names, which is the account that signed in last, not
+      // necessarily this one. Installing that would turn this session into
+      // the other user. Treat it as transient, not a rejection: a rejection
+      // fires onUnauthorized, and the app's logout would revoke the other
+      // account's cookie.
+      // ponytail: the session stays on its expired bearer and 401s until the
+      // app re-authenticates it; mark the profile expired if that bites.
+      if (!sameSubject(currentTokens?.accessToken, tokens.accessToken)) return null;
       await this.updateSession(tokens);
       return tokens;
     } catch (error) {
@@ -1899,6 +1909,7 @@ export class CcPlatformSdk {
           });
           const tokens = this.extractAuthTokens(retryResponse, "/auth/refresh");
           if (this.signOutEpoch !== epochAtStart) return null;
+          if (!sameSubject(currentTokens?.accessToken, tokens.accessToken)) return null;
           await this.updateSession(tokens);
           return tokens;
         } catch {
