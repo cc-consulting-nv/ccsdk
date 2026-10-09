@@ -164,9 +164,9 @@ export interface Post {
   /** ULID of the user who created the post */
   userId?: Ulid;
   /** Normalized post type (SDK normalizes postType -> type) */
-  type?: "POST" | "REPLY" | "REPOST" | "QUOTE" | "SONG" | "VIDEO" | "SHORT" | "PODCAST" | "BURST";
+  type?: "POST" | "REPLY" | "REPOST" | "QUOTE" | "SONG" | "VIDEO" | "SHORT" | "PODCAST";
   /** Original API field name (API returns postType, SDK normalizes to type) */
-  postType?: "POST" | "REPLY" | "REPOST" | "QUOTE" | "SONG" | "VIDEO" | "SHORT" | "PODCAST" | "BURST";
+  postType?: "POST" | "REPLY" | "REPOST" | "QUOTE" | "SONG" | "VIDEO" | "SHORT" | "PODCAST";
   /** Title (for songs/videos) */
   title?: string;
   /** Post body content */

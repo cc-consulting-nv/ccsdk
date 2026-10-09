@@ -540,8 +540,8 @@ test("createVideoPost defaults groupName to 'default'", async () => {
   assert.equal(calls[0].body.groupName, "default");
 });
 
-test("createVideoPost sends type field (VIDEO, BURST)", async () => {
-  const videoResponse = createSampleVideoPostResponse({ postType: "burst" });
+test("createVideoPost sends type field (VIDEO, SHORT)", async () => {
+  const videoResponse = createSampleVideoPostResponse({ postType: "short" });
 
   const { sdk, calls } = createAuthenticatedSequentialSdk([
     { data: { data: videoResponse } },
@@ -550,10 +550,10 @@ test("createVideoPost sends type field (VIDEO, BURST)", async () => {
 
   await sdk.createVideoPost({
     videoUrl: "https://s3.example.com/videos/test.mp4",
-    type: "BURST",
+    type: "SHORT",
   });
 
-  assert.equal(calls[0].body.type, "BURST");
+  assert.equal(calls[0].body.type, "SHORT");
 });
 
 test("createVideoPost defaults type to VIDEO", async () => {
