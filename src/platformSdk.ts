@@ -124,7 +124,15 @@ const OAUTH_INVALID_GRANT = "invalid_grant";
  *
  * - the OAuth `invalid_grant` error body, on any status — the grant itself was
  *   rejected, so no retry can succeed;
- * - a bare 401, which is the same rejection from a server that omits the body.
+ * - a *shaped* 401: a JSON body bearing a `message` string (Laravel/Passport's
+ *   `{"message":"Unauthenticated."}`), i.e. an auth-middleware decision.
+ *
+ * Deliberately NOT a bare 401. Proxies, WAFs, captive portals, and gateways
+ * answer 401 — usually with an empty or HTML body — to anything while a
+ * machine is re-authenticating after sleep or a network change. Reading those
+ * as definitive destroys a live session: the stored refresh token is wiped
+ * and the app's logout cascade revokes the healthy session server-side.
+ * Ambiguous 401s get one retry and are otherwise transient.
  *
  * Deliberately NOT the whole 4xx range: 429 and 408 are transient
  * backpressure/timeout signals, and a captive portal will answer 400 to
@@ -134,7 +142,25 @@ function isDefinitiveAuthRejection(status: unknown, payload: unknown): boolean {
   if (payload && typeof payload === "object" && (payload as { error?: unknown }).error === OAUTH_INVALID_GRANT) {
     return true;
   }
-  return status === 401;
+  if (
+    status === 401 &&
+    payload !== null &&
+    typeof payload === "object" &&
+    !Array.isArray(payload) &&
+    typeof (payload as { message?: unknown }).message === "string"
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * A 401 whose body carries no recognizable auth-rejection shape — empty, raw
+ * text/HTML, or JSON without `message`/`error`. That is the signature of a
+ * middlebox rather than of the API, so it must never destroy a session.
+ */
+function isAmbiguousAuthRejection(status: unknown, payload: unknown): boolean {
+  return status === 401 && !isDefinitiveAuthRejection(status, payload);
 }
 
 // ============================================================================
@@ -1897,6 +1923,11 @@ export class CcPlatformSdk {
         return null;
       }
 
+      // The verdict for the branches below is taken from `lastError` — the
+      // original rejection, unless an ambiguous 401 was retried below and the
+      // retry failed differently.
+      let lastError: unknown = error;
+
       // Retry once on server errors (5xx) — transient failures shouldn't kill sessions
       const status = (error as any)?.status;
       if (status >= 500) {
@@ -1917,6 +1948,30 @@ export class CcPlatformSdk {
         }
       }
 
+      // A bare/empty/HTML 401 is how middleboxes (proxies, WAFs, captive
+      // portals) answer anything while a machine is re-authenticating after
+      // sleep or a network change. Retry once: a real revocation keeps
+      // answering with a shaped body and lands in the definitive branch
+      // below; a single-shot blip succeeds here and the session survives.
+      if (isAmbiguousAuthRejection(status, (error as { payload?: unknown })?.payload)) {
+        try {
+          const retryResponse = await this.client.post<Record<string, unknown>>("/auth/refresh", {
+            body,
+            skipAuth: true,
+            credentials: this.useRefreshCookie ? "include" : undefined,
+          });
+          const tokens = this.extractAuthTokens(retryResponse, "/auth/refresh");
+          if (this.signOutEpoch !== epochAtStart) return null;
+          if (!sameSubject(currentTokens?.accessToken, tokens.accessToken)) return null;
+          await this.updateSession(tokens);
+          return tokens;
+        } catch (retryError) {
+          // The retry's error is the freshest evidence — a shaped rejection
+          // here is authoritative even when the first attempt was ambiguous.
+          lastError = retryError;
+        }
+      }
+
       // Passport rotates refresh tokens and revokes the old one, so a
       // concurrent refresh (another tab, or another SessionManager instance for
       // the same user) can win the race and leave this call holding a revoked
@@ -1928,8 +1983,9 @@ export class CcPlatformSdk {
       // indicates a rotation race. Generic 401/400 rejections have no rotated
       // token to adopt and must fall through to the clear below. Must stay
       // ahead of that clear — this is the branch that pre-empts it.
-      if (status === 400 || status === 401) {
-        const payload = (error as any)?.payload;
+      const lastStatus = (lastError as any)?.status;
+      if (lastStatus === 400 || lastStatus === 401) {
+        const payload = (lastError as any)?.payload;
         const isInvalidGrant = payload && typeof payload === "object" && payload.error === OAUTH_INVALID_GRANT;
         // A rotation can only have been lost if we actually sent a refresh
         // token. In `useRefreshCookie` mode `currentTokens.refreshToken` is
@@ -1937,26 +1993,35 @@ export class CcPlatformSdk {
         // as "different" and gets adopted unconditionally.
         const sentRefreshToken = currentTokens?.refreshToken;
         if (isInvalidGrant && sentRefreshToken && this.signOutEpoch === epochAtStart) {
-          const stored = await this.sessionStore?.loadTokens();
-          // The rotation revoked the whole grant family, so the access token we
-          // hold in memory is dead too — a stored snapshot without its own
-          // bearer buys nothing and would leave `isAuthenticated()` true over a
-          // revoked token. Require both halves before adopting.
-          if (stored?.refreshToken && stored.accessToken && stored.refreshToken !== sentRefreshToken) {
-            // ponytail: last-writer-wins adoption. If two instances both lose
-            // to a third rotation a clear is still possible — rare, and strictly
-            // better than today. Cross-instance mutex if that ever bites.
-            try {
-              await this.updateSession(stored);
-            } catch {
-              // updateSession throws when a sign-out landed mid-persist; that
-              // sign-out owns the final state. Fall through to return null
-              // rather than rejecting — every other path here returns null, and
-              // a throw would reach httpClient.refreshTokens() as the logout
-              // cascade this whole branch exists to prevent.
-              return null;
+          // The rotation revoked the whole grant family, so the access token
+          // we hold in memory is dead too — a stored snapshot without its own
+          // bearer buys nothing and would leave `isAuthenticated()` true over
+          // a revoked token. Require both halves before adopting.
+          //
+          // The winner (another tab/instance) may persist the rotated pair a
+          // beat after our rejection arrives, so poll the shared store briefly
+          // before treating the lost race as a dead session.
+          for (let attempt = 0; attempt < 3 && this.sessionStore; attempt++) {
+            const stored = await this.sessionStore.loadTokens();
+            if (stored?.refreshToken && stored.accessToken && stored.refreshToken !== sentRefreshToken) {
+              // ponytail: last-writer-wins adoption. If two instances both lose
+              // to a third rotation a clear is still possible — rare, and strictly
+              // better than today. Cross-instance mutex if that ever bites.
+              try {
+                await this.updateSession(stored);
+              } catch {
+                // updateSession throws when a sign-out landed mid-persist; that
+                // sign-out owns the final state. Fall through to return null
+                // rather than rejecting — every other path here returns null, and
+                // a throw would reach httpClient.refreshTokens() as the logout
+                // cascade this whole branch exists to prevent.
+                return null;
+              }
+              return stored;
             }
-            return stored;
+            if (attempt < 2) {
+              await new Promise((resolve) => setTimeout(resolve, 400));
+            }
           }
         }
       }
@@ -1964,19 +2029,23 @@ export class CcPlatformSdk {
       // Clear the session only when the server rejected *this grant* — the
       // refresh token is invalid/expired/revoked and recovery is impossible.
       //
-      // The test is `invalid_grant` (or a bare 401), NOT the whole 4xx range.
-      // 429 (rate limited) and 408 (request timeout) are 4xx but transient:
-      // treating them as definitive both latches the logout cascade *and*
-      // destroys the stored refresh token, turning a moment of backpressure
-      // into a forced re-login. A captive portal answering 400 to everything
-      // does the same. Those must fall through as transient and be retried.
-      if (isDefinitiveAuthRejection(status, (error as { payload?: unknown })?.payload)) {
+      // The test is a *shaped* rejection: an `invalid_grant` body (any status)
+      // or a 401 carrying a JSON `message` (Laravel's auth-middleware shape).
+      // An ambiguous 401 — empty or HTML body, the answer of proxies, WAFs,
+      // and captive portals — was retried above and, if it still failed
+      // ambiguously, must fall through as transient: it destroys nothing.
+      // 429 and 408 are 4xx but transient backpressure signals, and a captive
+      // portal answering 400 to everything does the same. Treating any of
+      // those as definitive latches the logout cascade *and* destroys the
+      // stored refresh token, turning a moment of bad network into a forced
+      // re-login plus a server-side revocation of a live session.
+      if (isDefinitiveAuthRejection(lastStatus, (lastError as { payload?: unknown })?.payload)) {
         if (this.signOutEpoch === epochAtStart) {
           await this.clearSession();
         }
         // Throw rather than return null: the verdict travels *with* the
         // result instead of in instance state a later reader might race.
-        throw new AuthSessionExpiredError("Refresh token rejected", status);
+        throw new AuthSessionExpiredError("Refresh token rejected", lastStatus);
       }
       return null;
     }
