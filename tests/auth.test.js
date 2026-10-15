@@ -821,8 +821,11 @@ test("refreshToken restores persisted session before refreshing", async () => {
   assert.ok(snapshot.expiresAt, "persisted session carries derived expiresAt");
 });
 
-test("refreshToken clears tokens and returns null on failure", async () => {
-  const { fetchImpl } = createMockFetch({}, 401);
+test("refreshToken treats an ambiguous empty 401 as transient and preserves the session", async () => {
+  // A bare/empty 401 is how proxies, WAFs, and captive portals answer anything
+  // (e.g. while a machine re-authenticates after sleep) — it must not destroy
+  // a live session. The SDK retries once, then gives up as transient.
+  const { fetchImpl, calls } = createMockFetch({}, 401);
 
   // Use HybridTokenProvider with mock storage to properly store refresh token
   const storage = createMockStorage();
@@ -840,7 +843,75 @@ test("refreshToken clears tokens and returns null on failure", async () => {
   const result = await sdk.refreshToken();
 
   assert.equal(result, null);
-  assert.ok(!sdk.isAuthenticated());
+  assert.ok(sdk.isAuthenticated(), "ambiguous 401 must not clear the session");
+  assert.equal(sdk.getTokens().refreshToken, "refresh", "stored refresh token survives");
+  assert.equal(calls.length, 2, "the ambiguous 401 is retried exactly once");
+});
+
+test("refreshToken treats an HTML-body 401 as transient and preserves the session", async () => {
+  // Middleboxes answer 401 with an HTML error page; that shape carries no
+  // auth verdict either.
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init });
+    return new Response("<html>Proxy authentication required</html>", {
+      status: 401,
+      headers: { "Content-Type": "text/html" },
+    });
+  };
+
+  const storage = createMockStorage();
+  const tokenProvider = new HybridTokenProvider(
+    storage,
+    { accessToken: "token", refreshToken: "refresh" }
+  );
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    tokenProvider,
+    fetchImpl,
+  });
+
+  const result = await sdk.refreshToken();
+
+  assert.equal(result, null);
+  assert.ok(sdk.isAuthenticated(), "HTML-body 401 must not clear the session");
+  assert.equal(sdk.getTokens().refreshToken, "refresh", "stored refresh token survives");
+  assert.equal(calls.length, 2, "the ambiguous 401 is retried exactly once");
+});
+
+test("refreshToken recovers when the ambiguous-401 retry succeeds", async () => {
+  // First attempt answered by a middlebox (bare 401); the retry reaches the
+  // real API and returns fresh tokens.
+  let attempt = 0;
+  const fetchImpl = async () => {
+    attempt += 1;
+    if (attempt === 1) {
+      return new Response("{}", { status: 401 });
+    }
+    return new Response(
+      JSON.stringify({ accessToken: "new-access-token", refreshToken: "new-refresh-token" }),
+      { status: 200 },
+    );
+  };
+
+  const storage = createMockStorage();
+  const tokenProvider = new HybridTokenProvider(
+    storage,
+    { accessToken: "token", refreshToken: "refresh" }
+  );
+
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    tokenProvider,
+    fetchImpl,
+  });
+
+  const result = await sdk.refreshToken();
+
+  assert.equal(result?.refreshToken, "new-refresh-token");
+  assert.ok(sdk.isAuthenticated());
+  assert.equal(sdk.getTokens().accessToken, "new-access-token");
 });
 
 test("refreshToken adopts a rotated refresh token instead of clearing on invalid_grant", async () => {
@@ -892,6 +963,34 @@ test("refreshToken still clears on invalid_grant when the stored token is unchan
   assert.equal(result, null);
   assert.ok(!sdk.isAuthenticated());
   assert.equal(sessionStore.getSnapshot(), null, "dead session is cleared");
+});
+
+test("refreshToken adopts a rotation that lands after the rejection arrives", async () => {
+  // The winner tab persists the rotated pair a beat after our invalid_grant
+  // rejection arrives; the brief store poll must catch it instead of clearing.
+  const sessionStore = createMockSessionStore({
+    accessToken: "old-access-token",
+    refreshToken: "old-refresh-token",
+  });
+
+  const fetchImpl = async () => {
+    setTimeout(() => {
+      void sessionStore.saveTokens({
+        accessToken: "rotated-access-token",
+        refreshToken: "rotated-refresh-token",
+      });
+    }, 150);
+    return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
+  };
+
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl, sessionStore });
+
+  const result = await sdk.refreshToken();
+
+  assert.equal(result?.refreshToken, "rotated-refresh-token");
+  assert.equal(sdk.getTokens().accessToken, "rotated-access-token");
+  assert.ok(sdk.isAuthenticated(), "session survives losing the race by a beat");
+  assert.equal(sessionStore.getSnapshot().refreshToken, "rotated-refresh-token");
 });
 
 test("refreshToken still clears on a non-invalid_grant 401 even if the store changed", async () => {
