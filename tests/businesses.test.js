@@ -416,3 +416,67 @@ test("fetchMyBusinessesAnalytics includes authorization header", async () => {
 
   assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
 });
+
+// ---------------------------------------------------------------------------
+// searchBusinesses: geo filters
+// ---------------------------------------------------------------------------
+
+test("searchBusinesses sends lat/lng and an integer km radius", async () => {
+  const { sdk, calls } = createMockSdk({ data: [], found: 0 });
+
+  await sdk.searchBusinesses("glock", { lat: 36.1699, lng: -115.1398, radiusKm: 40.2 });
+
+  const url = new URL(calls[0].url);
+  assert.equal(url.searchParams.get("lat"), "36.1699");
+  assert.equal(url.searchParams.get("lng"), "-115.1398");
+  assert.equal(url.searchParams.get("radius"), "40");
+});
+
+test("searchBusinesses omits geo params unless both lat and lng are set", async () => {
+  const { sdk, calls } = createMockSdk({ data: [], found: 0 });
+
+  await sdk.searchBusinesses("glock", { lat: 36.1699, radiusKm: 40 });
+
+  const url = new URL(calls[0].url);
+  assert.equal(url.searchParams.has("lat"), false);
+  assert.equal(url.searchParams.has("lng"), false);
+  assert.equal(url.searchParams.has("radius"), false);
+});
+
+// ---------------------------------------------------------------------------
+// fetchApproximateLocation
+// ---------------------------------------------------------------------------
+
+test("fetchApproximateLocation maps the flat response", async () => {
+  const { sdk, calls } = createMockSdk({
+    latitude: 36.1699,
+    longitude: -115.1398,
+    city: "Las Vegas",
+    region: "Nevada",
+    country: "US",
+    source: "cloudflare",
+  });
+
+  const result = await sdk.fetchApproximateLocation();
+
+  assert.equal(new URL(calls[0].url).pathname, "/v1/geo/approximate");
+  assert.equal(calls[0].init.headers.Authorization, undefined);
+  assert.deepEqual(result, {
+    latitude: 36.1699,
+    longitude: -115.1398,
+    city: "Las Vegas",
+    region: "Nevada",
+    country: "US",
+    source: "cloudflare",
+  });
+});
+
+test("fetchApproximateLocation nulls coordinates when either is missing", async () => {
+  const { sdk } = createMockSdk({ latitude: 36.1, longitude: null, country: "US", source: "geoip" });
+
+  const result = await sdk.fetchApproximateLocation();
+
+  assert.equal(result.latitude, null);
+  assert.equal(result.longitude, null);
+  assert.equal(result.country, "US");
+});

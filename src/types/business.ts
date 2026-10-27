@@ -829,3 +829,17 @@ export interface GeocodeCityResult {
   latitude: number;
   longitude: number;
 }
+
+/**
+ * Visitor location resolved server-side from the request (Cloudflare edge
+ * headers, then GeoIP). Coordinates are null when nothing resolved.
+ * @category Business Directory
+ */
+export interface ApproximateLocation {
+  latitude: number | null;
+  longitude: number | null;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  source: "cloudflare" | "device" | "geoip" | "none";
+}
