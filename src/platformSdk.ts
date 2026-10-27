@@ -9875,7 +9875,9 @@ export class CcPlatformSdk {
    * back uniformly with the cursor-based list methods on this SDK.
    *
    * @param query - Search query
-   * @param filters - Optional filters (city, category, region, perPage, page)
+   * @param filters - Optional filters (city, category, region, perPage, page).
+   *   Pass `lat` + `lng` to restrict results to `radiusKm` (server default 10,
+   *   max 100) around that point, sorted nearest first.
    * @returns Paginated list of matching businesses
    *
    * @example
@@ -9897,12 +9899,27 @@ export class CcPlatformSdk {
    */
   async searchBusinesses(
     query: string,
-    filters?: { city?: string; category?: string; region?: string; perPage?: number; page?: number }
+    filters?: {
+      city?: string;
+      category?: string;
+      region?: string;
+      lat?: number;
+      lng?: number;
+      radiusKm?: number;
+      perPage?: number;
+      page?: number;
+    }
   ): Promise<import("./types/business.js").BusinessListResponse> {
     const params = new URLSearchParams({ q: query });
     if (filters?.city) params.append("city", filters.city);
     if (filters?.category) params.append("category", filters.category);
     if (filters?.region) params.append("region", filters.region);
+    if (filters?.lat != null && filters?.lng != null) {
+      params.append("lat", String(filters.lat));
+      params.append("lng", String(filters.lng));
+      // The API validates radius as an integer (km).
+      if (filters.radiusKm != null) params.append("radius", String(Math.round(filters.radiusKm)));
+    }
     if (filters?.perPage != null) params.append("per_page", String(filters.perPage));
     if (filters?.page != null) params.append("page", String(filters.page));
 
@@ -11155,6 +11172,40 @@ export class CcPlatformSdk {
     const lng = raw.longitude ?? raw.data?.longitude;
     if (typeof lat !== "number" || typeof lng !== "number") return null;
     return { latitude: lat, longitude: lng };
+  }
+
+  /**
+   * Approximate visitor location for centering a distance search without
+   * asking for browser geolocation.
+   * GET /v1/geo/approximate
+   *
+   * Public endpoint — no auth. Resolved server-side from Cloudflare edge
+   * headers, then GeoIP. Coordinates are null when neither resolves (e.g. a
+   * private/local IP).
+   *
+   * @returns Approximate location; `latitude`/`longitude` may be null
+   *
+   * @category Business Directory
+   */
+  async fetchApproximateLocation(): Promise<import("./types/business.js").ApproximateLocation> {
+    const raw = await this.client.get<
+      Partial<import("./types/business.js").ApproximateLocation> & {
+        data?: Partial<import("./types/business.js").ApproximateLocation>;
+      }
+    >(`/v1/geo/approximate`, { skipAuth: true });
+    // Accept either flat or wrapped {data:{...}}, like geocodeCity.
+    const body = raw.data ?? raw;
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    const latitude = num(body.latitude);
+    const longitude = num(body.longitude);
+    return {
+      latitude: latitude != null && longitude != null ? latitude : null,
+      longitude: latitude != null && longitude != null ? longitude : null,
+      city: body.city ?? null,
+      region: body.region ?? null,
+      country: body.country ?? null,
+      source: body.source ?? "none",
+    };
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
