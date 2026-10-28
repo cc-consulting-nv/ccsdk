@@ -3,7 +3,7 @@
  *
  * Covers getChatGroups, getDmConversations, createChatGroup, findOrCreateDm,
  * getChatMessages (pagination + normalization), sendChatMessage,
- * markChatGroupRead, deleteChatMessage, and getChatUnreadCount — verifying
+ * markChatGroupRead, editChatMessage, deleteChatMessage, and getChatUnreadCount — verifying
  * endpoints, payloads, and that the backend envelope/post shapes are
  * normalized into the flat ChatMessage type.
  */
@@ -285,6 +285,28 @@ test("deleteChatMessage DELETEs the message endpoint", async () => {
     "/v1/chat/groups/01hxgrp0000000000000000001/messages/01hxmsg0000000000000000001",
   );
   assert.equal(calls[0].init.method, "DELETE");
+});
+
+test("editChatMessage PATCHes the body and returns the edited message", async () => {
+  const { sdk, calls } = createMockSdk(() => ({
+    body: { data: samplePost({ body: "fixed", edited: true }) },
+  }));
+
+  const res = await sdk.editChatMessage(
+    "01hxgrp0000000000000000001",
+    "01hxmsg0000000000000000001",
+    { body: "fixed" },
+  );
+  const url = new URL(calls[0].url);
+
+  assert.equal(
+    url.pathname,
+    "/v1/chat/groups/01hxgrp0000000000000000001/messages/01hxmsg0000000000000000001",
+  );
+  assert.equal(calls[0].init.method, "PATCH");
+  assert.equal(JSON.parse(calls[0].init.body).body, "fixed");
+  assert.equal(res.data.body, "fixed");
+  assert.equal(res.data.edited, true);
 });
 
 // ---------------------------------------------------------------------------
