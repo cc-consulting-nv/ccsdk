@@ -35,6 +35,7 @@ import {
   type ChatMessagesPage,
   type ChatAttachment,
   type SendChatMessagePayload,
+  type EditChatMessagePayload,
   type CreateChatGroupPayload,
   type AppSettings,
   type NotificationType,
@@ -7378,9 +7379,38 @@ export class CcPlatformSdk {
   }
 
   /**
+   * Edit the body of a chat message.
+   *
+   * Only the author can edit, within the tenant's post edit window.
+   *
+   * @param groupUlid - The ULID of the chat group
+   * @param messageUlid - The ULID of the message to edit
+   * @param payload - The new message body
+   * @returns Promise resolving to the updated message (`edited` is true)
+   *
+   * @category Chat
+   */
+  async editChatMessage(
+    groupUlid: string,
+    messageUlid: string,
+    payload: EditChatMessagePayload,
+  ): Promise<ApiEnvelope<ChatMessage>> {
+    const raw = await this.client.patch<Record<string, unknown>>(
+      `/v1/chat/groups/${encodeURIComponent(groupUlid)}/messages/${encodeURIComponent(messageUlid)}`,
+      { body: payload as unknown as Record<string, unknown> },
+    );
+    const obj = (raw ?? {}) as Record<string, unknown>;
+    const inner =
+      obj.data && typeof obj.data === "object"
+        ? (obj.data as Record<string, unknown>)
+        : obj;
+    return { data: this.normalizeChatMessage(inner, groupUlid) };
+  }
+
+  /**
    * Delete a chat message.
    *
-   * Only the message author can delete their own messages.
+   * The author, the group owner and group moderators can delete a message.
    *
    * @param groupUlid - The ULID of the chat group
    * @param messageUlid - The ULID of the message to delete

@@ -1065,6 +1065,8 @@ export interface ChatMessage {
   createdAt?: string;
   /** When the message was read (null if unread) */
   readAt?: string | null;
+  /** True once the author has edited the message */
+  edited?: boolean;
   /** Additional properties from API */
   [key: string]: unknown;
 }
@@ -1098,6 +1100,16 @@ export interface SendChatMessagePayload {
   body?: string;
   /** Up to 4 media attachments */
   attachments?: ChatAttachment[];
+}
+
+/**
+ * Payload for {@link CcPlatformSdk.editChatMessage}.
+ *
+ * @category Chat
+ */
+export interface EditChatMessagePayload {
+  /** New text content (max 2000 chars) */
+  body: string;
 }
 
 /**
