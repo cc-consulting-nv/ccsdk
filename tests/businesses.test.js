@@ -432,7 +432,7 @@ test("searchBusinesses sends lat/lng and an integer km radius", async () => {
   assert.equal(url.searchParams.get("radius"), "40");
 });
 
-test("searchBusinesses omits geo params unless both lat and lng are set", async () => {
+test("searchBusinesses omits lat/lng unless both are set", async () => {
   const { sdk, calls } = createMockSdk({ data: [], found: 0 });
 
   await sdk.searchBusinesses("glock", { lat: 36.1699, radiusKm: 40 });
@@ -440,7 +440,25 @@ test("searchBusinesses omits geo params unless both lat and lng are set", async 
   const url = new URL(calls[0].url);
   assert.equal(url.searchParams.has("lat"), false);
   assert.equal(url.searchParams.has("lng"), false);
-  assert.equal(url.searchParams.has("radius"), false);
+  assert.equal(url.searchParams.get("radius"), "40");
+});
+
+test("searchBusinesses sends a radius alone so the server centers on the visitor", async () => {
+  const { sdk, calls } = createMockSdk({ data: [], found: 0 });
+
+  await sdk.searchBusinesses("glock", { radiusKm: 64.37 });
+
+  const url = new URL(calls[0].url);
+  assert.equal(url.searchParams.has("lat"), false);
+  assert.equal(url.searchParams.get("radius"), "64");
+});
+
+test("searchBusinesses sends no radius when none is given", async () => {
+  const { sdk, calls } = createMockSdk({ data: [], found: 0 });
+
+  await sdk.searchBusinesses("glock");
+
+  assert.equal(new URL(calls[0].url).searchParams.has("radius"), false);
 });
 
 // ---------------------------------------------------------------------------

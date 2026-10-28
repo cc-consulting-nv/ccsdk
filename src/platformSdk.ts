@@ -9877,7 +9877,10 @@ export class CcPlatformSdk {
    * @param query - Search query
    * @param filters - Optional filters (city, category, region, perPage, page).
    *   Pass `lat` + `lng` to restrict results to `radiusKm` (server default 10,
-   *   max 100) around that point, sorted nearest first.
+   *   max 100) around that point, sorted nearest first. `radiusKm` without
+   *   both coordinates (and without `city`) searches around the visitor's
+   *   approximate location, which the server resolves from Cloudflare edge
+   *   headers, then GeoIP.
    * @returns Paginated list of matching businesses
    *
    * @example
@@ -9917,9 +9920,9 @@ export class CcPlatformSdk {
     if (filters?.lat != null && filters?.lng != null) {
       params.append("lat", String(filters.lat));
       params.append("lng", String(filters.lng));
-      // The API validates radius as an integer (km).
-      if (filters.radiusKm != null) params.append("radius", String(Math.round(filters.radiusKm)));
     }
+    // The API validates radius as an integer (km).
+    if (filters?.radiusKm != null) params.append("radius", String(Math.round(filters.radiusKm)));
     if (filters?.perPage != null) params.append("per_page", String(filters.perPage));
     if (filters?.page != null) params.append("page", String(filters.page));
 
