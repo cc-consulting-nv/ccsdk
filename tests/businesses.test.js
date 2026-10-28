@@ -479,6 +479,15 @@ test("fetchNearbyBusinesses sends lat/lng/radius and no category by default", as
   assert.equal(result.length, 1);
 });
 
+test("fetchNearbyBusinesses defaults the radius to 10 miles", async () => {
+  const { sdk, calls } = createMockSdk({ data: [] });
+
+  await sdk.fetchNearbyBusinesses(36.17497, -115.13722);
+
+  // The API validates radius as integer miles, max 50; the old 5000 default was a 422.
+  assert.equal(new URL(calls[0].url).searchParams.get("radius"), "10");
+});
+
 test("fetchNearbyBusinesses sends the category id when given", async () => {
   const { sdk, calls } = createMockSdk({ data: [] });
 
