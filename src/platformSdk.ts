@@ -10937,6 +10937,81 @@ export class CcPlatformSdk {
     );
   }
 
+  /**
+   * Verification methods available for claiming a listing.
+   * GET /v1/businesses/{businessId}/claim/methods
+   *
+   * @param businessId - Business ULID
+   * @returns Methods plus the masked listing phone and website domain
+   *
+   * @category Business Directory
+   */
+  async fetchBusinessClaimMethods(
+    businessId: string,
+  ): Promise<import("./types/business.js").BusinessClaimMethods> {
+    const response = await this.client.get<
+      ApiEnvelope<import("./types/business.js").BusinessClaimMethods> | import("./types/business.js").BusinessClaimMethods
+    >(`/v1/businesses/${businessId}/claim/methods`);
+    return this.unwrap(response);
+  }
+
+  /**
+   * Start a claim with a verification method (multipart).
+   * POST /v1/businesses/{businessId}/claim/start
+   *
+   * Sends a code by text, call or email, or returns website/DNS instructions,
+   * or uploads the supporting document.
+   *
+   * @param businessId - Business ULID
+   * @param input - Method, claimant details and method-specific fields
+   * @returns pending_id and what the claimant must do next
+   *
+   * @category Business Directory
+   */
+  async startBusinessClaim(
+    businessId: string,
+    input: import("./types/business.js").BusinessClaimStartInput,
+  ): Promise<import("./types/business.js").BusinessClaimStartResponse> {
+    const formData = new FormData();
+    formData.append("method", input.method);
+    formData.append("name", input.name);
+    formData.append("position", input.position);
+    if (input.phone) formData.append("phone", input.phone);
+    if (input.message) formData.append("message", input.message);
+    if (input.email) formData.append("email", input.email);
+    if (input.document) formData.append("document", input.document);
+
+    const response = await this.client.post<
+      ApiEnvelope<import("./types/business.js").BusinessClaimStartResponse> | import("./types/business.js").BusinessClaimStartResponse
+    >(`/v1/businesses/${businessId}/claim/start`, { body: formData });
+    return this.unwrap(response);
+  }
+
+  /**
+   * Confirm a claim: send the code (text/call/email), the emailed link token,
+   * or nothing for website/DNS checks and document claims.
+   * POST /v1/businesses/{businessId}/claim/confirm
+   *
+   * @param businessId - Business ULID
+   * @param pendingId - pending_id from startBusinessClaim
+   * @param proof - `{ code }` or `{ token }`, or omit
+   * @returns `approved` or `pending_review`
+   *
+   * @category Business Directory
+   */
+  async confirmBusinessClaim(
+    businessId: string,
+    pendingId: string,
+    proof: { code?: string; token?: string } = {},
+  ): Promise<import("./types/business.js").BusinessClaimConfirmResponse> {
+    const response = await this.client.post<
+      ApiEnvelope<import("./types/business.js").BusinessClaimConfirmResponse> | import("./types/business.js").BusinessClaimConfirmResponse
+    >(`/v1/businesses/${businessId}/claim/confirm`, {
+      body: { pending_id: pendingId, ...proof },
+    });
+    return this.unwrap(response);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Authenticated Routes - Reviews
   // ─────────────────────────────────────────────────────────────────────────────

@@ -783,6 +783,85 @@ export interface BusinessClaimResponse {
 }
 
 /**
+ * Ways a claimant can prove they control a business.
+ * `phone_sms`/`phone_call` go to the listing's phone, `domain_email` to an
+ * address on the listing's website domain, `website_code`/`dns_txt` check the
+ * listing's website; those approve the claim automatically. `document` (an
+ * upload or short video) goes to a person for review.
+ * @category Business Directory
+ */
+export type BusinessClaimMethod =
+  | "phone_sms"
+  | "phone_call"
+  | "domain_email"
+  | "website_code"
+  | "dns_txt"
+  | "document";
+
+/**
+ * Methods available for a listing (GET /v1/businesses/{id}/claim/methods).
+ * @category Business Directory
+ */
+export interface BusinessClaimMethods {
+  methods: BusinessClaimMethod[];
+  masked_phone: string | null;
+  website_domain: string | null;
+}
+
+/**
+ * Input for starting a claim with a chosen verification method.
+ * `email` is required for `domain_email`; `document` for `document`.
+ * @category Business Directory
+ */
+export interface BusinessClaimStartInput {
+  method: BusinessClaimMethod;
+  name: string;
+  position: string;
+  phone?: string;
+  message?: string;
+  email?: string;
+  document?: File | Blob | null;
+}
+
+/**
+ * What the claimant must do next. Always has `message`; `website_code` adds the
+ * meta tag / file, `dns_txt` adds the TXT record.
+ * @category Business Directory
+ */
+export interface BusinessClaimInstructions {
+  message: string;
+  meta_tag?: string;
+  file_url?: string;
+  file_contents?: string;
+  record_type?: string;
+  record_host?: string;
+  record_host_alternative?: string;
+  record_value?: string;
+}
+
+/**
+ * Response from starting a claim.
+ * @category Business Directory
+ */
+export interface BusinessClaimStartResponse {
+  pending_id: string;
+  method: BusinessClaimMethod;
+  masked_target: string | null;
+  expires_at: string;
+  instructions: BusinessClaimInstructions;
+}
+
+/**
+ * Response from confirming a claim. `approved` means the claimant now owns the
+ * listing; `pending_review` means a person will review it.
+ * @category Business Directory
+ */
+export interface BusinessClaimConfirmResponse {
+  status: "approved" | "pending_review";
+  message: string;
+}
+
+/**
  * Response from verifying a business claim with a code
  * @category Business Directory
  */
