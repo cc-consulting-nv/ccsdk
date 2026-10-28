@@ -10938,6 +10938,52 @@ export class CcPlatformSdk {
   }
 
   /**
+   * The signed-in user's saved directory home location.
+   * GET /v1/me/directory-location
+   *
+   * Once saved, GET /v1/geo/approximate also returns it (source "home") for
+   * this user.
+   *
+   * @returns The saved location, or all-null fields when none is saved
+   *
+   * @category Business Directory
+   */
+  async fetchDirectoryHomeLocation(): Promise<import("./types/business.js").DirectoryHomeLocation> {
+    const response = await this.client.get<
+      ApiEnvelope<import("./types/business.js").DirectoryHomeLocation> | import("./types/business.js").DirectoryHomeLocation
+    >("/v1/me/directory-location");
+    return this.unwrap(response);
+  }
+
+  /**
+   * Save the signed-in user's directory home location.
+   * PUT /v1/me/directory-location
+   *
+   * @param input - Coordinates, a short label and optional region
+   * @returns The saved location
+   *
+   * @category Business Directory
+   */
+  async saveDirectoryHomeLocation(
+    input: import("./types/business.js").DirectoryHomeLocationInput,
+  ): Promise<import("./types/business.js").DirectoryHomeLocation> {
+    const response = await this.client.put<
+      ApiEnvelope<import("./types/business.js").DirectoryHomeLocation> | import("./types/business.js").DirectoryHomeLocation
+    >("/v1/me/directory-location", { body: input });
+    return this.unwrap(response);
+  }
+
+  /**
+   * Clear the signed-in user's directory home location.
+   * DELETE /v1/me/directory-location
+   *
+   * @category Business Directory
+   */
+  async clearDirectoryHomeLocation(): Promise<void> {
+    await this.client.delete("/v1/me/directory-location");
+  }
+
+  /**
    * Verification methods available for claiming a listing.
    * GET /v1/businesses/{businessId}/claim/methods
    *

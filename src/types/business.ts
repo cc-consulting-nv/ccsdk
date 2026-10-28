@@ -783,6 +783,30 @@ export interface BusinessClaimResponse {
 }
 
 /**
+ * A signed-in user's saved home location for the business directory.
+ * All fields are null when none is saved.
+ * @category Business Directory
+ */
+export interface DirectoryHomeLocation {
+  latitude: number | null;
+  longitude: number | null;
+  label: string | null;
+  region: string | null;
+}
+
+/**
+ * Input for saving a directory home location.
+ * @category Business Directory
+ */
+export interface DirectoryHomeLocationInput {
+  latitude: number;
+  longitude: number;
+  /** Short place name shown in headings, e.g. "Wayne, NJ" (max 100). */
+  label: string;
+  region?: string;
+}
+
+/**
  * Ways a claimant can prove they control a business.
  * `phone_sms`/`phone_call` go to the listing's phone, `domain_email` to an
  * address on the listing's website domain, `website_code`/`dns_txt` check the

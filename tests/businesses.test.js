@@ -576,3 +576,33 @@ test("confirmBusinessClaim sends pending_id with the code", async () => {
   assert.deepEqual(JSON.parse(calls[0].init.body), { pending_id: "p1", code: "123456" });
   assert.equal(result.status, "approved");
 });
+
+// ---------------------------------------------------------------------------
+// Directory home location
+// ---------------------------------------------------------------------------
+
+test("saveDirectoryHomeLocation PUTs the location and returns it", async () => {
+  const saved = { latitude: 40.9254, longitude: -74.2765, label: "Wayne, NJ", region: "New Jersey" };
+  const { sdk, calls } = createMockSdk(saved);
+
+  const result = await sdk.saveDirectoryHomeLocation({ latitude: 40.9254, longitude: -74.2765, label: "Wayne, NJ", region: "New Jersey" });
+
+  assert.equal(new URL(calls[0].url).pathname, "/v1/me/directory-location");
+  assert.equal(calls[0].init.method, "PUT");
+  assert.deepEqual(result, saved);
+});
+
+test("fetchDirectoryHomeLocation returns null fields when nothing is saved", async () => {
+  const empty = { latitude: null, longitude: null, label: null, region: null };
+  const { sdk } = createMockSdk(empty);
+
+  assert.deepEqual(await sdk.fetchDirectoryHomeLocation(), empty);
+});
+
+test("clearDirectoryHomeLocation sends DELETE", async () => {
+  const { sdk, calls } = createMockSdk({ latitude: null, longitude: null, label: null, region: null });
+
+  await sdk.clearDirectoryHomeLocation();
+
+  assert.equal(calls[0].init.method, "DELETE");
+});
