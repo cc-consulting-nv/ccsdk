@@ -11354,7 +11354,7 @@ export class CcPlatformSdk {
       Partial<import("./types/business.js").ApproximateLocation> & {
         data?: Partial<import("./types/business.js").ApproximateLocation>;
       }
-    >(`/v1/geo/approximate`, { skipAuth: true });
+    >(`/v1/geo/approximate`);
     // Accept either flat or wrapped {data:{...}}, like geocodeCity.
     const body = raw.data ?? raw;
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);

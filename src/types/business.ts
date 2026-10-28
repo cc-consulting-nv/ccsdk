@@ -944,5 +944,6 @@ export interface ApproximateLocation {
   city: string | null;
   region: string | null;
   country: string | null;
-  source: "cloudflare" | "device" | "geoip" | "none";
+  /** "home" = the signed-in user's saved directory home location. */
+  source: "cloudflare" | "device" | "geoip" | "home" | "none";
 }

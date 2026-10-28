@@ -513,7 +513,8 @@ test("fetchApproximateLocation maps the flat response", async () => {
   const result = await sdk.fetchApproximateLocation();
 
   assert.equal(new URL(calls[0].url).pathname, "/v1/geo/approximate");
-  assert.equal(calls[0].init.headers.Authorization, undefined);
+  // Bearer sent so the API can answer with the saved home location.
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
   assert.deepEqual(result, {
     latitude: 36.1699,
     longitude: -115.1398,
