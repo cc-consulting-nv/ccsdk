@@ -10015,6 +10015,7 @@ export class CcPlatformSdk {
    * @param latitude - User's latitude
    * @param longitude - User's longitude
    * @param radius - Search radius in meters (default: 5000)
+   * @param categoryId - Optional category id; matches that category only, not its children
    * @returns List of nearby businesses
    *
    * @category Business Directory
@@ -10022,11 +10023,18 @@ export class CcPlatformSdk {
   async fetchNearbyBusinesses(
     latitude: number,
     longitude: number,
-    radius = 5000
+    radius = 5000,
+    categoryId?: string
   ): Promise<import("./types/business.js").Business[]> {
+    const params = new URLSearchParams({
+      lat: String(latitude),
+      lng: String(longitude),
+      radius: String(radius),
+    });
+    if (categoryId) params.append("category", categoryId);
     const response = await this.client.get<{
       data: import("./types/business.js").Business[];
-    }>(`/v1/businesses/nearby?lat=${latitude}&lng=${longitude}&radius=${radius}`);
+    }>(`/v1/businesses/nearby?${params.toString()}`);
     return response.data || [];
   }
 

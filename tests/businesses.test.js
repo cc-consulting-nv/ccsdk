@@ -462,6 +462,32 @@ test("searchBusinesses sends no radius when none is given", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// fetchNearbyBusinesses
+// ---------------------------------------------------------------------------
+
+test("fetchNearbyBusinesses sends lat/lng/radius and no category by default", async () => {
+  const { sdk, calls } = createMockSdk({ data: [sampleBusiness] });
+
+  const result = await sdk.fetchNearbyBusinesses(36.17497, -115.13722, 25);
+
+  const url = new URL(calls[0].url);
+  assert.equal(url.pathname, "/v1/businesses/nearby");
+  assert.equal(url.searchParams.get("lat"), "36.17497");
+  assert.equal(url.searchParams.get("lng"), "-115.13722");
+  assert.equal(url.searchParams.get("radius"), "25");
+  assert.equal(url.searchParams.has("category"), false);
+  assert.equal(result.length, 1);
+});
+
+test("fetchNearbyBusinesses sends the category id when given", async () => {
+  const { sdk, calls } = createMockSdk({ data: [] });
+
+  await sdk.fetchNearbyBusinesses(36.17497, -115.13722, 25, "01kstm538ve26y513j20k982n4");
+
+  assert.equal(new URL(calls[0].url).searchParams.get("category"), "01kstm538ve26y513j20k982n4");
+});
+
+// ---------------------------------------------------------------------------
 // fetchApproximateLocation
 // ---------------------------------------------------------------------------
 
