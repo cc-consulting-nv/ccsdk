@@ -7327,6 +7327,11 @@ export class CcPlatformSdk {
       images,
       createdAt: raw.createdAt as string | undefined,
       readAt: raw.readAt as string | null | undefined,
+      reactionCounts:
+        ((raw.postEngagement as Record<string, unknown> | undefined)?.reactionCounts as
+          | Record<string, number>
+          | undefined) ?? (raw.reactionCounts as Record<string, number> | undefined),
+      userReaction: raw.userReaction as string | null | undefined,
     };
   }
 

@@ -1069,8 +1069,35 @@ export interface ChatMessage {
   readAt?: string | null;
   /** True once the author has edited the message */
   edited?: boolean;
+  /** The quoted message, when this message is a reply */
+  replyTo?: ChatReplyTo | null;
+  /** Count of each reaction name (normalized from `postEngagement.reactionCounts`) */
+  reactionCounts?: Record<string, number>;
+  /** The current user's reaction, if any */
+  userReaction?: string | null;
   /** Additional properties from API */
   [key: string]: unknown;
+}
+
+/**
+ * The message a chat reply quotes.
+ *
+ * @category Chat
+ */
+export interface ChatReplyTo {
+  /** ULID of the quoted message */
+  ulid: string;
+  /** Plain-text excerpt (max 140 chars); empty when the message was deleted */
+  body: string;
+  /** True when the quoted message was deleted */
+  isDeleted: boolean;
+  /** Author of the quoted message; null when the account is gone */
+  user: {
+    userId: string;
+    username: string;
+    name?: string | null;
+    avatar?: string | null;
+  } | null;
 }
 
 /**
@@ -1102,6 +1129,10 @@ export interface SendChatMessagePayload {
   body?: string;
   /** Up to 4 media attachments */
   attachments?: ChatAttachment[];
+  /** ULID of a message in the same chat to quote-reply to */
+  reply_to?: string;
+  /** ULIDs of mentioned members (max 50). A mention pushes even when the member muted the chat. */
+  mentions?: string[];
 }
 
 /**
