@@ -199,6 +199,45 @@ test("getChatMessages normalizes image attachments", async () => {
   assert.deepEqual(page.data[0].images, [attachment]);
 });
 
+test("getChatMessages normalizes reactions and keeps replyTo", async () => {
+  const replyTo = {
+    ulid: "01hxmsg0000000000000000002",
+    body: "earlier",
+    isDeleted: false,
+    user: { userId: "01hxusr0000000000000000002", username: "bob", name: "Bob", avatar: null },
+  };
+  const { sdk } = createMockSdk(() => ({
+    body: {
+      data: [
+        samplePost({
+          postEngagement: { reactionCounts: { thumbs_up: 2 } },
+          userReaction: "thumbs_up",
+          replyTo,
+        }),
+      ],
+    },
+  }));
+
+  const page = await sdk.getChatMessages("01hxgrp0000000000000000001");
+  assert.deepEqual(page.data[0].reactionCounts, { thumbs_up: 2 });
+  assert.equal(page.data[0].userReaction, "thumbs_up");
+  assert.deepEqual(page.data[0].replyTo, replyTo);
+});
+
+test("sendChatMessage sends reply_to and mentions", async () => {
+  const { sdk, calls } = createMockSdk(() => ({ body: { data: samplePost() }, status: 201 }));
+
+  await sdk.sendChatMessage("01hxgrp0000000000000000001", {
+    body: "yo",
+    reply_to: "01hxmsg0000000000000000002",
+    mentions: ["01hxusr0000000000000000002"],
+  });
+
+  const sent = JSON.parse(calls[0].init.body);
+  assert.equal(sent.reply_to, "01hxmsg0000000000000000002");
+  assert.deepEqual(sent.mentions, ["01hxusr0000000000000000002"]);
+});
+
 // ---------------------------------------------------------------------------
 // sendChatMessage
 // ---------------------------------------------------------------------------
