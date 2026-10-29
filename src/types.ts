@@ -989,6 +989,8 @@ export interface ChatGroup {
   lastMessageAt?: string;
   /** The most recent message in the group */
   lastMessage?: ChatMessage;
+  /** Push for this chat is muted until this time (ISO 8601); null when not muted */
+  notificationsMutedUntil?: string | null;
   /** Additional properties from API */
   [key: string]: unknown;
 }
@@ -1110,6 +1112,16 @@ export interface SendChatMessagePayload {
 export interface EditChatMessagePayload {
   /** New text content (max 2000 chars) */
   body: string;
+}
+
+/**
+ * Result of {@link CcPlatformSdk.muteChatGroup}.
+ *
+ * @category Chat
+ */
+export interface ChatMuteState {
+  /** Push is muted until this time (ISO 8601); null when not muted */
+  notificationsMutedUntil: string | null;
 }
 
 /**

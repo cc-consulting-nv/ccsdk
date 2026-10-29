@@ -36,6 +36,7 @@ import {
   type ChatAttachment,
   type SendChatMessagePayload,
   type EditChatMessagePayload,
+  type ChatMuteState,
   type CreateChatGroupPayload,
   type AppSettings,
   type NotificationType,
@@ -7177,6 +7178,27 @@ export class CcPlatformSdk {
    */
   async markChatGroupRead(groupUlid: string): Promise<void> {
     await this.client.post(`/v1/chat/groups/${encodeURIComponent(groupUlid)}/read`);
+  }
+
+  /**
+   * Mute push notifications for new messages in a chat group.
+   *
+   * Pass `null` to unmute. To mute forever, pass a far-future time.
+   *
+   * @param groupUlid - The ULID of the chat group
+   * @param until - ISO 8601 time to mute until (must be in the future), or null to unmute
+   * @returns Promise resolving to the stored mute time
+   *
+   * @category Chat
+   */
+  async muteChatGroup(
+    groupUlid: string,
+    until: string | null,
+  ): Promise<ApiEnvelope<ChatMuteState>> {
+    return this.client.post<ApiEnvelope<ChatMuteState>>(
+      `/v1/chat/groups/${encodeURIComponent(groupUlid)}/mute`,
+      { body: { until } },
+    );
   }
 
   /**
