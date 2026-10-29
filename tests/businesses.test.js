@@ -513,7 +513,8 @@ test("fetchApproximateLocation maps the flat response", async () => {
   const result = await sdk.fetchApproximateLocation();
 
   assert.equal(new URL(calls[0].url).pathname, "/v1/geo/approximate");
-  assert.equal(calls[0].init.headers.Authorization, undefined);
+  // Bearer sent so the API can answer with the saved home location.
+  assert.equal(calls[0].init.headers.Authorization, "Bearer test-token");
   assert.deepEqual(result, {
     latitude: 36.1699,
     longitude: -115.1398,
@@ -532,4 +533,77 @@ test("fetchApproximateLocation nulls coordinates when either is missing", async 
   assert.equal(result.latitude, null);
   assert.equal(result.longitude, null);
   assert.equal(result.country, "US");
+});
+
+// ---------------------------------------------------------------------------
+// Claim verification methods
+// ---------------------------------------------------------------------------
+
+test("fetchBusinessClaimMethods unwraps the methods payload", async () => {
+  const payload = { methods: ["phone_sms", "document"], masked_phone: "***-***-4233", website_domain: null };
+  const { sdk, calls } = createMockSdk({ success: true, data: payload });
+
+  const result = await sdk.fetchBusinessClaimMethods("01abc");
+
+  assert.equal(new URL(calls[0].url).pathname, "/v1/businesses/01abc/claim/methods");
+  assert.deepEqual(result, payload);
+});
+
+test("startBusinessClaim posts multipart with the method fields", async () => {
+  const { sdk, calls } = createMockSdk({ pending_id: "p1", method: "domain_email", masked_target: "o***@x.com", expires_at: "", instructions: { message: "m" } }, 201);
+
+  const result = await sdk.startBusinessClaim("01abc", {
+    method: "domain_email",
+    name: "Pat",
+    position: "Owner",
+    email: "owner@x.com",
+  });
+
+  assert.equal(new URL(calls[0].url).pathname, "/v1/businesses/01abc/claim/start");
+  const body = calls[0].init.body;
+  assert.ok(body instanceof FormData);
+  assert.equal(body.get("method"), "domain_email");
+  assert.equal(body.get("email"), "owner@x.com");
+  assert.equal(body.has("document"), false);
+  assert.equal(result.pending_id, "p1");
+});
+
+test("confirmBusinessClaim sends pending_id with the code", async () => {
+  const { sdk, calls } = createMockSdk({ status: "approved", message: "ok" });
+
+  const result = await sdk.confirmBusinessClaim("01abc", "p1", { code: "123456" });
+
+  assert.equal(new URL(calls[0].url).pathname, "/v1/businesses/01abc/claim/confirm");
+  assert.deepEqual(JSON.parse(calls[0].init.body), { pending_id: "p1", code: "123456" });
+  assert.equal(result.status, "approved");
+});
+
+// ---------------------------------------------------------------------------
+// Directory home location
+// ---------------------------------------------------------------------------
+
+test("saveDirectoryHomeLocation PUTs the location and returns it", async () => {
+  const saved = { latitude: 40.9254, longitude: -74.2765, label: "Wayne, NJ", region: "New Jersey" };
+  const { sdk, calls } = createMockSdk(saved);
+
+  const result = await sdk.saveDirectoryHomeLocation({ latitude: 40.9254, longitude: -74.2765, label: "Wayne, NJ", region: "New Jersey" });
+
+  assert.equal(new URL(calls[0].url).pathname, "/v1/me/directory-location");
+  assert.equal(calls[0].init.method, "PUT");
+  assert.deepEqual(result, saved);
+});
+
+test("fetchDirectoryHomeLocation returns null fields when nothing is saved", async () => {
+  const empty = { latitude: null, longitude: null, label: null, region: null };
+  const { sdk } = createMockSdk(empty);
+
+  assert.deepEqual(await sdk.fetchDirectoryHomeLocation(), empty);
+});
+
+test("clearDirectoryHomeLocation sends DELETE", async () => {
+  const { sdk, calls } = createMockSdk({ latitude: null, longitude: null, label: null, region: null });
+
+  await sdk.clearDirectoryHomeLocation();
+
+  assert.equal(calls[0].init.method, "DELETE");
 });

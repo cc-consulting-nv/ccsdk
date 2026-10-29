@@ -10959,6 +10959,127 @@ export class CcPlatformSdk {
     );
   }
 
+  /**
+   * The signed-in user's saved directory home location.
+   * GET /v1/me/directory-location
+   *
+   * Once saved, GET /v1/geo/approximate also returns it (source "home") for
+   * this user.
+   *
+   * @returns The saved location, or all-null fields when none is saved
+   *
+   * @category Business Directory
+   */
+  async fetchDirectoryHomeLocation(): Promise<import("./types/business.js").DirectoryHomeLocation> {
+    const response = await this.client.get<
+      ApiEnvelope<import("./types/business.js").DirectoryHomeLocation> | import("./types/business.js").DirectoryHomeLocation
+    >("/v1/me/directory-location");
+    return this.unwrap(response);
+  }
+
+  /**
+   * Save the signed-in user's directory home location.
+   * PUT /v1/me/directory-location
+   *
+   * @param input - Coordinates, a short label and optional region
+   * @returns The saved location
+   *
+   * @category Business Directory
+   */
+  async saveDirectoryHomeLocation(
+    input: import("./types/business.js").DirectoryHomeLocationInput,
+  ): Promise<import("./types/business.js").DirectoryHomeLocation> {
+    const response = await this.client.put<
+      ApiEnvelope<import("./types/business.js").DirectoryHomeLocation> | import("./types/business.js").DirectoryHomeLocation
+    >("/v1/me/directory-location", { body: input });
+    return this.unwrap(response);
+  }
+
+  /**
+   * Clear the signed-in user's directory home location.
+   * DELETE /v1/me/directory-location
+   *
+   * @category Business Directory
+   */
+  async clearDirectoryHomeLocation(): Promise<void> {
+    await this.client.delete("/v1/me/directory-location");
+  }
+
+  /**
+   * Verification methods available for claiming a listing.
+   * GET /v1/businesses/{businessId}/claim/methods
+   *
+   * @param businessId - Business ULID
+   * @returns Methods plus the masked listing phone and website domain
+   *
+   * @category Business Directory
+   */
+  async fetchBusinessClaimMethods(
+    businessId: string,
+  ): Promise<import("./types/business.js").BusinessClaimMethods> {
+    const response = await this.client.get<
+      ApiEnvelope<import("./types/business.js").BusinessClaimMethods> | import("./types/business.js").BusinessClaimMethods
+    >(`/v1/businesses/${businessId}/claim/methods`);
+    return this.unwrap(response);
+  }
+
+  /**
+   * Start a claim with a verification method (multipart).
+   * POST /v1/businesses/{businessId}/claim/start
+   *
+   * Sends a code by text, call or email, or returns website/DNS instructions,
+   * or uploads the supporting document.
+   *
+   * @param businessId - Business ULID
+   * @param input - Method, claimant details and method-specific fields
+   * @returns pending_id and what the claimant must do next
+   *
+   * @category Business Directory
+   */
+  async startBusinessClaim(
+    businessId: string,
+    input: import("./types/business.js").BusinessClaimStartInput,
+  ): Promise<import("./types/business.js").BusinessClaimStartResponse> {
+    const formData = new FormData();
+    formData.append("method", input.method);
+    formData.append("name", input.name);
+    formData.append("position", input.position);
+    if (input.phone) formData.append("phone", input.phone);
+    if (input.message) formData.append("message", input.message);
+    if (input.email) formData.append("email", input.email);
+    if (input.document) formData.append("document", input.document);
+
+    const response = await this.client.post<
+      ApiEnvelope<import("./types/business.js").BusinessClaimStartResponse> | import("./types/business.js").BusinessClaimStartResponse
+    >(`/v1/businesses/${businessId}/claim/start`, { body: formData });
+    return this.unwrap(response);
+  }
+
+  /**
+   * Confirm a claim: send the code (text/call/email), the emailed link token,
+   * or nothing for website/DNS checks and document claims.
+   * POST /v1/businesses/{businessId}/claim/confirm
+   *
+   * @param businessId - Business ULID
+   * @param pendingId - pending_id from startBusinessClaim
+   * @param proof - `{ code }` or `{ token }`, or omit
+   * @returns `approved` or `pending_review`
+   *
+   * @category Business Directory
+   */
+  async confirmBusinessClaim(
+    businessId: string,
+    pendingId: string,
+    proof: { code?: string; token?: string } = {},
+  ): Promise<import("./types/business.js").BusinessClaimConfirmResponse> {
+    const response = await this.client.post<
+      ApiEnvelope<import("./types/business.js").BusinessClaimConfirmResponse> | import("./types/business.js").BusinessClaimConfirmResponse
+    >(`/v1/businesses/${businessId}/claim/confirm`, {
+      body: { pending_id: pendingId, ...proof },
+    });
+    return this.unwrap(response);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Authenticated Routes - Reviews
   // ─────────────────────────────────────────────────────────────────────────────
@@ -11255,7 +11376,7 @@ export class CcPlatformSdk {
       Partial<import("./types/business.js").ApproximateLocation> & {
         data?: Partial<import("./types/business.js").ApproximateLocation>;
       }
-    >(`/v1/geo/approximate`, { skipAuth: true });
+    >(`/v1/geo/approximate`);
     // Accept either flat or wrapped {data:{...}}, like geocodeCity.
     const body = raw.data ?? raw;
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
