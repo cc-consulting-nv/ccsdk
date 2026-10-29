@@ -3,7 +3,7 @@
  *
  * Covers getChatGroups, getDmConversations, createChatGroup, findOrCreateDm,
  * getChatMessages (pagination + normalization), sendChatMessage,
- * markChatGroupRead, editChatMessage, deleteChatMessage, and getChatUnreadCount — verifying
+ * markChatGroupRead, muteChatGroup, editChatMessage, deleteChatMessage, and getChatUnreadCount — verifying
  * endpoints, payloads, and that the backend envelope/post shapes are
  * normalized into the flat ChatMessage type.
  */
@@ -307,6 +307,34 @@ test("editChatMessage PATCHes the body and returns the edited message", async ()
   assert.equal(JSON.parse(calls[0].init.body).body, "fixed");
   assert.equal(res.data.body, "fixed");
   assert.equal(res.data.edited, true);
+});
+
+test("muteChatGroup POSTs until and returns the stored mute time", async () => {
+  const { sdk, calls } = createMockSdk(() => ({
+    body: { data: { notificationsMutedUntil: "2026-11-01T00:00:00.000000Z" } },
+  }));
+
+  const res = await sdk.muteChatGroup(
+    "01hxgrp0000000000000000001",
+    "2026-11-01T00:00:00Z",
+  );
+  const url = new URL(calls[0].url);
+
+  assert.equal(url.pathname, "/v1/chat/groups/01hxgrp0000000000000000001/mute");
+  assert.equal(calls[0].init.method, "POST");
+  assert.equal(JSON.parse(calls[0].init.body).until, "2026-11-01T00:00:00Z");
+  assert.equal(res.data.notificationsMutedUntil, "2026-11-01T00:00:00.000000Z");
+});
+
+test("muteChatGroup sends until: null to unmute", async () => {
+  const { sdk, calls } = createMockSdk(() => ({
+    body: { data: { notificationsMutedUntil: null } },
+  }));
+
+  const res = await sdk.muteChatGroup("01hxgrp0000000000000000001", null);
+
+  assert.equal(JSON.parse(calls[0].init.body).until, null);
+  assert.equal(res.data.notificationsMutedUntil, null);
 });
 
 // ---------------------------------------------------------------------------
