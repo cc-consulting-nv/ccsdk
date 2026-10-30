@@ -496,6 +496,27 @@ test("fetchNearbyBusinesses sends the category id when given", async () => {
   assert.equal(new URL(calls[0].url).searchParams.get("category"), "01kstm538ve26y513j20k982n4");
 });
 
+test("fetchNearbyBusinesses sends sort when given and omits it otherwise", async () => {
+  const { sdk, calls } = createMockSdk({ data: [] });
+
+  await sdk.fetchNearbyBusinesses(36.17497, -115.13722, 25, undefined, "rating");
+  await sdk.fetchNearbyBusinesses(36.17497, -115.13722, 25);
+
+  assert.equal(new URL(calls[0].url).searchParams.get("sort"), "rating");
+  assert.equal(new URL(calls[0].url).searchParams.has("category"), false);
+  assert.equal(new URL(calls[1].url).searchParams.has("sort"), false);
+});
+
+test("searchBusinesses sends sort when given and omits it otherwise", async () => {
+  const { sdk, calls } = createMockSdk({ data: [], found: 0 });
+
+  await sdk.searchBusinesses("ammo", { radiusKm: 40, sort: "relevance" });
+  await sdk.searchBusinesses("ammo");
+
+  assert.equal(new URL(calls[0].url).searchParams.get("sort"), "relevance");
+  assert.equal(new URL(calls[1].url).searchParams.has("sort"), false);
+});
+
 // ---------------------------------------------------------------------------
 // fetchApproximateLocation
 // ---------------------------------------------------------------------------

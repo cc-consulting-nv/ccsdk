@@ -9937,7 +9937,9 @@ export class CcPlatformSdk {
    *   max 100) around that point, sorted nearest first. `radiusKm` without
    *   both coordinates (and without `city`) searches around the visitor's
    *   approximate location, which the server resolves from Cloudflare edge
-   *   headers, then GeoIP.
+   *   headers, then GeoIP. `sort` is `nearest` (the default with a location),
+   *   `relevance` (best text match, the default without one) or `rating`;
+   *   `nearest` without a location falls back to `relevance`.
    * @returns Paginated list of matching businesses
    *
    * @example
@@ -9968,6 +9970,7 @@ export class CcPlatformSdk {
       radiusKm?: number;
       perPage?: number;
       page?: number;
+      sort?: "nearest" | "relevance" | "rating";
     }
   ): Promise<import("./types/business.js").BusinessListResponse> {
     const params = new URLSearchParams({ q: query });
@@ -9982,6 +9985,7 @@ export class CcPlatformSdk {
     if (filters?.radiusKm != null) params.append("radius", String(Math.round(filters.radiusKm)));
     if (filters?.perPage != null) params.append("per_page", String(filters.perPage));
     if (filters?.page != null) params.append("page", String(filters.page));
+    if (filters?.sort) params.append("sort", filters.sort);
 
     const response = await this.client.get<{
       data: import("./types/business.js").Business[];
@@ -10073,6 +10077,7 @@ export class CcPlatformSdk {
    * @param longitude - User's longitude
    * @param radius - Search radius in whole miles, 1-50 (default: 10)
    * @param categoryId - Optional category id; matches that category only, not its children
+   * @param sort - `nearest` (default) or `rating` (highest rated first, distance breaks ties)
    * @returns List of nearby businesses
    *
    * @category Business Directory
@@ -10081,7 +10086,8 @@ export class CcPlatformSdk {
     latitude: number,
     longitude: number,
     radius = 10,
-    categoryId?: string
+    categoryId?: string,
+    sort?: "nearest" | "rating"
   ): Promise<import("./types/business.js").Business[]> {
     const params = new URLSearchParams({
       lat: String(latitude),
@@ -10089,6 +10095,7 @@ export class CcPlatformSdk {
       radius: String(radius),
     });
     if (categoryId) params.append("category", categoryId);
+    if (sort) params.append("sort", sort);
     const response = await this.client.get<{
       data: import("./types/business.js").Business[];
     }>(`/v1/businesses/nearby?${params.toString()}`);
