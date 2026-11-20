@@ -1411,6 +1411,27 @@ test("D2: SessionManager cookie-mode profile: invalid_grant gets no cookie-only 
   await manager.dispose();
 });
 
+test("SessionManager ignores a shared refreshLockName: each profile keeps its own lock and marker keys", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const manager = new SessionManager({
+    baseUrl,
+    createSessionStore: () => profileStore({ accessToken: jwt("uA", 0), refreshToken: "rt-a" }),
+    registryStore: createStorageProfileRegistry(createMockStorage()),
+    disableCrossTabSync: true,
+    // Plain-JS callers can still pass it; the type Omit alone doesn't stop that.
+    sdkOptions: { storage: createMockStorage(), refreshLockName: "shared-lock" },
+  });
+  const a = manager["createProfileSdk"]("01A");
+  const b = manager["createProfileSdk"]("01B");
+  const staging = manager["createStagingSdk"]();
+
+  const names = [a, b, staging].map((sdk) => sdk["refreshLockName"]);
+  assert.ok(names.every((n) => n !== "shared-lock"), `got ${names.join(", ")}`);
+  assert.equal(new Set(names).size, 3, "every profile and the staging SDK get their own lock");
+  assert.ok(names[0].includes("01A") && names[1].includes("01B"));
+  await manager.dispose();
+});
+
 test("D3: a sign-out during the cookie retry: null, no throw, onUnauthorized not called", async () => {
   setBrowser({ locks: fakeLocks() });
   let unauthorized = 0;

@@ -2494,7 +2494,7 @@ export class CcPlatformSdk {
   /**
    * Install tokens from a successful `/auth/refresh` and record a non-secret
    * "last successful refresh at" timestamp (epoch ms, never a token value) that
-   * other tabs read for diagnostics and the cookie-mode retry decision.
+   * other tabs read for the cookie-mode retry decision.
    */
   private async installRefreshedSession(tokens: AuthTokens): Promise<void> {
     await this.updateSession(tokens);

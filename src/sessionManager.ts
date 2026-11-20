@@ -156,6 +156,7 @@ export type SharedSdkOptions = Omit<
   | "dbName"
   | "onRefreshTokens"
   | "cookieOnlyRefreshRetry"
+  | "refreshLockName"
 > & {
   /**
    * Shared refresh handler. Replaces the per-profile default, so it is told
@@ -715,6 +716,8 @@ export class SessionManager {
       dbName: `${this.dbNamePrefix}:staging`,
       // One cookie jar for every profile: a cookie-only refresh could rotate another profile's session.
       cookieOnlyRefreshRetry: false,
+      // Lock and timeout-marker keys must stay per profile (derived from dbName).
+      refreshLockName: undefined,
       onRefreshTokens: undefined,
       onUnauthorized: undefined,
     });
@@ -741,6 +744,8 @@ export class SessionManager {
       // Profiles share one refresh cookie, so no cookie-only refresh retry:
       // it could rotate another profile's session.
       cookieOnlyRefreshRetry: false,
+      // Lock and timeout-marker keys must stay per profile (derived from dbName).
+      refreshLockName: undefined,
       onRefreshTokens: shared.onRefreshTokens
         ? (context) => shared.onRefreshTokens!({ ...context, profileUlid, sdk: holder.sdk! })
         : (async () => {
