@@ -120,6 +120,9 @@ import {
  */
 const OAUTH_INVALID_GRANT = "invalid_grant";
 
+/** `reason` the API adds to an `invalid_grant` when the refresh token was rotated by a concurrent refresh. */
+const REFRESH_TOKEN_ROTATED = "refresh_token_rotated";
+
 /**
  * Whether a failed refresh means *this session is over* rather than *try again
  * later*. Only two shapes qualify:
@@ -578,9 +581,18 @@ export interface CcPlatformSdkOptions {
    * Name of the Web Locks API lock that serialises `/auth/refresh` across tabs
    * of the same origin. Default: `cc-refresh:<baseUrl>`, so SDK instances for
    * different API hosts (tenants) in one origin don't block each other.
-   * Ignored where `navigator.locks` is unavailable (Node, SSR, older Safari).
+   * Ignored when the lock is not used (see `crossTabRefreshLock`).
    */
   refreshLockName?: string;
+  /**
+   * Whether `refreshToken()` takes the cross-tab Web Locks lock.
+   * `'auto'` (default): only in a browser-like environment (`window` and
+   * `document` exist, which includes Capacitor/WebViews) that has
+   * `navigator.locks`. Node also ships `navigator.locks`, but there one
+   * process-wide lock would serialise every user's refresh on an SSR server.
+   * `true`: use `navigator.locks` whenever it exists. `false`: never lock.
+   */
+  crossTabRefreshLock?: boolean | "auto";
   /**
    * How long to wait for the cross-tab refresh lock before refreshing without
    * it, so a hung tab can't block the others. Default: 10000 ms.
@@ -1918,11 +1930,14 @@ export class CcPlatformSdk {
    * platform has one. Passport rotates refresh tokens, so two tabs refreshing
    * with the same token/cookie at once means one gets `invalid_grant`.
    * Serialising them makes the second tab send the already-rotated token.
-   * Without `navigator.locks`, or when the lock isn't granted within
+   * Outside a browser-like environment (see `crossTabRefreshLock`), without
+   * `navigator.locks`, or when the lock isn't granted within
    * `refreshLockTimeoutMs`, `fn` runs unlocked (the pre-lock behaviour).
    */
   private async withRefreshLock<T>(fn: () => Promise<T>): Promise<T> {
-    const locks = globalThis.navigator?.locks;
+    const mode = this.options.crossTabRefreshLock ?? "auto";
+    const browserLike = typeof window !== "undefined" && typeof document !== "undefined";
+    const locks = mode === true || (mode === "auto" && browserLike) ? globalThis.navigator?.locks : undefined;
     if (typeof locks?.request !== "function") return fn();
 
     const controller = new AbortController();
@@ -1958,34 +1973,38 @@ export class CcPlatformSdk {
   }
 
   private async refreshUnderLock(before: AuthTokens | null, epochAtStart: number): Promise<AuthTokens | null> {
+    // Waiting on the lock can take up to refreshLockTimeoutMs. A sign-out (and
+    // maybe a new sign-in) in that window must not get a refresh POSTed with
+    // the old cookie or the new session's refresh token, which would rotate it.
+    const signedOut = () => this.signOutInProgress || this.remoteSignedOut || this.signOutEpoch !== epochAtStart;
+    if (signedOut()) return null;
+
     // Re-read shared storage now that we hold the lock: another tab may have
     // rotated the refresh token while we waited. Its new refresh token is what
     // we send; and if it also left a live access token this tab can see
-    // (storage providers / a sessionStore that persists bearers), we're done.
+    // (storage providers / a sessionStore that persists bearers) for the same
+    // user, we're done. Without a known access token we can't tell whose
+    // tokens they are, so we refresh over the network instead.
     const currentTokens = (await this.restoreStoredSession()) ?? before;
+    if (signedOut()) return null;
     if (
+      before?.accessToken &&
       currentTokens?.refreshToken &&
-      currentTokens.refreshToken !== before?.refreshToken &&
-      currentTokens.accessToken !== before?.accessToken &&
+      currentTokens.refreshToken !== before.refreshToken &&
+      currentTokens.accessToken !== before.accessToken &&
+      sameSubject(before.accessToken, currentTokens.accessToken) &&
       this.isTokenValid(currentTokens)
     ) {
-      return this.signOutEpoch === epochAtStart ? currentTokens : null;
+      return currentTokens;
     }
 
-    // Always send the refresh token in the body when we have one, even with
-    // useRefreshCookie. Server-side multi-tenant guards on customer-owned
-    // parent domains refuse the cookie-only path (cross-tenant cookie safety),
-    // so the body is the reliable carrier. The httpOnly cookie still rides
-    // along via credentials: 'include' for back-compat with cookie-only hosts.
-    const body = currentTokens?.refreshToken
-      ? { refresh_token: currentTokens.refreshToken }
-      : undefined;
-
-    const attemptStartedAt = Date.now();
-    try {
+    // POST /auth/refresh and install the result. Throws the request error;
+    // returns null when a sign-out began meanwhile or the server answered
+    // for another user.
+    const postRefresh = async (refreshBody: { refresh_token: string } | undefined): Promise<AuthTokens | null> => {
       // Note: /auth/refresh endpoint doesn't have /v1 prefix in the API
       const response = await this.client.post<Record<string, unknown>>("/auth/refresh", {
-        body,
+        body: refreshBody,
         skipAuth: true,
         credentials: this.useRefreshCookie ? "include" : undefined,
       });
@@ -2002,6 +2021,20 @@ export class CcPlatformSdk {
       if (!sameSubject(currentTokens?.accessToken, tokens.accessToken)) return null;
       await this.installRefreshedSession(tokens);
       return tokens;
+    };
+
+    // Always send the refresh token in the body when we have one, even with
+    // useRefreshCookie. Server-side multi-tenant guards on customer-owned
+    // parent domains refuse the cookie-only path (cross-tenant cookie safety),
+    // so the body is the reliable carrier. The httpOnly cookie still rides
+    // along via credentials: 'include' for back-compat with cookie-only hosts.
+    const body = currentTokens?.refreshToken
+      ? { refresh_token: currentTokens.refreshToken }
+      : undefined;
+
+    const attemptStartedAt = Date.now();
+    try {
+      return await postRefresh(body);
     } catch (error) {
       if (error instanceof InvalidAuthResponseError) {
         return null;
@@ -2017,16 +2050,7 @@ export class CcPlatformSdk {
       if (status >= 500) {
         try {
           await new Promise((r) => setTimeout(r, 1000));
-          const retryResponse = await this.client.post<Record<string, unknown>>("/auth/refresh", {
-            body,
-            skipAuth: true,
-            credentials: this.useRefreshCookie ? "include" : undefined,
-          });
-          const tokens = this.extractAuthTokens(retryResponse, "/auth/refresh");
-          if (this.signOutEpoch !== epochAtStart) return null;
-          if (!sameSubject(currentTokens?.accessToken, tokens.accessToken)) return null;
-          await this.installRefreshedSession(tokens);
-          return tokens;
+          return await postRefresh(body);
         } catch {
           // Retry also failed — fall through to return null
         }
@@ -2039,16 +2063,7 @@ export class CcPlatformSdk {
       // below; a single-shot blip succeeds here and the session survives.
       if (isAmbiguousAuthRejection(status, (error as { payload?: unknown })?.payload)) {
         try {
-          const retryResponse = await this.client.post<Record<string, unknown>>("/auth/refresh", {
-            body,
-            skipAuth: true,
-            credentials: this.useRefreshCookie ? "include" : undefined,
-          });
-          const tokens = this.extractAuthTokens(retryResponse, "/auth/refresh");
-          if (this.signOutEpoch !== epochAtStart) return null;
-          if (!sameSubject(currentTokens?.accessToken, tokens.accessToken)) return null;
-          await this.installRefreshedSession(tokens);
-          return tokens;
+          return await postRefresh(body);
         } catch (retryError) {
           // The retry's error is the freshest evidence — a shaped rejection
           // here is authoritative even when the first attempt was ambiguous.
@@ -2115,33 +2130,27 @@ export class CcPlatformSdk {
       // `invalid_grant` here usually means another tab (or one that skipped the
       // lock) rotated the cookie under us. Retry exactly once: the browser now
       // holds the rotated cookie. Skip the wait when a successful refresh has
-      // already been recorded since this attempt started.
+      // already been recorded since this attempt started. Only a 400/401: a
+      // 5xx with `retryable: true` already had its own retry above.
       const lastPayload = (lastError as { payload?: unknown })?.payload as
         | { error?: unknown; reason?: unknown; retryable?: unknown }
         | undefined;
       if (
         this.useRefreshCookie &&
-        this.signOutEpoch === epochAtStart &&
+        !signedOut() &&
+        (lastStatus === 400 || lastStatus === 401) &&
         (lastPayload?.error === OAUTH_INVALID_GRANT ||
-          lastPayload?.reason === "refresh_token_rotated" ||
+          lastPayload?.reason === REFRESH_TOKEN_ROTATED ||
           lastPayload?.retryable === true)
       ) {
         if (this.lastRefreshAt() < attemptStartedAt) {
           await new Promise((r) => setTimeout(r, this.options.refreshRetryDelayMs ?? 400));
         }
-        if (this.signOutEpoch !== epochAtStart) return null;
+        if (signedOut()) return null;
         const retryTokens = (await this.restoreStoredSession()) ?? currentTokens;
+        if (signedOut()) return null;
         try {
-          const retryResponse = await this.client.post<Record<string, unknown>>("/auth/refresh", {
-            body: retryTokens?.refreshToken ? { refresh_token: retryTokens.refreshToken } : undefined,
-            skipAuth: true,
-            credentials: "include",
-          });
-          const tokens = this.extractAuthTokens(retryResponse, "/auth/refresh");
-          if (this.signOutEpoch !== epochAtStart) return null;
-          if (!sameSubject(currentTokens?.accessToken, tokens.accessToken)) return null;
-          await this.installRefreshedSession(tokens);
-          return tokens;
+          return await postRefresh(retryTokens?.refreshToken ? { refresh_token: retryTokens.refreshToken } : undefined);
         } catch (retryError) {
           if (retryError instanceof InvalidAuthResponseError) return null;
           lastError = retryError;

@@ -608,8 +608,11 @@ for (const [label, sub, installed] of [
 test("refreshToken dedupes concurrent refresh calls", async () => {
   let resolveRefresh;
   const calls = [];
+  let fetchCalled;
+  const reachedFetch = new Promise((r) => (fetchCalled = r));
   const fetchImpl = async (url, init) => {
     calls.push({ url, init });
+    fetchCalled();
     return await new Promise((resolve) => {
       resolveRefresh = () =>
         resolve(
@@ -642,8 +645,7 @@ test("refreshToken dedupes concurrent refresh calls", async () => {
   const first = sdk.refreshToken();
   const second = sdk.refreshToken();
 
-  // Let the refresh reach fetch (acquiring navigator.locks is async).
-  await new Promise((r) => setTimeout(r, 10));
+  await reachedFetch;
   assert.equal(calls.length, 1);
   resolveRefresh();
 

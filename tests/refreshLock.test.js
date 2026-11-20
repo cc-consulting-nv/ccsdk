@@ -10,14 +10,30 @@ import { CcPlatformSdk, AuthSessionExpiredError } from "../dist/platformSdk.js";
 import { HybridTokenProvider, MemoryTokenProvider, StorageTokenProvider } from "../dist/auth.js";
 
 const baseUrl = "https://api.example.com";
-const realNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+const GLOBALS = ["navigator", "window", "document"];
+const realGlobals = Object.fromEntries(GLOBALS.map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
 
+function setGlobal(key, value) {
+  Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+}
+
+/** Node 26 has navigator.locks but no window/document: plain-Node setup. */
 function setNavigator(value) {
-  Object.defineProperty(globalThis, "navigator", { value, configurable: true, writable: true });
+  setGlobal("navigator", value);
+}
+
+/** Browser-like setup: fake window + document, so the SDK uses the lock. */
+function setBrowser(navigatorValue) {
+  setGlobal("window", {});
+  setGlobal("document", {});
+  setGlobal("navigator", navigatorValue);
 }
 
 test.afterEach(() => {
-  if (realNavigator) Object.defineProperty(globalThis, "navigator", realNavigator);
+  for (const k of GLOBALS) {
+    if (realGlobals[k]) Object.defineProperty(globalThis, k, realGlobals[k]);
+    else delete globalThis[k];
+  }
 });
 
 /** Serialising fake of navigator.locks: one holder per name, FIFO queue. */
@@ -92,7 +108,7 @@ function rotatingServer(initial = "rt-0") {
 
 test("with navigator.locks, two instances refresh one after another, not in parallel", async () => {
   const locks = fakeLocks();
-  setNavigator({ locks });
+  setBrowser({ locks });
   const storage = createMockStorage();
   const server = rotatingServer();
   const mk = () =>
@@ -117,7 +133,7 @@ test("with navigator.locks, two instances refresh one after another, not in para
 });
 
 test("storage mode: second instance reuses the pair another tab stored, no network call", async () => {
-  setNavigator({ locks: fakeLocks() });
+  setBrowser({ locks: fakeLocks() });
   const storage = createMockStorage();
   storage.setItem("auth_tokens", JSON.stringify({ accessToken: "at-0", refreshToken: "rt-0" }));
   const server = rotatingServer();
@@ -170,7 +186,7 @@ test("without navigator.locks, behaviour matches today: per-instance dedupe only
 });
 
 test("lock timeout: refresh proceeds without the lock", async () => {
-  setNavigator({ locks: hungLocks() });
+  setBrowser({ locks: hungLocks() });
   const storage = createMockStorage();
   const server = rotatingServer();
   const sdk = new CcPlatformSdk({
@@ -189,7 +205,7 @@ test("lock timeout: refresh proceeds without the lock", async () => {
 
 test("refreshLockName option overrides the default lock name", async () => {
   const locks = fakeLocks();
-  setNavigator({ locks });
+  setBrowser({ locks });
   const server = rotatingServer();
   const storage = createMockStorage();
   const sdk = new CcPlatformSdk({
@@ -228,7 +244,7 @@ function cookieSdk(responses, extra = {}) {
 }
 
 test("cookie mode: invalid_grant then 200 retries once after the delay, no sign-out", async () => {
-  setNavigator({ locks: fakeLocks() });
+  setBrowser({ locks: fakeLocks() });
   const { sdk, calls, storage } = cookieSdk([
     [400, { error: "invalid_grant", reason: "refresh_token_rotated", retryable: true }],
     [200, { accessToken: "at-1", expiresAt: inAnHour() }],
@@ -252,7 +268,7 @@ test("cookie mode: invalid_grant then 200 retries once after the delay, no sign-
 });
 
 test("cookie mode: invalid_grant twice means exactly 2 calls, then the existing sign-out", async () => {
-  setNavigator({ locks: fakeLocks() });
+  setBrowser({ locks: fakeLocks() });
   const { sdk, calls } = cookieSdk([[400, { error: "invalid_grant" }]]);
 
   await assert.rejects(sdk.refreshTokenOrThrow(), AuthSessionExpiredError);
@@ -262,7 +278,7 @@ test("cookie mode: invalid_grant twice means exactly 2 calls, then the existing 
 });
 
 test("cookie mode: a shaped 401 without invalid_grant is not retried", async () => {
-  setNavigator({ locks: fakeLocks() });
+  setBrowser({ locks: fakeLocks() });
   const { sdk, calls } = cookieSdk([[401, { message: "Unauthenticated." }]]);
 
   await assert.rejects(sdk.refreshTokenOrThrow(), AuthSessionExpiredError);
@@ -270,7 +286,7 @@ test("cookie mode: a shaped 401 without invalid_grant is not retried", async () 
 });
 
 test("cookie mode: a network error is not retried by the invalid_grant path", async () => {
-  setNavigator({ locks: fakeLocks() });
+  setBrowser({ locks: fakeLocks() });
   let n = 0;
   const sdk = new CcPlatformSdk({
     baseUrl,
@@ -286,4 +302,199 @@ test("cookie mode: a network error is not retried by the invalid_grant path", as
 
   assert.equal(await sdk.refreshToken(), null, "transient, as before");
   assert.equal(n, 1);
+});
+
+/** A lock held by another tab until `release()`; then it serialises normally. */
+function gatedLocks() {
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const requested = [];
+  return {
+    requested,
+    release: () => release(),
+    request(name, options, cb) {
+      requested.push({ name, mode: options.mode });
+      return gate.then(() => cb());
+    },
+  };
+}
+
+const jwt = (sub, jti) =>
+  `h.${Buffer.from(JSON.stringify({ sub, jti })).toString("base64url")}.s`;
+
+const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+
+function countingFetch(responder) {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    const body = init?.body ? JSON.parse(init.body) : {};
+    calls.push({ url: String(url), refreshToken: body.refresh_token, at: Date.now() });
+    return responder(String(url), calls.length);
+  };
+  return { calls, fetchImpl, refreshCalls: () => calls.filter((c) => c.url.endsWith("/auth/refresh") && !c.url.includes("/v1/")) };
+}
+
+const ok = (body) => new Response(JSON.stringify(body), { status: 200 });
+
+for (const kind of ["local", "remote"]) {
+  test(`${kind} sign-out while waiting on the lock: no /auth/refresh, result null`, async () => {
+    const locks = gatedLocks();
+    setBrowser({ locks });
+    const storage = createMockStorage();
+    const f = countingFetch(() => ok({ accessToken: "at-1", refreshToken: "rt-1", expiresAt: inAnHour() }));
+    const sdk = new CcPlatformSdk({
+      baseUrl,
+      fetchImpl: f.fetchImpl,
+      storage,
+      tokenProvider: new HybridTokenProvider(storage, { accessToken: "at-0", refreshToken: "rt-0" }),
+    });
+
+    const pending = sdk.refreshToken();
+    await tick();
+    assert.equal(locks.requested.length, 1, "waiting on the held lock");
+
+    const signedOut = kind === "local" ? sdk.logout().catch(() => {}) : sdk.onRemoteSignOut();
+    locks.release();
+
+    assert.equal(await pending, null);
+    await signedOut;
+    assert.equal(f.refreshCalls().length, 0, "no refresh after sign-out");
+  });
+}
+
+test("sign out and back in while waiting: stale refresh doesn't touch the new session", async () => {
+  const locks = gatedLocks();
+  setBrowser({ locks });
+  const storage = createMockStorage();
+  const f = countingFetch(() => ok({ accessToken: "at-x", refreshToken: "rt-x", expiresAt: inAnHour() }));
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl: f.fetchImpl,
+    storage,
+    tokenProvider: new HybridTokenProvider(storage, { accessToken: "at-old", refreshToken: "rt-old" }),
+  });
+
+  const pending = sdk.refreshToken();
+  await tick();
+  sdk.onRemoteSignOut();
+  await sdk.setSession({ accessToken: "at-new", refreshToken: "rt-new" });
+  locks.release();
+
+  assert.equal(await pending, null);
+  assert.equal(f.refreshCalls().length, 0, "new session's refresh token not sent");
+  assert.equal(sdk.getTokens().accessToken, "at-new");
+  assert.equal(storage.getItem("refresh_token"), "rt-new");
+});
+
+test("plain Node (no window/document): navigator.locks present but never requested", async () => {
+  const locks = fakeLocks();
+  setNavigator({ locks });
+  const storage = createMockStorage();
+  const server = rotatingServer();
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl: server.fetchImpl,
+    storage,
+    tokenProvider: new HybridTokenProvider(storage, { accessToken: "at-0", refreshToken: "rt-0" }),
+  });
+
+  assert.equal((await sdk.refreshToken())?.accessToken, "at-1");
+  assert.equal(locks.requested.length, 0);
+});
+
+test("crossTabRefreshLock: true forces the lock in Node, false disables it in a browser", async () => {
+  const forced = fakeLocks();
+  setNavigator({ locks: forced });
+  const s1 = createMockStorage();
+  await new CcPlatformSdk({
+    baseUrl,
+    fetchImpl: rotatingServer().fetchImpl,
+    storage: s1,
+    crossTabRefreshLock: true,
+    tokenProvider: new HybridTokenProvider(s1, { accessToken: "at-0", refreshToken: "rt-0" }),
+  }).refreshToken();
+  assert.equal(forced.requested.length, 1);
+
+  const off = fakeLocks();
+  setBrowser({ locks: off });
+  const s2 = createMockStorage();
+  await new CcPlatformSdk({
+    baseUrl,
+    fetchImpl: rotatingServer().fetchImpl,
+    storage: s2,
+    crossTabRefreshLock: false,
+    tokenProvider: new HybridTokenProvider(s2, { accessToken: "at-0", refreshToken: "rt-0" }),
+  }).refreshToken();
+  assert.equal(off.requested.length, 0);
+});
+
+test("reuse: tokens another tab stored for a different user are not adopted", async () => {
+  const locks = gatedLocks();
+  setBrowser({ locks });
+  const storage = createMockStorage();
+  storage.setItem("auth_tokens", JSON.stringify({ accessToken: jwt("u1", 1), refreshToken: "rt-0" }));
+  // Server rotates for u1; the u2 pair must not be returned without asking it.
+  const f = countingFetch(() => ok({ accessToken: jwt("u1", 2), refreshToken: "rt-1", expiresAt: inAnHour() }));
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl: f.fetchImpl,
+    storage,
+    tokenProvider: new StorageTokenProvider(storage),
+  });
+
+  const pending = sdk.refreshToken();
+  await tick();
+  const other = { accessToken: jwt("u2", 1), refreshToken: "rt-u2", expiresAt: inAnHour() };
+  storage.setItem("auth_tokens", JSON.stringify(other));
+  locks.release();
+  const result = await pending;
+
+  assert.equal(f.refreshCalls().length, 1, "went to the network instead of adopting");
+  assert.notEqual(result?.accessToken, other.accessToken);
+});
+
+test("cookie mode: a 5xx with retryable: true gets only the 5xx retry, not the cookie retry", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const { sdk, calls } = cookieSdk([[503, { retryable: true }]]);
+
+  assert.equal(await sdk.refreshTokenOrThrow(), null, "transient, as before");
+  assert.equal(calls.length, 2, "original + the existing 5xx retry");
+});
+
+test("cookie mode: skips the retry delay when another tab refreshed since the attempt started", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const { sdk, calls, storage } = cookieSdk(
+    [
+      [400, { error: "invalid_grant" }],
+      [200, { accessToken: "at-1", expiresAt: inAnHour() }],
+    ],
+    { refreshRetryDelayMs: 5000 },
+  );
+  // Another tab records a successful refresh right after our attempt starts.
+  const origGet = storage.getItem;
+  storage.getItem = (key) =>
+    key.endsWith(":last-refresh-at") && calls.length ? String(calls[0].at + 1) : origGet(key);
+
+  const started = Date.now();
+  const result = await sdk.refreshTokenOrThrow();
+
+  assert.equal(result?.accessToken, "at-1");
+  assert.equal(calls.length, 2);
+  assert.ok(Date.now() - started < 1000, "did not wait refreshRetryDelayMs");
+});
+
+test("cookie mode: sign-out during the retry delay means no retry", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const { sdk, calls } = cookieSdk([
+    [400, { error: "invalid_grant" }],
+    [200, { accessToken: "at-1", expiresAt: inAnHour() }],
+  ], { refreshRetryDelayMs: 50 });
+
+  const pending = sdk.refreshTokenOrThrow();
+  while (calls.length === 0) await tick(1);
+  await tick(10);
+  sdk.onRemoteSignOut();
+
+  assert.equal(await pending, null);
+  assert.equal(calls.length, 1, "retry not sent after sign-out");
 });

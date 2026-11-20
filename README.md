@@ -204,16 +204,18 @@ In this mode, login/logout/refresh auth calls include `credentials: "include"`, 
 
 ### Cross-Tab Refresh
 
-The API rotates refresh tokens, so two tabs calling `/auth/refresh` with the same token or cookie at once leave one of them with `invalid_grant`. Where the Web Locks API exists (`navigator.locks`), `refreshToken()` holds an exclusive lock around the network call, so tabs of the same origin refresh one at a time. Within a tab, concurrent refreshes still share one in-flight call (and one lock request).
+The API rotates refresh tokens, so two tabs calling `/auth/refresh` with the same token or cookie at once leave one of them with `invalid_grant`. In a browser (including Capacitor/WebViews) with the Web Locks API (`navigator.locks`), `refreshToken()` holds an exclusive lock around the network call, so tabs of the same origin refresh one at a time. Within a tab, concurrent refreshes still share one in-flight call (and one lock request).
 
-- After getting the lock, the SDK re-reads stored tokens. If another tab rotated the refresh token, the new one is sent. If that tab also left a live access token this tab can read (`StorageTokenProvider`, or a `sessionStore` that persists bearers), no request is made.
-- Without `navigator.locks` (Node, SSR, older Safari) refresh runs unlocked, as before.
+- After getting the lock, the SDK re-reads stored tokens. If another tab rotated the refresh token, the new one is sent. If that tab also left a live access token for the same user (JWT `sub`) this tab can read (`StorageTokenProvider`, or a `sessionStore` that persists bearers), no request is made. With no access token to compare (cookie mode, after a reload), the SDK refreshes over the network.
+- If a sign-out (local or from another tab) happens while waiting for the lock or for the cookie-mode retry delay, the refresh returns `null` without calling `/auth/refresh`.
+- The lock is only used where `window` and `document` exist. Node also has `navigator.locks`, but on a server one process-wide lock would serialise every user's refresh, so Node/SSR refreshes run unlocked, as do browsers without `navigator.locks` (older Safari). `crossTabRefreshLock` overrides this.
 - If the lock isn't granted within `refreshLockTimeoutMs` (default 10000), the refresh runs without it.
-- Cookie mode only: if a refresh answers `invalid_grant` (or `reason: "refresh_token_rotated"` / `retryable: true`), the SDK waits `refreshRetryDelayMs` (default 400) and retries once. A second failure signs out as before. Network errors and a 401 without `invalid_grant` are not retried by this path.
+- Cookie mode only: if a refresh answers 400 or 401 with `invalid_grant` (or `reason: "refresh_token_rotated"` / `retryable: true`), the SDK waits `refreshRetryDelayMs` (default 400) and retries once. A second failure signs out as before. Network errors, 5xx (which have their own single retry) and a 401 without `invalid_grant` are not retried by this path.
 - Each successful refresh writes `<lock name>:last-refresh-at` (epoch ms, no token values) to the SDK's storage.
 
 | Option | Default | |
 |--------|---------|-|
+| `crossTabRefreshLock` | `'auto'` | `'auto'`: lock only in a browser-like environment. `true`: lock wherever `navigator.locks` exists, Node included. `false`: never lock. |
 | `refreshLockName` | `cc-refresh:<baseUrl>` | Lock name. The default includes the API base URL so SDKs for different API hosts in one origin don't wait on each other. |
 | `refreshLockTimeoutMs` | `10000` | Max wait for the lock before refreshing without it. |
 | `refreshRetryDelayMs` | `400` | Cookie mode: delay before the single `invalid_grant` retry. |
