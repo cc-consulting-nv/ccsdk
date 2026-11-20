@@ -1054,7 +1054,9 @@ test("refreshToken does not adopt in useRefreshCookie mode when no refresh token
   // adopted unconditionally.
   const sessionStore = createMockSessionStore({ accessToken: "old-access-token" });
 
-  const fetchImpl = async () => {
+  const bodies = [];
+  const fetchImpl = async (_url, init) => {
+    bodies.push(init?.body ? JSON.parse(init.body) : {});
     await sessionStore.saveTokens({
       accessToken: "unrelated-access-token",
       refreshToken: "unrelated-refresh-token",
@@ -1067,7 +1069,11 @@ test("refreshToken does not adopt in useRefreshCookie mode when no refresh token
   const result = await sdk.refreshToken();
 
   assert.equal(result, null, "no refresh token sent means no rotation was lost");
-  assert.ok(!sdk.isAuthenticated());
+  // The stored pair's owner can't be verified (opaque bearer), so the cookie
+  // retry sends no body and the unrelated session is neither adopted, POSTed
+  // nor wiped.
+  assert.ok(bodies.every((b) => !("refresh_token" in b)), "unrelated refresh token never sent");
+  assert.equal(sessionStore.getSnapshot().refreshToken, "unrelated-refresh-token");
 });
 
 test("refreshToken still clears on a 403 carrying an invalid_grant payload", async () => {

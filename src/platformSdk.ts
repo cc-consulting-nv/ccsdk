@@ -783,6 +783,13 @@ export class CcPlatformSdk {
   // session installed through updateSession() (login/setSession) — NOT by
   // restoreSession(), which could be re-loading the stale store.
   private remoteSignedOut = false;
+  /**
+   * A `/auth/refresh` POST timed out, so the server may have rotated the
+   * refresh token we sent and we never saw the new pair. The next
+   * `invalid_grant` gets one transient pass. Mirrored (as a timestamp, never a
+   * token) under `refreshTimeoutAtKey` so other tabs get the same pass.
+   */
+  private refreshMayHaveRotated = false;
 
   // Cross-tab sign-out propagation. Tabs share IndexedDB + localStorage, so
   // a sign-out in one tab must fence the others before their in-flight
@@ -2029,6 +2036,30 @@ export class CcPlatformSdk {
     }
   }
 
+  /** Key in `storage` for the non-secret "a refresh POST timed out at" epoch ms. */
+  private get refreshTimeoutAtKey(): string {
+    return `${this.refreshLockName}:refresh-timeout-at`;
+  }
+
+  private setRefreshTimeoutMarker(on: boolean): void {
+    this.refreshMayHaveRotated = on;
+    try {
+      if (on) this.storage.setItem(this.refreshTimeoutAtKey, String(Date.now()));
+      else this.storage.removeItem(this.refreshTimeoutAtKey);
+    } catch {
+      /* storage unavailable: the in-memory flag still covers this instance */
+    }
+  }
+
+  private hasRefreshTimeoutMarker(): boolean {
+    if (this.refreshMayHaveRotated) return true;
+    try {
+      return Boolean(this.storage.getItem(this.refreshTimeoutAtKey));
+    } catch {
+      return false;
+    }
+  }
+
   private async refreshUnderLock(before: AuthTokens | null, epochAtStart: number): Promise<AuthTokens | null> {
     // Waiting on the lock can take up to the lock wait. A sign-out (and
     // maybe a new sign-in) in that window must not get a refresh POSTed with
@@ -2039,12 +2070,21 @@ export class CcPlatformSdk {
     // Re-read shared storage now that we hold the lock: another tab may have
     // rotated the refresh token while we waited. Its new refresh token is what
     // we send; and if it also left a live access token this tab can see
-    // (storage providers / a sessionStore that persists bearers) for the same
-    // user, we're done. Without a known access token we can't tell whose
-    // tokens they are, so we refresh over the network instead.
-    // No fallback to `before`: if another tab cleared the session while we
-    // waited, resurrecting its refresh token would undo that sign-out.
-    const currentTokens = await this.restoreStoredSession();
+    // (storage providers / a sessionStore that persists bearers) whose JWT
+    // `sub` matches ours, we're done. Without a decodable access token we
+    // can't tell whose tokens they are, so we refresh over the network instead.
+    // The re-read doesn't use `before` directly, but restoreStoredSession()
+    // itself falls back to the in-memory tokens when a sessionStore comes back
+    // empty. If another tab cleared the session that costs one POST with the
+    // old refresh token, which the server rejects; it doesn't resurrect it.
+    // A throwing store read is transient: null, never a sign-out.
+    let currentTokens: AuthTokens | null;
+    try {
+      currentTokens = await this.restoreStoredSession();
+    } catch (error) {
+      this.log("[refresh] token store read failed", error);
+      return null;
+    }
     if (signedOut()) return null;
     if (!currentTokens?.refreshToken && !this.useRefreshCookie) return null;
     if (
@@ -2052,22 +2092,28 @@ export class CcPlatformSdk {
       currentTokens?.refreshToken &&
       currentTokens.refreshToken !== before.refreshToken &&
       currentTokens.accessToken !== before.accessToken &&
-      sameSubject(before.accessToken, currentTokens.accessToken) &&
+      verifiedSameSubject(before.accessToken, currentTokens.accessToken) &&
       this.isTokenValid(currentTokens)
     ) {
+      this.setRefreshTimeoutMarker(false);
       return currentTokens;
     }
+    // Captured before any POST: a timeout during this refresh only buys the
+    // *next* refresh a pass, never this one.
+    const mayHaveRotated = this.hasRefreshTimeoutMarker();
 
     // POST /auth/refresh and install the result. Throws the request error;
     // returns null when a sign-out began meanwhile or the server answered
     // for another user.
     // The request is aborted after refreshRequestTimeoutMs, or sooner when the
     // hold budget runs out; the TimeoutError has no status, so it lands in the
-    // transient (return null) path. The budget and the POST cap bound how long
-    // this tab holds the lock, which is what the lock wait is sized against.
+    // transient (return null) path. The budget bounds how long this tab holds
+    // the lock, which is what the lock wait is sized against.
+    // ponytail: no runtime POST counter. The paths below send at most
+    // MAX_REFRESH_POSTS (first try, one 5xx/ambiguous-401 retry, one
+    // adopt-or-cookie retry); the budget is the backstop if that changes.
     const { requestTimeoutMs, retryDelayMs, holdBudgetMs } = this.refreshTimings;
     const deadline = Date.now() + holdBudgetMs;
-    let posts = 0;
     const timeoutError = (message: string) => {
       const err = new Error(message);
       err.name = "TimeoutError";
@@ -2091,7 +2137,7 @@ export class CcPlatformSdk {
     };
     const postRefresh = async (refreshBody: { refresh_token: string } | undefined): Promise<AuthTokens | null> => {
       const remainingMs = deadline - Date.now();
-      if (++posts > MAX_REFRESH_POSTS || remainingMs <= 0) {
+      if (remainingMs <= 0) {
         throw timeoutError("/auth/refresh hold budget exhausted");
       }
       const timeoutMs = Math.min(requestTimeoutMs, remainingMs);
@@ -2101,6 +2147,7 @@ export class CcPlatformSdk {
       const timedOut = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
           const err = timeoutError(`/auth/refresh timed out after ${timeoutMs} ms`);
+          this.setRefreshTimeoutMarker(true);
           controller.abort(err);
           reject(err);
         }, timeoutMs);
@@ -2149,8 +2196,22 @@ export class CcPlatformSdk {
 
     // What other tabs/instances may have written: the sessionStore when there
     // is one, else the token provider (which reads shared storage live).
-    const readSharedTokens = async (): Promise<AuthTokens | null> =>
-      this.sessionStore ? this.sessionStore.loadTokens() : this.getTokens();
+    // A read that throws returns READ_FAILED; callers treat it as transient
+    // (return null) rather than letting a status-less error reach httpClient,
+    // which would count it as a definitive rejection.
+    const READ_FAILED = "read-failed" as const;
+    const readSharedTokens = async (): Promise<AuthTokens | null | typeof READ_FAILED> => {
+      try {
+        return await (this.sessionStore ? this.sessionStore.loadTokens() : this.getTokens());
+      } catch (error) {
+        this.log("[refresh] token store read failed", error);
+        return READ_FAILED;
+      }
+    };
+    // A retry that fails transiently (timeout, network, 5xx, unshaped 4xx)
+    // must not mask a definitive rejection already in hand.
+    const isDefinitive = (e: unknown) =>
+      isDefinitiveAuthRejection((e as { status?: unknown })?.status, (e as { payload?: unknown })?.payload);
     let adoptRetried = false;
 
     const attemptStartedAt = Date.now();
@@ -2226,14 +2287,19 @@ export class CcPlatformSdk {
           // (StorageTokenProvider / HybridTokenProvider read storage live).
           for (let attempt = 0; attempt < 3; attempt++) {
             const stored = await readSharedTokens();
-            if (signedOut()) return null;
+            if (stored === READ_FAILED || signedOut()) return null;
             if (stored?.refreshToken && !rejectedRefreshTokens.has(stored.refreshToken)) {
+              // A sessionStore is per account (SessionManager keys it by
+              // profile), so any stored bearer is adoptable. Adoption sends
+              // nothing to the server. Without one, the shared storage may hold
+              // another user's pair, so the bearer must be new, live, and
+              // decode to our JWT `sub`.
               const adoptPair = this.sessionStore
                 ? Boolean(stored.accessToken)
                 : Boolean(
                   stored.accessToken &&
                   stored.accessToken !== currentTokens?.accessToken &&
-                  sameSubject(currentTokens?.accessToken, stored.accessToken) &&
+                  verifiedSameSubject(currentTokens?.accessToken, stored.accessToken) &&
                   this.isTokenValid(stored),
                 );
               if (adoptPair) {
@@ -2250,6 +2316,7 @@ export class CcPlatformSdk {
                   // cascade this whole branch exists to prevent.
                   return null;
                 }
+                this.setRefreshTimeoutMarker(false);
                 return stored;
               }
               // Only rotate a stored token we can show is this user's: POSTing
@@ -2261,7 +2328,7 @@ export class CcPlatformSdk {
                 return await postRefresh({ refresh_token: stored.refreshToken });
               } catch (retryError) {
                 if (retryError instanceof InvalidAuthResponseError) return null;
-                lastError = retryError;
+                if (isDefinitive(retryError)) lastError = retryError;
               }
               break;
             }
@@ -2278,9 +2345,11 @@ export class CcPlatformSdk {
       // lock) rotated the cookie under us. Retry exactly once: the browser now
       // holds the rotated cookie. The server only reads the cookie when the
       // body has no refresh_token, so a rejected body token is never resent:
-      // send a stored token only if it's a new one, else no body. Skip the wait when a successful refresh has
-      // already been recorded since this attempt started. Only a 400/401: a
-      // 5xx with `retryable: true` already had its own retry above.
+      // send a stored token only if it's a new one and its stored access token
+      // decodes to our JWT `sub` (never rotate another account's token), else
+      // no body. Skip the wait when a successful refresh has already been
+      // recorded since this attempt started. Only a 400/401: a 5xx with
+      // `retryable: true` already had its own retry above.
       const lastPayload = (lastError as { payload?: unknown })?.payload as
         | { error?: unknown; reason?: unknown; retryable?: unknown }
         | undefined;
@@ -2297,15 +2366,19 @@ export class CcPlatformSdk {
           await new Promise((r) => setTimeout(r, retryDelayMs));
         }
         if (signedOut()) return null;
-        const retryRefresh = ((await this.restoreStoredSession()) ?? currentTokens)?.refreshToken;
-        if (signedOut()) return null;
+        const shared = await readSharedTokens();
+        if (shared === READ_FAILED || signedOut()) return null;
+        const retryRefresh =
+          shared?.refreshToken &&
+          !rejectedRefreshTokens.has(shared.refreshToken) &&
+          verifiedSameSubject(currentTokens?.accessToken, shared.accessToken)
+            ? shared.refreshToken
+            : undefined;
         try {
-          return await postRefresh(
-            retryRefresh && !rejectedRefreshTokens.has(retryRefresh) ? { refresh_token: retryRefresh } : undefined,
-          );
+          return await postRefresh(retryRefresh ? { refresh_token: retryRefresh } : undefined);
         } catch (retryError) {
           if (retryError instanceof InvalidAuthResponseError) return null;
-          lastError = retryError;
+          if (isDefinitive(retryError)) lastError = retryError;
         }
       }
 
@@ -2322,7 +2395,8 @@ export class CcPlatformSdk {
       // those as definitive latches the logout cascade *and* destroys the
       // stored refresh token, turning a moment of bad network into a forced
       // re-login plus a server-side revocation of a live session.
-      // Re-read: the cookie-mode retry above may have replaced lastError.
+      // Re-read: the retries above may have replaced lastError (only ever
+      // with another definitive rejection).
       const finalStatus = (lastError as any)?.status;
       if (isDefinitiveAuthRejection(finalStatus, (lastError as { payload?: unknown })?.payload)) {
         // A 400/401 invalid_grant can mean another tab rotated the token after
@@ -2332,9 +2406,18 @@ export class CcPlatformSdk {
         // sign-out) always clear.
         const finalPayload = (lastError as { payload?: { error?: unknown } })?.payload;
         if ((finalStatus === 400 || finalStatus === 401) && finalPayload?.error === OAUTH_INVALID_GRANT) {
-          const storedRefresh = (await readSharedTokens())?.refreshToken;
-          if (storedRefresh && !rejectedRefreshTokens.has(storedRefresh)) return null;
+          const shared = await readSharedTokens();
+          if (shared === READ_FAILED) return null;
+          if (shared?.refreshToken && !rejectedRefreshTokens.has(shared.refreshToken)) return null;
+          // A POST that timed out before this refresh may have rotated the
+          // token server-side. Give that one transient pass, then drop the
+          // marker so a dead token signs out on the next attempt.
+          if (mayHaveRotated) {
+            this.setRefreshTimeoutMarker(false);
+            return null;
+          }
         }
+        this.setRefreshTimeoutMarker(false);
         if (this.signOutEpoch === epochAtStart) {
           await this.clearSession();
         }
@@ -2353,6 +2436,7 @@ export class CcPlatformSdk {
    */
   private async installRefreshedSession(tokens: AuthTokens): Promise<void> {
     await this.updateSession(tokens);
+    this.setRefreshTimeoutMarker(false);
     try {
       this.storage.setItem(this.lastRefreshAtKey, String(Date.now()));
     } catch {
