@@ -239,7 +239,7 @@ function cookieSdk(responses, extra = {}) {
     storage,
     useRefreshCookie: true,
     refreshRetryDelayMs: 25,
-    tokenProvider: new MemoryTokenProvider({ accessToken: "at-0" }),
+    tokenProvider: new MemoryTokenProvider({ accessToken: jwt("u1", 0) }),
     onUnauthorized: () => {
       unauthorized += 1;
     },
@@ -252,7 +252,7 @@ test("cookie mode: invalid_grant then 200 retries once after the delay, no sign-
   setBrowser({ locks: fakeLocks() });
   const { sdk, calls, storage } = cookieSdk([
     [400, { error: "invalid_grant", reason: "refresh_token_rotated", retryable: true }],
-    [200, { accessToken: "at-1", expiresAt: inAnHour() }],
+    [200, { accessToken: jwt("u1", 1), expiresAt: inAnHour() }],
   ]);
 
   const result = await sdk.refreshTokenOrThrow();
@@ -260,7 +260,7 @@ test("cookie mode: invalid_grant then 200 retries once after the delay, no sign-
   assert.equal(calls.length, 2);
   assert.ok(calls[1].at - calls[0].at >= 20, "waited ~refreshRetryDelayMs before retrying");
   assert.ok(calls.every((c) => c.credentials === "include"));
-  assert.equal(result?.accessToken, "at-1");
+  assert.equal(result?.accessToken, jwt("u1", 1));
   assert.ok(sdk.isAuthenticated());
 
   // The only key the new code writes is a numeric timestamp, never a token.
@@ -268,7 +268,7 @@ test("cookie mode: invalid_grant then 200 retries once after the delay, no sign-
   assert.deepEqual(newKeys, [`cc-refresh:${baseUrl}:CcPlatformSdkCache:last-refresh-at`]);
   assert.match(storage.getItem(newKeys[0]), /^\d+$/);
   for (const [k, v] of storage.store) {
-    assert.ok(!`${k}${v}`.includes("at-1"), `no token value in storage (${k})`);
+    assert.ok(!`${k}${v}`.includes(jwt("u1", 1)), `no token value in storage (${k})`);
   }
 });
 
@@ -433,7 +433,7 @@ test("crossTabRefreshLock: true forces the lock in Node, false disables it in a 
   assert.equal(off.requested.length, 0);
 });
 
-test("reuse: tokens another tab stored for a different user are not adopted", async () => {
+test("reuse: tokens another tab stored for a different user are not adopted or rotated", async () => {
   const locks = gatedLocks();
   setBrowser({ locks });
   const storage = createMockStorage();
@@ -454,8 +454,9 @@ test("reuse: tokens another tab stored for a different user are not adopted", as
   locks.release();
   const result = await pending;
 
-  assert.equal(f.refreshCalls().length, 1, "went to the network instead of adopting");
-  assert.notEqual(result?.accessToken, other.accessToken);
+  assert.equal(f.refreshCalls().length, 0, "u2's refresh token not POSTed");
+  assert.equal(result, null);
+  assert.deepEqual(JSON.parse(storage.getItem("auth_tokens")), other);
 });
 
 test("cookie mode: a 5xx with retryable: true gets only the 5xx retry, not the cookie retry", async () => {
@@ -471,7 +472,7 @@ test("cookie mode: skips the retry delay when another tab refreshed since the at
   const { sdk, calls, storage } = cookieSdk(
     [
       [400, { error: "invalid_grant" }],
-      [200, { accessToken: "at-1", expiresAt: inAnHour() }],
+      [200, { accessToken: jwt("u1", 1), expiresAt: inAnHour() }],
     ],
     { refreshRetryDelayMs: 5000 },
   );
@@ -483,7 +484,7 @@ test("cookie mode: skips the retry delay when another tab refreshed since the at
   const started = Date.now();
   const result = await sdk.refreshTokenOrThrow();
 
-  assert.equal(result?.accessToken, "at-1");
+  assert.equal(result?.accessToken, jwt("u1", 1));
   assert.equal(calls.length, 2);
   assert.ok(Date.now() - started < 1000, "did not wait refreshRetryDelayMs");
 });
@@ -492,7 +493,7 @@ test("cookie mode: sign-out during the retry delay means no retry", async () => 
   setBrowser({ locks: fakeLocks() });
   const { sdk, calls } = cookieSdk([
     [400, { error: "invalid_grant" }],
-    [200, { accessToken: "at-1", expiresAt: inAnHour() }],
+    [200, { accessToken: jwt("u1", 1), expiresAt: inAnHour() }],
   ], { refreshRetryDelayMs: 50 });
 
   const pending = sdk.refreshTokenOrThrow();
@@ -844,7 +845,7 @@ function scriptedCookieSdk(script, extra = {}) {
     useRefreshCookie: true,
     refreshRetryDelayMs: 1,
     refreshRequestTimeoutMs: 50,
-    tokenProvider: new MemoryTokenProvider({ accessToken: "at-0" }),
+    tokenProvider: new MemoryTokenProvider({ accessToken: jwt("u1", 0) }),
     fetchImpl: async () => script(++n),
     ...extra,
   });
@@ -1106,4 +1107,199 @@ test("post-lock reuse needs a new access token: same bearer + rotated refresh to
 
   assert.equal((await pending)?.accessToken, jwt("u1", 2));
   assert.deepEqual(f.refreshCalls().map((c) => c.refreshToken), ["rt-1"]);
+});
+
+// --- Review 5 regressions -------------------------------------------------
+
+/** Per-profile sessionStore (SessionManager keys one per profile). */
+function profileStore(initial) {
+  let tokens = initial;
+  const saves = [];
+  return {
+    saves,
+    current: () => tokens,
+    async loadTokens() {
+      return tokens;
+    },
+    async saveTokens(t) {
+      saves.push(t);
+      tokens = t;
+    },
+    async clearTokens() {
+      saves.push(null);
+      tokens = null;
+    },
+  };
+}
+
+/**
+ * One browser cookie jar shared by every profile. A body refresh_token wins;
+ * with no body the server answers for whoever the cookie names.
+ */
+function sharedCookieServer(cookieAccess) {
+  const posts = [];
+  const fetchImpl = async (_url, init) => {
+    const body = init?.body ? JSON.parse(init.body) : {};
+    posts.push(body);
+    if ("refresh_token" in body) return invalidGrant();
+    return ok({ accessToken: cookieAccess(), refreshToken: "rt-cookie-next", expiresAt: inAnHour() });
+  };
+  return { posts, fetchImpl };
+}
+
+function cookieProfile(dbName, store, fetchImpl, accessToken) {
+  return new CcPlatformSdk({
+    baseUrl,
+    dbName,
+    fetchImpl,
+    storage: createMockStorage(),
+    sessionStore: store,
+    useRefreshCookie: true,
+    refreshRetryDelayMs: 1,
+    tokenProvider: new MemoryTokenProvider(accessToken ? { accessToken } : undefined),
+  });
+}
+
+test("C1: reloaded cookie-mode profile with no bearer never installs the cookie owner's (B's) tokens", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const server = sharedCookieServer(() => jwt("uB", 9));
+  const storeA = profileStore({ refreshToken: "rt-a-dead" });
+  const bTokens = { accessToken: jwt("uB", 1), refreshToken: "rt-b", expiresAt: inAnHour() };
+  const storeB = profileStore(bTokens);
+  const a = cookieProfile("profile-a", storeA, server.fetchImpl);
+  cookieProfile("profile-b", storeB, server.fetchImpl, bTokens.accessToken);
+
+  const result = await a.refreshTokenOrThrow().catch((e) => e);
+
+  assert.ok(result === null || result instanceof AuthSessionExpiredError, `unexpected ${result}`);
+  assert.ok(server.posts.every((b) => "refresh_token" in b), "no cookie-only POST");
+  assert.ok(!storeA.saves.some((t) => t && t.accessToken === jwt("uB", 9)), "B's tokens never saved into A");
+  assert.notEqual(a.getTokens()?.accessToken, jwt("uB", 9), "B's bearer not in A's memory");
+  assert.deepEqual(storeB.current(), bTokens, "B's store untouched");
+});
+
+for (const [kind, cookieAccess] of [
+  ["B's JWT", () => jwt("uB", 9)],
+  ["an opaque bearer", () => "opaque-cookie-bearer"],
+]) {
+  test(`C1: profile A with a decodable bearer, cookie answers with ${kind}: rejected, nothing saved, null`, async () => {
+    setBrowser({ locks: fakeLocks() });
+    const server = sharedCookieServer(cookieAccess);
+    const aTokens = { accessToken: jwt("uA", 0), refreshToken: "rt-a-dead" };
+    const storeA = profileStore(aTokens);
+    const a = cookieProfile("profile-a", storeA, server.fetchImpl, aTokens.accessToken);
+
+    const result = await a.refreshTokenOrThrow();
+
+    assert.equal(result, null, "transient: profile A not signed out");
+    assert.equal(server.posts.length, 2);
+    assert.ok(!("refresh_token" in server.posts[1]), "the retry was cookie-only");
+    assert.deepEqual(storeA.saves, [], "A's store untouched");
+    assert.equal(a.getTokens()?.accessToken, jwt("uA", 0));
+  });
+}
+
+test("C1: happy path, A's cookie rotated by another tab of A: cookie-only retry installs A's new tokens", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const server = sharedCookieServer(() => jwt("uA", 2));
+  const storeA = profileStore({ accessToken: jwt("uA", 0), refreshToken: "rt-a-dead" });
+  const a = cookieProfile("profile-a", storeA, server.fetchImpl, jwt("uA", 0));
+
+  const result = await a.refreshTokenOrThrow();
+
+  assert.equal(result?.accessToken, jwt("uA", 2));
+  assert.equal(storeA.current().accessToken, jwt("uA", 2));
+  assert.ok(!("refresh_token" in server.posts[1]));
+});
+
+const timeoutKey = `cc-refresh:${baseUrl}:CcPlatformSdkCache:refresh-timeout-at`;
+
+for (const kind of ["local", "remote"]) {
+  test(`timeout marker: ${kind} sign-out clears it (memory and storage)`, async () => {
+    setBrowser({ locks: fakeLocks() });
+    const storage = createMockStorage();
+    storage.setItem("refresh_token", "rt-0");
+    const { sdk } = scriptedTab(storage, (n) => (n === 1 ? new Promise(() => {}) : ok({})));
+
+    assert.equal(await sdk.refreshTokenOrThrow(), null);
+    assert.ok(storage.getItem(timeoutKey), "marker set by the timeout");
+
+    if (kind === "local") await sdk.logout();
+    else sdk["onRemoteSignOut"]();
+    await tick(5);
+
+    assert.equal(storage.getItem(timeoutKey), null);
+    assert.equal(sdk["hasRefreshTimeoutMarker"](), false);
+  });
+}
+
+test("timeout marker: a new session ignores the old marker; its invalid_grant signs out", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const storage = createMockStorage();
+  storage.setItem("refresh_token", "rt-0");
+  const { sdk } = scriptedTab(storage, (n) => (n === 1 ? new Promise(() => {}) : invalidGrant()));
+
+  assert.equal(await sdk.refreshTokenOrThrow(), null);
+  await sdk.setSession({ accessToken: jwt("u1", 5), refreshToken: "rt-new" });
+
+  await assert.rejects(sdk.refreshTokenOrThrow(), AuthSessionExpiredError);
+});
+
+test("timeout marker: an expired marker from another tab gives no pass", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const storage = createMockStorage();
+  storage.setItem("refresh_token", "rt-0");
+  storage.setItem(timeoutKey, String(Date.now() - 10 * 60_000));
+  const { sdk } = scriptedTab(storage, () => invalidGrant());
+
+  await assert.rejects(sdk.refreshTokenOrThrow(), AuthSessionExpiredError);
+});
+
+test("timeout marker: the timer firing after a sign-out sets nothing", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const storage = createMockStorage();
+  storage.setItem("refresh_token", "rt-0");
+  const { sdk } = scriptedTab(storage, () => new Promise(() => {}));
+
+  const pending = sdk.refreshTokenOrThrow();
+  await tick(10);
+  sdk["onRemoteSignOut"]();
+
+  assert.equal(await pending, null);
+  await tick(5);
+  assert.equal(storage.getItem(timeoutKey), null);
+  assert.equal(sdk["hasRefreshTimeoutMarker"](), false);
+});
+
+test("another tab signs in as u2 while we wait for the lock: no POST, nothing adopted, null", async () => {
+  const locks = gatedLocks();
+  setBrowser({ locks });
+  const storage = createMockStorage();
+  storage.setItem("auth_tokens", JSON.stringify({ accessToken: jwt("u1", 0), refreshToken: "rt-0" }));
+  const f = countingFetch(() => ok({ accessToken: jwt("u2", 2), refreshToken: "rt-u2-next", expiresAt: inAnHour() }));
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl: f.fetchImpl, storage, tokenProvider: new StorageTokenProvider(storage) });
+
+  const pending = sdk.refreshToken();
+  await tick();
+  const u2 = JSON.stringify({ accessToken: jwt("u2", 1), refreshToken: "rt-u2", expiresAt: inAnHour() });
+  storage.setItem("auth_tokens", u2); // no sign-out first
+  locks.release();
+
+  assert.equal(await pending, null);
+  assert.equal(f.refreshCalls().length, 0, "u2's refresh token not rotated");
+  assert.equal(storage.getItem("auth_tokens"), u2, "u2's session untouched");
+});
+
+test("5xx retry: a sign-out during the 1 s wait means no second POST", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const storage = createMockStorage();
+  storage.setItem("refresh_token", "rt-0");
+  const { sdk, posts } = scriptedTab(storage, () => new Response("{}", { status: 503 }));
+
+  const pending = sdk.refreshTokenOrThrow();
+  await tick(50);
+  sdk["onRemoteSignOut"]();
+
+  assert.equal(await pending, null);
+  assert.deepEqual(posts, ["rt-0"]);
 });

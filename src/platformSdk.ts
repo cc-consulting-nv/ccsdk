@@ -154,7 +154,10 @@ function resolveRefreshTimings(options: CcPlatformSdkOptions) {
     MAX_REFRESH_POSTS * requestTimeoutMs + Math.max(SERVER_ERROR_RETRY_MS, ADOPT_POLL_MS + retryDelayMs);
   const minLockWaitMs = holdBudgetMs + LOCK_WAIT_MARGIN_MS;
   const lockWaitMs = Math.max(positiveMs(options.refreshLockTimeoutMs, minLockWaitMs), minLockWaitMs);
-  return { requestTimeoutMs, retryDelayMs, holdBudgetMs, lockWaitMs };
+  // A timeout marker older than this gives no grace: the pass is for the
+  // refresh right after the timed-out one, not one minutes later.
+  const timeoutGraceMs = 2 * requestTimeoutMs;
+  return { requestTimeoutMs, retryDelayMs, holdBudgetMs, lockWaitMs, timeoutGraceMs };
 }
 
 /** Both bearers decode to the same JWT `sub`. Opaque or missing tokens fail (unlike `sameSubject`). */
@@ -786,10 +789,13 @@ export class CcPlatformSdk {
   /**
    * A `/auth/refresh` POST timed out, so the server may have rotated the
    * refresh token we sent and we never saw the new pair. The next
-   * `invalid_grant` gets one transient pass. Mirrored (as a timestamp, never a
-   * token) under `refreshTimeoutAtKey` so other tabs get the same pass.
+   * `invalid_grant` gets one transient pass, honoured only within
+   * `refreshTimings.timeoutGraceMs` of the timeout. Epoch ms, 0 when unset.
+   * Mirrored (as a timestamp, never a token) under `refreshTimeoutAtKey` so
+   * other tabs get the same pass. Cleared whenever a session is installed or
+   * cleared (updateSession), so sign-out and new sign-ins drop it.
    */
-  private refreshMayHaveRotated = false;
+  private refreshTimedOutAt = 0;
 
   // Cross-tab sign-out propagation. Tabs share IndexedDB + localStorage, so
   // a sign-out in one tab must fence the others before their in-flight
@@ -1081,6 +1087,9 @@ export class CcPlatformSdk {
   private async updateSession(tokens: AuthTokens | null): Promise<void> {
     const epochAtStart = this.signOutEpoch;
     const normalizedTokens = this.hasAuthTokens(tokens) ? tokens : null;
+    // A new, refreshed, adopted or cleared session: any earlier timeout's
+    // grace belonged to the session being replaced.
+    this.setRefreshTimeoutMarker(false);
 
     // Keep the refresh token in memory + sessionStore even when an httpOnly
     // refresh cookie is in use. Multi-tenant API hosts (e.g. customer-owned
@@ -2042,9 +2051,9 @@ export class CcPlatformSdk {
   }
 
   private setRefreshTimeoutMarker(on: boolean): void {
-    this.refreshMayHaveRotated = on;
+    this.refreshTimedOutAt = on ? Date.now() : 0;
     try {
-      if (on) this.storage.setItem(this.refreshTimeoutAtKey, String(Date.now()));
+      if (on) this.storage.setItem(this.refreshTimeoutAtKey, String(this.refreshTimedOutAt));
       else this.storage.removeItem(this.refreshTimeoutAtKey);
     } catch {
       /* storage unavailable: the in-memory flag still covers this instance */
@@ -2052,12 +2061,13 @@ export class CcPlatformSdk {
   }
 
   private hasRefreshTimeoutMarker(): boolean {
-    if (this.refreshMayHaveRotated) return true;
+    let at = this.refreshTimedOutAt;
     try {
-      return Boolean(this.storage.getItem(this.refreshTimeoutAtKey));
+      at = Math.max(at, Number(this.storage.getItem(this.refreshTimeoutAtKey)) || 0);
     } catch {
-      return false;
+      /* storage unavailable: the in-memory timestamp still covers this instance */
     }
+    return at > 0 && Date.now() - at <= this.refreshTimings.timeoutGraceMs;
   }
 
   private async refreshUnderLock(before: AuthTokens | null, epochAtStart: number): Promise<AuthTokens | null> {
@@ -2087,6 +2097,15 @@ export class CcPlatformSdk {
     }
     if (signedOut()) return null;
     if (!currentTokens?.refreshToken && !this.useRefreshCookie) return null;
+    // Another tab signed in as someone else (without a sign-out) while we
+    // waited. Their refresh token isn't ours to rotate, nor their pair to adopt.
+    const startSub = tokenSubject(before?.accessToken);
+    const storedSub = tokenSubject(currentTokens?.accessToken);
+    if (startSub && storedSub && startSub !== storedSub) return null;
+    // The user this refresh started for; responses are checked against it,
+    // not against whatever the re-read returned.
+    const expectedBearer = startSub ? before?.accessToken : currentTokens?.accessToken;
+    const expectedSub = startSub ?? storedSub;
     if (
       before?.accessToken &&
       currentTokens?.refreshToken &&
@@ -2147,7 +2166,8 @@ export class CcPlatformSdk {
       const timedOut = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
           const err = timeoutError(`/auth/refresh timed out after ${timeoutMs} ms`);
-          this.setRefreshTimeoutMarker(true);
+          // A sign-out (or new session) since the start owns the state now.
+          if (!signedOut()) this.setRefreshTimeoutMarker(true);
           controller.abort(err);
           reject(err);
         }, timeoutMs);
@@ -2180,7 +2200,15 @@ export class CcPlatformSdk {
       // account's cookie.
       // ponytail: the session stays on its expired bearer and 401s until the
       // app re-authenticates it; mark the profile expired if that bites.
-      if (!sameSubject(currentTokens?.accessToken, tokens.accessToken)) return null;
+      // A cookie-only request while we hold a decodable bearer must come back
+      // provably ours (an opaque bearer fails). The cookie-only retry only runs
+      // with one. A cookie-only first POST without a decodable bearer (cookie
+      // boot, nothing stored) can't be verified and keeps the lenient check.
+      const verified =
+        !refreshBody && expectedSub
+          ? verifiedSameSubject(expectedBearer, tokens.accessToken)
+          : sameSubject(expectedBearer, tokens.accessToken);
+      if (!verified) return null;
       await this.installRefreshedSession(tokens);
       return tokens;
     };
@@ -2232,6 +2260,7 @@ export class CcPlatformSdk {
       if (status >= 500) {
         try {
           await new Promise((r) => setTimeout(r, SERVER_ERROR_RETRY_MS));
+          if (signedOut()) return null;
           return await postRefresh(body);
         } catch {
           // Retry also failed — fall through to return null
@@ -2347,7 +2376,10 @@ export class CcPlatformSdk {
       // body has no refresh_token, so a rejected body token is never resent:
       // send a stored token only if it's a new one and its stored access token
       // decodes to our JWT `sub` (never rotate another account's token), else
-      // no body. Skip the wait when a successful refresh has already been
+      // no body. A cookie-only retry needs a decodable bearer to check the
+      // answer against: the shared cookie names whoever signed in last, which
+      // under SessionManager may be another profile. Without one, skip the
+      // retry. Skip the wait when a successful refresh has already been
       // recorded since this attempt started. Only a 400/401: a 5xx with
       // `retryable: true` already had its own retry above.
       const lastPayload = (lastError as { payload?: unknown })?.payload as
@@ -2355,6 +2387,7 @@ export class CcPlatformSdk {
         | undefined;
       if (
         this.useRefreshCookie &&
+        expectedSub !== null &&
         !adoptRetried &&
         !signedOut() &&
         (lastStatus === 400 || lastStatus === 401) &&
@@ -2371,7 +2404,7 @@ export class CcPlatformSdk {
         const retryRefresh =
           shared?.refreshToken &&
           !rejectedRefreshTokens.has(shared.refreshToken) &&
-          verifiedSameSubject(currentTokens?.accessToken, shared.accessToken)
+          verifiedSameSubject(expectedBearer, shared.accessToken)
             ? shared.refreshToken
             : undefined;
         try {

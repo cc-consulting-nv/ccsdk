@@ -197,9 +197,11 @@ export interface SessionManagerOptions {
    * cookie cannot represent several concurrent sessions; it names whichever
    * account authenticated last, so a cookie-first host will answer a refresh for
    * profile A with profile B's bearer. `useRefreshCookie` is safe to leave on for
-   * single-session back-compat, because the SDK always sends `refresh_token` in
-   * the body and prefers each profile's own stored session, but the per-profile
-   * store is what actually makes switching correct.
+   * single-session back-compat, because the SDK sends `refresh_token` in the
+   * body whenever it has one and prefers each profile's own stored session. It
+   * falls back to a cookie-only retry only when the profile holds a decodable
+   * JWT bearer, and installs that answer only if it decodes to the same user.
+   * The per-profile store is what actually makes switching correct.
    */
   createSessionStore: (profileId: string) => SessionStore;
   /**
