@@ -1959,7 +1959,7 @@ export class CcPlatformSdk {
     }
   }
 
-  /** localStorage key for the non-secret "last successful refresh at" epoch ms. */
+  /** Key in `storage` (shared across tabs) for the non-secret "last successful refresh at" epoch ms. */
   private get lastRefreshAtKey(): string {
     return `${this.refreshLockName}:last-refresh-at`;
   }
@@ -2194,7 +2194,7 @@ export class CcPlatformSdk {
     try {
       this.storage.setItem(this.lastRefreshAtKey, String(Date.now()));
     } catch {
-      /* storage full/unavailable - diagnostics only */
+      /* storage full/unavailable - only skips the cookie-retry delay shortcut */
     }
   }
 
