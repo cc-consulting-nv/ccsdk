@@ -642,7 +642,8 @@ test("refreshToken dedupes concurrent refresh calls", async () => {
   const first = sdk.refreshToken();
   const second = sdk.refreshToken();
 
-  await Promise.resolve();
+  // Let the refresh reach fetch (acquiring navigator.locks is async).
+  await new Promise((r) => setTimeout(r, 10));
   assert.equal(calls.length, 1);
   resolveRefresh();
 
