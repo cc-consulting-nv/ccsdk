@@ -1029,7 +1029,9 @@ test("refreshToken does not adopt a refresh-only stored snapshot", async () => {
     refreshToken: "old-refresh-token",
   });
 
+  let posts = 0;
   const fetchImpl = async () => {
+    posts += 1;
     await sessionStore.saveTokens({ refreshToken: "rotated-refresh-token" });
     return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
   };
@@ -1039,8 +1041,11 @@ test("refreshToken does not adopt a refresh-only stored snapshot", async () => {
   const result = await sdk.refreshToken();
 
   assert.equal(result, null, "a bearer-less snapshot is not an adoptable session");
-  assert.ok(!sdk.isAuthenticated(), "must not report a session over a revoked token");
-  assert.equal(sessionStore.getSnapshot(), null);
+  // Without a stored bearer the snapshot's owner can't be verified, so its
+  // refresh token is not POSTed (it could be another user's) and the store is
+  // left alone.
+  assert.equal(posts, 1, "rotated token not retried");
+  assert.deepEqual(sessionStore.getSnapshot(), { refreshToken: "rotated-refresh-token" });
 });
 
 test("refreshToken does not adopt in useRefreshCookie mode when no refresh token was sent", async () => {
