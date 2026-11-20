@@ -129,7 +129,7 @@ test("with navigator.locks, two instances refresh one after another, not in para
   assert.deepEqual(server.calls, ["rt-0", "rt-1"]);
   assert.ok(ra?.accessToken && rb?.accessToken, "both tabs keep a session");
   assert.equal(storage.getItem("refresh_token"), "rt-2");
-  assert.ok(locks.requested.every((r) => r.name === `cc-refresh:${baseUrl}` && r.mode === "exclusive"));
+  assert.ok(locks.requested.every((r) => r.name === `cc-refresh:${baseUrl}:CcPlatformSdkCache` && r.mode === "exclusive"));
 });
 
 test("storage mode: second instance reuses the pair another tab stored, no network call", async () => {
@@ -260,7 +260,7 @@ test("cookie mode: invalid_grant then 200 retries once after the delay, no sign-
 
   // The only key the new code writes is a numeric timestamp, never a token.
   const newKeys = [...storage.store.keys()].filter((k) => k.startsWith("cc-refresh"));
-  assert.deepEqual(newKeys, [`cc-refresh:${baseUrl}:last-refresh-at`]);
+  assert.deepEqual(newKeys, [`cc-refresh:${baseUrl}:CcPlatformSdkCache:last-refresh-at`]);
   assert.match(storage.getItem(newKeys[0]), /^\d+$/);
   for (const [k, v] of storage.store) {
     assert.ok(!`${k}${v}`.includes("at-1"), `no token value in storage (${k})`);
@@ -497,4 +497,143 @@ test("cookie mode: sign-out during the retry delay means no retry", async () => 
 
   assert.equal(await pending, null);
   assert.equal(calls.length, 1, "retry not sent after sign-out");
+});
+
+test("lock timeout + invalid_grant: tab B adopts tab A's rotated pair instead of clearing storage", async () => {
+  setBrowser({ locks: hungLocks() });
+  const storage = createMockStorage();
+  storage.setItem("auth_tokens", JSON.stringify({ accessToken: "at-0", refreshToken: "rt-0" }));
+  const server = rotatingServer();
+  const mk = (extra) =>
+    new CcPlatformSdk({ baseUrl, fetchImpl: server.fetchImpl, storage, tokenProvider: new StorageTokenProvider(storage), ...extra });
+  // A refreshes (stands in for the lock holder); B's lock wait times out.
+  const a = mk({ crossTabRefreshLock: false });
+  const b = mk({ refreshLockTimeoutMs: 5 });
+
+  const pa = a.refreshTokenOrThrow();
+  const rb = await b.refreshTokenOrThrow();
+  const ra = await pa;
+
+  assert.deepEqual(server.calls, ["rt-0", "rt-0"], "B sent the stale token and lost");
+  assert.equal(ra.refreshToken, "rt-1");
+  assert.equal(rb?.refreshToken, "rt-1", "B adopted A's pair");
+  assert.equal(rb?.accessToken, "at-1");
+  assert.equal(JSON.parse(storage.getItem("auth_tokens")).refreshToken, "rt-1", "storage not wiped");
+});
+
+test("lock timeout + invalid_grant, hybrid: tab B retries once with the stored rotated refresh token", async () => {
+  setBrowser({ locks: hungLocks() });
+  const storage = createMockStorage();
+  const server = rotatingServer();
+  const mk = (extra) =>
+    new CcPlatformSdk({
+      baseUrl,
+      fetchImpl: server.fetchImpl,
+      storage,
+      tokenProvider: new HybridTokenProvider(storage, { accessToken: "at-0", refreshToken: "rt-0" }),
+      ...extra,
+    });
+  const a = mk({ crossTabRefreshLock: false });
+  const b = mk({ refreshLockTimeoutMs: 5 });
+
+  const pa = a.refreshTokenOrThrow();
+  const rb = await b.refreshTokenOrThrow();
+  await pa;
+
+  // B can't see A's in-memory access token, so it retries with A's rt-1.
+  assert.deepEqual(server.calls, ["rt-0", "rt-0", "rt-1"]);
+  assert.equal(rb?.accessToken, "at-2");
+  assert.equal(storage.getItem("refresh_token"), "rt-2", "nobody logged out");
+});
+
+test("invalid_grant with storage unchanged still clears and throws AuthSessionExpiredError", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const storage = createMockStorage();
+  storage.setItem("auth_tokens", JSON.stringify({ accessToken: "at-0", refreshToken: "rt-dead" }));
+  const f = countingFetch(() => new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 }));
+  const sdk = new CcPlatformSdk({ baseUrl, fetchImpl: f.fetchImpl, storage, tokenProvider: new StorageTokenProvider(storage) });
+
+  await assert.rejects(sdk.refreshTokenOrThrow(), AuthSessionExpiredError);
+  assert.equal(f.refreshCalls().length, 1);
+  assert.equal(storage.getItem("auth_tokens"), null);
+});
+
+test("refresh request timeout: hung fetch is aborted, lock released, session kept", async () => {
+  const locks = fakeLocks();
+  setBrowser({ locks });
+  const storage = createMockStorage();
+  let signal;
+  let hang = true;
+  const fetchImpl = async (_url, init) => {
+    if (hang) {
+      signal = init.signal;
+      return new Promise(() => {}); // never settles, ignores the signal
+    }
+    return ok({ accessToken: "at-1", refreshToken: "rt-1", expiresAt: inAnHour() });
+  };
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl,
+    storage,
+    refreshRequestTimeoutMs: 30,
+    tokenProvider: new HybridTokenProvider(storage, { accessToken: "at-0", refreshToken: "rt-0" }),
+  });
+
+  assert.equal(await sdk.refreshTokenOrThrow(), null, "timeout is transient");
+  assert.equal(signal?.aborted, true);
+  assert.equal(storage.getItem("refresh_token"), "rt-0", "session not cleared");
+
+  hang = false;
+  const second = await sdk.refreshTokenOrThrow(); // would hang if the lock were still held
+  assert.equal(second?.accessToken, "at-1");
+  assert.equal(locks.requested.length, 2);
+});
+
+test("another tab clears storage while we wait for the lock: no POST, null, token not resurrected", async () => {
+  const locks = gatedLocks();
+  setBrowser({ locks });
+  const storage = createMockStorage();
+  const f = countingFetch(() => ok({ accessToken: "at-1", refreshToken: "rt-1", expiresAt: inAnHour() }));
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    fetchImpl: f.fetchImpl,
+    storage,
+    tokenProvider: new HybridTokenProvider(storage, { accessToken: "at-0", refreshToken: "rt-0" }),
+  });
+
+  const pending = sdk.refreshToken();
+  await tick();
+  storage.removeItem("refresh_token");
+  locks.release();
+
+  assert.equal(await pending, null);
+  assert.equal(f.refreshCalls().length, 0);
+  assert.equal(storage.getItem("refresh_token"), null);
+});
+
+test("lock name and last-refresh-at key are per dbName", async () => {
+  const locks = fakeLocks();
+  setBrowser({ locks });
+  const storage = createMockStorage();
+  const f = countingFetch(() => ok({ accessToken: "at-1", refreshToken: "rt-1", expiresAt: inAnHour() }));
+  const mk = (dbName) =>
+    new CcPlatformSdk({
+      baseUrl,
+      dbName,
+      fetchImpl: f.fetchImpl,
+      storage,
+      tokenProvider: new MemoryTokenProvider({ accessToken: "at-0", refreshToken: "rt-0" }),
+    });
+
+  await mk("p1").refreshToken();
+  await mk("p2").refreshToken();
+  await mk("p1").refreshToken();
+
+  assert.deepEqual(locks.requested.map((r) => r.name), [
+    `cc-refresh:${baseUrl}:p1`,
+    `cc-refresh:${baseUrl}:p2`,
+    `cc-refresh:${baseUrl}:p1`,
+  ]);
+  const keys = [...storage.store.keys()].filter((k) => k.endsWith(":last-refresh-at")).sort();
+  assert.deepEqual(keys, [`cc-refresh:${baseUrl}:p1:last-refresh-at`, `cc-refresh:${baseUrl}:p2:last-refresh-at`]);
 });

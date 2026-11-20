@@ -76,6 +76,8 @@ export interface RequestOptions {
   skipAuth?: boolean;
   /** Request credential mode (for cookie-backed auth flows) */
   credentials?: RequestCredentials;
+  /** Abort signal passed to fetch */
+  signal?: AbortSignal;
 }
 
 /**
@@ -237,6 +239,7 @@ export class HttpClient {
       headers,
       body,
       credentials: options?.credentials,
+      signal: options?.signal,
     });
 
     if (response.status === 401 && !options?.skipAuth) {
@@ -260,6 +263,7 @@ export class HttpClient {
           headers,
           body,
           credentials: options?.credentials,
+          signal: options?.signal,
         });
 
         return this.parseResponse<T>(retry);
