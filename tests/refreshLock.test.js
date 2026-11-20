@@ -8,6 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { CcPlatformSdk, AuthSessionExpiredError } from "../dist/platformSdk.js";
 import { HybridTokenProvider, MemoryTokenProvider, StorageTokenProvider } from "../dist/auth.js";
+import { SessionManager, createStorageProfileRegistry } from "../dist/sessionManager.js";
 
 const baseUrl = "https://api.example.com";
 const GLOBALS = ["navigator", "window", "document"];
@@ -527,7 +528,7 @@ test("unlocked race + invalid_grant: tab B adopts tab A's rotated pair instead o
   assert.equal(JSON.parse(storage.getItem("auth_tokens")).refreshToken, "rt-1", "storage not wiped");
 });
 
-test("unlocked race + invalid_grant, hybrid: tab B retries once with the stored rotated refresh token", async () => {
+test("unlocked race + invalid_grant, hybrid: tab B can't verify the stored token's owner, returns null, sends it next time", async () => {
   setBrowser({ locks: fakeLocks() });
   const storage = createMockStorage();
   const server = rotatingServer();
@@ -546,10 +547,13 @@ test("unlocked race + invalid_grant, hybrid: tab B retries once with the stored 
   const rb = await b.refreshTokenOrThrow();
   await pa;
 
-  // B can't see A's in-memory access token, so it retries with A's rt-1.
+  // B can't see A's in-memory access token, so it can't tell rt-1 is u1's:
+  // transient null, no sign-out. Its next refresh sends rt-1 normally.
+  assert.deepEqual(server.calls, ["rt-0", "rt-0"]);
+  assert.equal(rb, null);
+  assert.equal(storage.getItem("refresh_token"), "rt-1", "nobody logged out");
+  assert.equal((await b.refreshTokenOrThrow())?.accessToken, "at-2");
   assert.deepEqual(server.calls, ["rt-0", "rt-0", "rt-1"]);
-  assert.equal(rb?.accessToken, "at-2");
-  assert.equal(storage.getItem("refresh_token"), "rt-2", "nobody logged out");
 });
 
 test("invalid_grant with storage unchanged still clears and throws AuthSessionExpiredError", async () => {
@@ -1302,4 +1306,141 @@ test("5xx retry: a sign-out during the 1 s wait means no second POST", async () 
 
   assert.equal(await pending, null);
   assert.deepEqual(posts, ["rt-0"]);
+});
+
+// --- Review 6 regressions -------------------------------------------------
+
+test("ambiguous 401 retry: a sign-out during the first POST means no second POST", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const storage = createMockStorage();
+  storage.setItem("refresh_token", "rt-0");
+  let tab;
+  tab = scriptedTab(storage, () => {
+    tab.sdk["onRemoteSignOut"]();
+    return new Response("", { status: 401 });
+  });
+
+  assert.equal(await tab.sdk.refreshTokenOrThrow(), null);
+  assert.deepEqual(tab.posts, ["rt-0"]);
+});
+
+test("D1: hybrid tabs, another tab signs in as uB during A's refresh: B's refresh token never POSTed by A", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const storage = createMockStorage();
+  const bTokens = { accessToken: jwt("uB", 1), refreshToken: "rt-b", expiresAt: inAnHour() };
+  const b = new CcPlatformSdk({ baseUrl, storage, tokenProvider: new HybridTokenProvider(storage), fetchImpl: async () => invalidGrant() });
+  let unauthorized = 0;
+  const posts = [];
+  const a = new CcPlatformSdk({
+    baseUrl,
+    storage,
+    tokenProvider: new HybridTokenProvider(storage, { accessToken: jwt("uA", 0), refreshToken: "rt-a" }),
+    onUnauthorized: () => {
+      unauthorized += 1;
+    },
+    fetchImpl: async (_url, init) => {
+      const body = init?.body ? JSON.parse(init.body) : {};
+      posts.push(body.refresh_token);
+      if (posts.length === 1) {
+        await b.setSession(bTokens); // tab B signs in as uB, rotating the shared key
+        return invalidGrant();
+      }
+      return ok({ accessToken: jwt("uB", 2), refreshToken: "rt-b-2", expiresAt: inAnHour() });
+    },
+  });
+
+  const result = await a.refreshTokenOrThrow();
+
+  assert.equal(result, null);
+  assert.deepEqual(posts, ["rt-a"], "rt-b never sent");
+  assert.equal(storage.getItem("refresh_token"), "rt-b", "B's stored refresh token unchanged");
+  assert.deepEqual(b.getTokens(), bTokens);
+  assert.equal(a.getTokens()?.accessToken, jwt("uA", 0), "A not signed out");
+  assert.equal(unauthorized, 0);
+});
+
+test("D1: hybrid cookie tab, another tab signs in as uB: the cookie retry doesn't POST B's refresh token", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const storage = createMockStorage();
+  const b = new CcPlatformSdk({ baseUrl, storage, tokenProvider: new HybridTokenProvider(storage), fetchImpl: async () => invalidGrant() });
+  const posts = [];
+  const a = new CcPlatformSdk({
+    baseUrl,
+    storage,
+    useRefreshCookie: true,
+    refreshRetryDelayMs: 1,
+    tokenProvider: new HybridTokenProvider(storage, { accessToken: jwt("uA", 0) }),
+    fetchImpl: async (_url, init) => {
+      const body = init?.body ? JSON.parse(init.body) : {};
+      posts.push(body);
+      if (posts.length === 1) {
+        await b.setSession({ accessToken: jwt("uB", 1), refreshToken: "rt-b", expiresAt: inAnHour() });
+        return invalidGrant();
+      }
+      return ok({ accessToken: jwt("uB", 2), refreshToken: "rt-b-2", expiresAt: inAnHour() });
+    },
+  });
+
+  assert.equal(await a.refreshTokenOrThrow(), null);
+  assert.ok(!posts.some((p) => p.refresh_token === "rt-b"), "rt-b never sent");
+  assert.equal(storage.getItem("refresh_token"), "rt-b");
+});
+
+test("D2: SessionManager cookie-mode profile: invalid_grant gets no cookie-only retry, other profile untouched", async () => {
+  setBrowser({ locks: fakeLocks() });
+  const server = sharedCookieServer(() => jwt("uA", 2));
+  const bTokens = { accessToken: jwt("uB", 1), refreshToken: "rt-b", expiresAt: inAnHour() };
+  const stores = {
+    "01A": profileStore({ accessToken: jwt("uA", 0), refreshToken: "rt-a-dead" }),
+    "01B": profileStore(bTokens),
+  };
+  const manager = new SessionManager({
+    baseUrl,
+    createSessionStore: (id) => stores[id],
+    registryStore: createStorageProfileRegistry(createMockStorage()),
+    disableCrossTabSync: true,
+    sdkOptions: { fetchImpl: server.fetchImpl, storage: createMockStorage(), useRefreshCookie: true, refreshRetryDelayMs: 1 },
+  });
+  const a = manager["createProfileSdk"]("01A");
+  manager["createProfileSdk"]("01B");
+
+  await assert.rejects(a.refreshTokenOrThrow(), AuthSessionExpiredError);
+
+  assert.ok(server.posts.every((p) => "refresh_token" in p), "no cookie-only POST");
+  assert.deepEqual(stores["01B"].current(), bTokens, "B's store untouched");
+  await manager.dispose();
+});
+
+test("D3: a sign-out during the cookie retry: null, no throw, onUnauthorized not called", async () => {
+  setBrowser({ locks: fakeLocks() });
+  let unauthorized = 0;
+  let refreshPosts = 0;
+  const sdk = new CcPlatformSdk({
+    baseUrl,
+    storage: createMockStorage(),
+    useRefreshCookie: true,
+    refreshRetryDelayMs: 1,
+    tokenProvider: new MemoryTokenProvider({ accessToken: jwt("u1", 0) }),
+    onRefreshTokens: () => sdk.refreshTokenOrThrow(),
+    onUnauthorized: () => {
+      unauthorized += 1;
+    },
+    fetchImpl: async (url) => {
+      if (!String(url).endsWith("/auth/refresh")) return new Response("{}", { status: 401 });
+      refreshPosts += 1;
+      if (refreshPosts === 2) sdk["onRemoteSignOut"](); // the sign-out owns logout handling
+      return invalidGrant();
+    },
+  });
+
+  assert.equal(await sdk.refreshTokenOrThrow(), null, "no AuthSessionExpiredError");
+  assert.equal(refreshPosts, 2);
+
+  // Through the HTTP client: the 401 path must not run logout handling again.
+  refreshPosts = 0;
+  sdk["remoteSignedOut"] = false;
+  await sdk.setSession({ accessToken: jwt("u1", 0) });
+  await assert.rejects(sdk["client"].get("/v1/me"));
+  assert.equal(refreshPosts, 2);
+  assert.equal(unauthorized, 0);
 });

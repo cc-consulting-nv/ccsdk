@@ -148,7 +148,14 @@ export interface ProfileRegistryStore {
  */
 export type SharedSdkOptions = Omit<
   CcPlatformSdkOptions,
-  "baseUrl" | "tokens" | "tokenProvider" | "sessionStore" | "cache" | "dbName" | "onRefreshTokens"
+  | "baseUrl"
+  | "tokens"
+  | "tokenProvider"
+  | "sessionStore"
+  | "cache"
+  | "dbName"
+  | "onRefreshTokens"
+  | "cookieOnlyRefreshRetry"
 > & {
   /**
    * Shared refresh handler. Replaces the per-profile default, so it is told
@@ -198,9 +205,11 @@ export interface SessionManagerOptions {
    * account authenticated last, so a cookie-first host will answer a refresh for
    * profile A with profile B's bearer. `useRefreshCookie` is safe to leave on for
    * single-session back-compat, because the SDK sends `refresh_token` in the
-   * body whenever it has one and prefers each profile's own stored session. It
-   * falls back to a cookie-only retry only when the profile holds a decodable
-   * JWT bearer, and installs that answer only if it decodes to the same user.
+   * body whenever it has one and prefers each profile's own stored session.
+   * Profile SDKs are built with `cookieOnlyRefreshRetry: false`, so a refresh
+   * that answers `invalid_grant` never falls back to a cookie-only retry (the
+   * cookie may belong to another profile). With nothing newer in the profile's
+   * store, that `invalid_grant` signs the profile out, as before.
    * The per-profile store is what actually makes switching correct.
    */
   createSessionStore: (profileId: string) => SessionStore;
@@ -704,6 +713,8 @@ export class SessionManager {
       tokenProvider: new MemoryTokenProvider(),
       sessionStore: undefined,
       dbName: `${this.dbNamePrefix}:staging`,
+      // One cookie jar for every profile: a cookie-only refresh could rotate another profile's session.
+      cookieOnlyRefreshRetry: false,
       onRefreshTokens: undefined,
       onUnauthorized: undefined,
     });
@@ -727,6 +738,9 @@ export class SessionManager {
       tokenProvider: new MemoryTokenProvider(),
       sessionStore: this.options.createSessionStore(profileUlid),
       dbName: `${this.dbNamePrefix}:${profileUlid}`,
+      // Profiles share one refresh cookie, so no cookie-only refresh retry:
+      // it could rotate another profile's session.
+      cookieOnlyRefreshRetry: false,
       onRefreshTokens: shared.onRefreshTokens
         ? (context) => shared.onRefreshTokens!({ ...context, profileUlid, sdk: holder.sdk! })
         : (async () => {

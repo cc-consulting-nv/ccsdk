@@ -653,6 +653,14 @@ export interface CcPlatformSdkOptions {
    */
   refreshRetryDelayMs?: number;
   /**
+   * Cookie mode only: whether the `invalid_grant` retry may go out with no
+   * body `refresh_token`, letting the server use the refresh cookie. Default
+   * `true`. `SessionManager` sets `false` on the SDKs it builds: its profiles
+   * share one cookie jar, so a cookie-only retry could rotate another
+   * profile's session. A retry with a stored refresh token of this user still runs.
+   */
+  cookieOnlyRefreshRetry?: boolean;
+  /**
    * Abort a `/auth/refresh` request after this many ms. A timed-out refresh is
    * transient (returns `null`, no sign-out) and releases the cross-tab lock.
    * Default: 8000 ms. 0, negative or NaN fall back to the default; capped at
@@ -2236,6 +2244,12 @@ export class CcPlatformSdk {
         return READ_FAILED;
       }
     };
+    // Without a sessionStore the provider may hand back this tab's own
+    // in-memory bearer next to a shared refresh token (HybridTokenProvider
+    // shares only the refresh token). A bearer equal to ours then says nothing
+    // about whose refresh token that is: another user may have signed in.
+    const unverifiableOwner = (stored: AuthTokens | null) =>
+      !this.sessionStore && Boolean(stored?.accessToken) && stored?.accessToken === currentTokens?.accessToken;
     // A retry that fails transiently (timeout, network, 5xx, unshaped 4xx)
     // must not mask a definitive rejection already in hand.
     const isDefinitive = (e: unknown) =>
@@ -2251,8 +2265,9 @@ export class CcPlatformSdk {
       }
 
       // The verdict for the branches below is taken from `lastError` — the
-      // original rejection, unless an ambiguous 401 was retried below and the
-      // retry failed differently.
+      // original rejection, unless a retry below replaced it: the ambiguous-401
+      // retry, or (only with another definitive rejection) the stored-token
+      // adopt retry and the cookie-mode retry.
       let lastError: unknown = error;
 
       // Retry once on server errors (5xx) — transient failures shouldn't kill sessions
@@ -2273,6 +2288,7 @@ export class CcPlatformSdk {
       // answering with a shaped body and lands in the definitive branch
       // below; a single-shot blip succeeds here and the session survives.
       if (isAmbiguousAuthRejection(status, (error as { payload?: unknown })?.payload)) {
+        if (signedOut()) return null;
         try {
           return await postRefresh(body);
         } catch (retryError) {
@@ -2350,8 +2366,14 @@ export class CcPlatformSdk {
               }
               // Only rotate a stored token we can show is this user's: POSTing
               // another account's refresh token would revoke it, and the
-              // response would be discarded anyway.
-              if (!verifiedSameSubject(currentTokens?.accessToken, stored.accessToken)) return null;
+              // response would be discarded anyway. An unverifiable owner is
+              // transient: the next refresh sends the stored token normally.
+              if (
+                !verifiedSameSubject(currentTokens?.accessToken, stored.accessToken) ||
+                unverifiableOwner(stored)
+              ) {
+                return null;
+              }
               adoptRetried = true;
               try {
                 return await postRefresh({ refresh_token: stored.refreshToken });
@@ -2401,19 +2423,26 @@ export class CcPlatformSdk {
         if (signedOut()) return null;
         const shared = await readSharedTokens();
         if (shared === READ_FAILED || signedOut()) return null;
+        const freshRefresh =
+          shared?.refreshToken && !rejectedRefreshTokens.has(shared.refreshToken) ? shared.refreshToken : undefined;
+        if (freshRefresh && unverifiableOwner(shared)) return null;
         const retryRefresh =
-          shared?.refreshToken &&
-          !rejectedRefreshTokens.has(shared.refreshToken) &&
-          verifiedSameSubject(expectedBearer, shared.accessToken)
-            ? shared.refreshToken
-            : undefined;
-        try {
-          return await postRefresh(retryRefresh ? { refresh_token: retryRefresh } : undefined);
-        } catch (retryError) {
-          if (retryError instanceof InvalidAuthResponseError) return null;
-          if (isDefinitive(retryError)) lastError = retryError;
+          freshRefresh && verifiedSameSubject(expectedBearer, shared?.accessToken) ? freshRefresh : undefined;
+        // SessionManager turns the no-body retry off: its profiles share one
+        // cookie, so it could rotate another profile's session.
+        if (retryRefresh || this.options.cookieOnlyRefreshRetry !== false) {
+          try {
+            return await postRefresh(retryRefresh ? { refresh_token: retryRefresh } : undefined);
+          } catch (retryError) {
+            if (retryError instanceof InvalidAuthResponseError) return null;
+            if (isDefinitive(retryError)) lastError = retryError;
+          }
         }
       }
+
+      // A sign-out that landed during a retry owns the final state and its
+      // logout handling; throwing here would run that handling again.
+      if (signedOut()) return null;
 
       // Clear the session only when the server rejected *this grant* — the
       // refresh token is invalid/expired/revoked and recovery is impossible.
