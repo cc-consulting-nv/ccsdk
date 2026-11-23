@@ -608,8 +608,11 @@ for (const [label, sub, installed] of [
 test("refreshToken dedupes concurrent refresh calls", async () => {
   let resolveRefresh;
   const calls = [];
+  let fetchCalled;
+  const reachedFetch = new Promise((r) => (fetchCalled = r));
   const fetchImpl = async (url, init) => {
     calls.push({ url, init });
+    fetchCalled();
     return await new Promise((resolve) => {
       resolveRefresh = () =>
         resolve(
@@ -642,7 +645,7 @@ test("refreshToken dedupes concurrent refresh calls", async () => {
   const first = sdk.refreshToken();
   const second = sdk.refreshToken();
 
-  await Promise.resolve();
+  await reachedFetch;
   assert.equal(calls.length, 1);
   resolveRefresh();
 
@@ -1026,7 +1029,9 @@ test("refreshToken does not adopt a refresh-only stored snapshot", async () => {
     refreshToken: "old-refresh-token",
   });
 
+  let posts = 0;
   const fetchImpl = async () => {
+    posts += 1;
     await sessionStore.saveTokens({ refreshToken: "rotated-refresh-token" });
     return new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 });
   };
@@ -1036,8 +1041,11 @@ test("refreshToken does not adopt a refresh-only stored snapshot", async () => {
   const result = await sdk.refreshToken();
 
   assert.equal(result, null, "a bearer-less snapshot is not an adoptable session");
-  assert.ok(!sdk.isAuthenticated(), "must not report a session over a revoked token");
-  assert.equal(sessionStore.getSnapshot(), null);
+  // Without a stored bearer the snapshot's owner can't be verified, so its
+  // refresh token is not POSTed (it could be another user's) and the store is
+  // left alone.
+  assert.equal(posts, 1, "rotated token not retried");
+  assert.deepEqual(sessionStore.getSnapshot(), { refreshToken: "rotated-refresh-token" });
 });
 
 test("refreshToken does not adopt in useRefreshCookie mode when no refresh token was sent", async () => {
@@ -1046,7 +1054,9 @@ test("refreshToken does not adopt in useRefreshCookie mode when no refresh token
   // adopted unconditionally.
   const sessionStore = createMockSessionStore({ accessToken: "old-access-token" });
 
-  const fetchImpl = async () => {
+  const bodies = [];
+  const fetchImpl = async (_url, init) => {
+    bodies.push(init?.body ? JSON.parse(init.body) : {});
     await sessionStore.saveTokens({
       accessToken: "unrelated-access-token",
       refreshToken: "unrelated-refresh-token",
@@ -1059,7 +1069,11 @@ test("refreshToken does not adopt in useRefreshCookie mode when no refresh token
   const result = await sdk.refreshToken();
 
   assert.equal(result, null, "no refresh token sent means no rotation was lost");
-  assert.ok(!sdk.isAuthenticated());
+  // The stored pair's owner can't be verified (opaque bearer), so the cookie
+  // retry sends no body and the unrelated session is neither adopted, POSTed
+  // nor wiped.
+  assert.ok(bodies.every((b) => !("refresh_token" in b)), "unrelated refresh token never sent");
+  assert.equal(sessionStore.getSnapshot().refreshToken, "unrelated-refresh-token");
 });
 
 test("refreshToken still clears on a 403 carrying an invalid_grant payload", async () => {

@@ -148,7 +148,15 @@ export interface ProfileRegistryStore {
  */
 export type SharedSdkOptions = Omit<
   CcPlatformSdkOptions,
-  "baseUrl" | "tokens" | "tokenProvider" | "sessionStore" | "cache" | "dbName" | "onRefreshTokens"
+  | "baseUrl"
+  | "tokens"
+  | "tokenProvider"
+  | "sessionStore"
+  | "cache"
+  | "dbName"
+  | "onRefreshTokens"
+  | "cookieOnlyRefreshRetry"
+  | "refreshLockName"
 > & {
   /**
    * Shared refresh handler. Replaces the per-profile default, so it is told
@@ -197,9 +205,13 @@ export interface SessionManagerOptions {
    * cookie cannot represent several concurrent sessions; it names whichever
    * account authenticated last, so a cookie-first host will answer a refresh for
    * profile A with profile B's bearer. `useRefreshCookie` is safe to leave on for
-   * single-session back-compat, because the SDK always sends `refresh_token` in
-   * the body and prefers each profile's own stored session, but the per-profile
-   * store is what actually makes switching correct.
+   * single-session back-compat, because the SDK sends `refresh_token` in the
+   * body whenever it has one and prefers each profile's own stored session.
+   * Profile SDKs are built with `cookieOnlyRefreshRetry: false`, so a refresh
+   * that answers `invalid_grant` never falls back to a cookie-only retry (the
+   * cookie may belong to another profile). With nothing newer in the profile's
+   * store, that `invalid_grant` signs the profile out, as before.
+   * The per-profile store is what actually makes switching correct.
    */
   createSessionStore: (profileId: string) => SessionStore;
   /**
@@ -702,6 +714,10 @@ export class SessionManager {
       tokenProvider: new MemoryTokenProvider(),
       sessionStore: undefined,
       dbName: `${this.dbNamePrefix}:staging`,
+      // One cookie jar for every profile: a cookie-only refresh could rotate another profile's session.
+      cookieOnlyRefreshRetry: false,
+      // Lock and timeout-marker keys must stay per profile (derived from dbName).
+      refreshLockName: undefined,
       onRefreshTokens: undefined,
       onUnauthorized: undefined,
     });
@@ -725,6 +741,11 @@ export class SessionManager {
       tokenProvider: new MemoryTokenProvider(),
       sessionStore: this.options.createSessionStore(profileUlid),
       dbName: `${this.dbNamePrefix}:${profileUlid}`,
+      // Profiles share one refresh cookie, so no cookie-only refresh retry:
+      // it could rotate another profile's session.
+      cookieOnlyRefreshRetry: false,
+      // Lock and timeout-marker keys must stay per profile (derived from dbName).
+      refreshLockName: undefined,
       onRefreshTokens: shared.onRefreshTokens
         ? (context) => shared.onRefreshTokens!({ ...context, profileUlid, sdk: holder.sdk! })
         : (async () => {
