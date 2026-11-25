@@ -211,6 +211,18 @@ function isAmbiguousAuthRejection(status: unknown, payload: unknown): boolean {
   return status === 401 && !isDefinitiveAuthRejection(status, payload);
 }
 
+/** One watched segment sent to v1/video-views. */
+export interface VideoViewSegment {
+  post_ulid: string;
+  start_second: number;
+  end_second: number;
+  last_position: number;
+  /** UUID shared by every segment of one play; a new one per play. */
+  play_id?: string;
+}
+
+const MAX_VIDEO_VIEWS_PER_REQUEST = 100;
+
 // ============================================================================
 // Moderation Feed Types (025-moderation-feed)
 // ============================================================================
@@ -9327,6 +9339,10 @@ export class CcPlatformSdk {
    * backend to build a bitmap of viewed segments for completion tracking.
    *
    * Views are batched client-side and sent periodically or on page unload.
+   * Send the same `play_id` (a UUID) on every segment of one play and a new
+   * one per play; the backend then keeps one row per play. Without it the
+   * backend keeps one row per user and post. Batches over 100 views are
+   * sent as several requests (the backend rejects more than 100).
    *
    * @param payload - The tracking payload
    * @param payload.views - Array of view segments with position data
@@ -9349,23 +9365,17 @@ export class CcPlatformSdk {
    * @category Analytics
    */
   async sendVideoViews(payload: {
-    views: Array<{
-      post_ulid: string;
-      start_second: number;
-      end_second: number;
-      last_position: number;
-    }>;
+    views: VideoViewSegment[];
   }): Promise<void> {
-    await this.client.post<void>("/v1/video-views", {
-      body: payload,
-    });
+    await this.postVideoViewChunks("/v1/video-views", payload.views);
   }
 
   /**
    * Send batched video view tracking data (unauthenticated).
    *
    * Same as sendVideoViews but for unauthenticated users. The backend
-   * attributes these views to a default anonymous user.
+   * attributes these views to a default anonymous user and ignores
+   * `play_id`.
    *
    * @param payload - The tracking payload
    * @param payload.views - Array of view segments with position data
@@ -9388,16 +9398,18 @@ export class CcPlatformSdk {
    * @category Analytics
    */
   async sendVideoViewsNoAuth(payload: {
-    views: Array<{
-      post_ulid: string;
-      start_second: number;
-      end_second: number;
-      last_position: number;
-    }>;
+    views: VideoViewSegment[];
   }): Promise<void> {
-    await this.client.post<void>("/v1/video-views-na", {
-      body: payload,
-    });
+    await this.postVideoViewChunks("/v1/video-views-na", payload.views);
+  }
+
+  /** The backend rejects a video-views request with more than 100 views. */
+  private async postVideoViewChunks(path: string, views: VideoViewSegment[]): Promise<void> {
+    for (let i = 0; i < views.length; i += MAX_VIDEO_VIEWS_PER_REQUEST) {
+      await this.client.post<void>(path, {
+        body: { views: views.slice(i, i + MAX_VIDEO_VIEWS_PER_REQUEST) },
+      });
+    }
   }
 
   /**
