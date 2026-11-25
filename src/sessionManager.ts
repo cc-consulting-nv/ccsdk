@@ -904,16 +904,15 @@ export class SessionManager {
   }
 
   /**
-   * Whether this profile needs re-authentication. An unknown expiry is *not*
-   * treated as expired — the session store may hold a usable refresh token, and
-   * `switchTo()` will mint from it.
+   * Whether this profile needs re-authentication. A past `tokenExpiresAt` does
+   * not count: access tokens are short-lived, the session store (or refresh
+   * cookie) may still hold a usable refresh token, and `switchTo()` mints from
+   * it. The record also goes stale as soon as the SDK refreshes on its own.
+   * Only a refresh that definitively failed, or a session with nothing left to
+   * refresh with, sets `needsReauth`.
    */
   private isExpired(record: ProfileRecord): boolean {
-    if (record.needsReauth) return true;
-    if (!record.tokenExpiresAt) return false;
-    const expiresAt = new Date(record.tokenExpiresAt).getTime();
-    if (Number.isNaN(expiresAt)) return false;
-    return Date.now() >= expiresAt;
+    return Boolean(record.needsReauth);
   }
 
   /** Persist the registry, tell other tabs, then notify local subscribers. */

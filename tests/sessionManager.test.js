@@ -1151,7 +1151,7 @@ test("list is ordered most recently active first", async () => {
   await manager.dispose();
 });
 
-test("an expired stored session surfaces as isTokenExpired", async () => {
+test("an expired session with nothing to refresh is flagged once a switch fails", async () => {
   const prefix = uniquePrefix("expired");
   const { api, stores, registry, manager } = await setupTwoAccounts(prefix);
 
@@ -1172,7 +1172,41 @@ test("an expired stored session surfaces as isTokenExpired", async () => {
   const reloaded = createManager({ api, stores, registry, prefix });
   await reloaded.ready();
 
+  // A past expiry alone is not "needs re-auth": the record cannot see an
+  // httpOnly refresh cookie, so only a failed revive decides that.
+  assert.equal(reloaded.list()[0].isTokenExpired, false);
+
+  await assert.rejects(reloaded.switchTo("01ALICE"));
   assert.equal(reloaded.list()[0].isTokenExpired, true);
+
+  await reloaded.dispose();
+});
+
+test("an expired access token with a refresh token is not flagged for re-auth", async () => {
+  const prefix = uniquePrefix("expired-refreshable");
+  const { api, stores, registry, manager } = await setupTwoAccounts(prefix);
+
+  await manager.addProfile((sdk) => sdk.login("alice@example.com", "pw"));
+  await manager.addProfile((sdk) => sdk.login("bob@example.com", "pw"));
+  await manager.dispose();
+
+  // Alice's access token aged out in the background (the registry's expiry
+  // is stale), but her refresh token is still good.
+  const past = new Date(Date.now() - 60_000).toISOString();
+  const slot = stores.slots.get("01ALICE");
+  slot.tokens = { ...slot.tokens, expiresAt: past };
+  const snapshot = await registry.load();
+  snapshot.profiles.find((p) => p.ulid === "01ALICE").tokenExpiresAt = past;
+  await registry.save(snapshot);
+
+  const reloaded = createManager({ api, stores, registry, prefix });
+  await reloaded.ready();
+
+  assert.equal(reloaded.get("01ALICE").isTokenExpired, false, "row stays switchable");
+
+  await reloaded.switchTo("01ALICE");
+  assert.equal(reloaded.activeProfileUlid, "01ALICE");
+  assert.equal(reloaded.get("01ALICE").isTokenExpired, false);
 
   await reloaded.dispose();
 });
